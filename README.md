@@ -30,6 +30,22 @@ environment-free, unit-tested. Lens `map`/`detect` bodies are **JSONata expressi
 never JavaScript**, so a third-party lens can be executed without trusting its author
 with your session.
 
+## Quick start with pok
+
+The repo ships [pok](https://github.com/djgrant/pok) commands for everything. Run
+bare `pok` for the interactive menu, or:
+
+```sh
+pok demo            # end-to-end smoke demo — see the whole pipeline work, no browser needed
+pok test            # engine unit tests
+pok build           # build all packages
+pok lens list       # what lenses exist, their tiers and effects
+pok lens validate   # validate lenses/ against the engine's validator
+pok setup           # the two manual steps to go live (extension + MCP)
+pok setup mcp       # register lens-host with Claude Code (--writes to enable write lenses)
+pok docs            # explore the idea/pitch/design docs
+```
+
 ## Setup
 
 ```sh
