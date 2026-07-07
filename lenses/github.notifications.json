@@ -1,0 +1,36 @@
+{
+  "lens": "github/notifications",
+  "version": 1,
+  "description": "The logged-in user's GitHub notifications inbox. Demonstrates the needs_auth outcome: if the user is logged out, the call returns needs_auth and the user should sign in in the open tab, then the agent retries.",
+  "accepts": ["https://github.com/notifications*"],
+  "returns": {
+    "type": "array",
+    "items": { "repo": "string", "title": "string", "reason": "string", "url": "string" }
+  },
+  "outcomes": {
+    "needs_auth": { "$lens": "github/login@v1", "hint": "Ask the user to sign in to github.com in the open tab, then retry this call." }
+  },
+  "effects": {
+    "reads": ["github.com/notifications"],
+    "writes": [],
+    "idempotent": true,
+    "cache": 30
+  },
+  "resolve": [
+    {
+      "kind": "dom",
+      "detect": {
+        "needs_auth": "$contains(url, '/login') or $contains(title, 'Sign in')"
+      },
+      "item": ".notifications-list-item",
+      "fields": {
+        "title": { "selector": ".markdown-title" },
+        "url": { "selector": "a.notification-list-item-link", "attr": "href" }
+      }
+    },
+    {
+      "kind": "llm",
+      "prompt": "Extract the list of GitHub notifications on this page as [{repo, title, reason, url}]. If the page is a login page, return the JSON string \"needs_auth\"."
+    }
+  ]
+}

@@ -1,0 +1,141 @@
+#!/usr/bin/env node
+import { McpServer } from "@modelcontextprotocol/server";
+import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
+import * as z from "zod/v4";
+import { resolve } from "node:path";
+import { matchUrl } from "@actors/lens";
+import type { LensResult, LensSpec } from "@actors/lens";
+import { Bridge } from "./bridge.js";
+import { LensStore } from "./lens-store.js";
+
+const PORT = Number(process.env.LENS_BRIDGE_PORT ?? 4319);
+const LENS_DIR = resolve(process.env.LENS_DIR ?? "lenses");
+const ALLOW_WRITES = process.env.LENS_ALLOW_WRITES === "1";
+
+const bridge = new Bridge(PORT);
+const store = new LensStore(LENS_DIR);
+
+interface CacheEntry {
+  result: LensResult;
+  expiresAt: number;
+}
+const cache = new Map<string, CacheEntry>();
+
+function cacheKey(spec: LensSpec, target: string, args: Record<string, unknown>) {
+  return `${spec.lens}@v${spec.version}|${target}|${JSON.stringify(args)}`;
+}
+
+const server = new McpServer({ name: "lens-host", version: "0.1.0" });
+
+server.registerTool(
+  "lens_list",
+  {
+    description:
+      "List the lenses available to call. A lens turns a webpage in the user's own browser into a typed, callable function.",
+  },
+  async () => {
+    const lenses = await store.loadLocal();
+    const listing = lenses.map((l) => ({
+      lens: `${l.lens}@v${l.version}`,
+      description: l.description,
+      accepts: l.accepts,
+      effects: l.effects,
+      outcomes: l.outcomes ? Object.keys(l.outcomes) : [],
+    }));
+    return {
+      content: [{ type: "text", text: JSON.stringify({ bridge: bridge.info, lenses: listing }, null, 2) }],
+    };
+  }
+);
+
+server.registerTool(
+  "lens_call",
+  {
+    description: [
+      "Call a lens against a target URL in the user's browser (their own logged-in session).",
+      "`lens` is a name from lens_list (e.g. \"hn/top\"), a path, or an https URL to a lens JSON spec.",
+      "Returns {kind:'value'} on success, {kind:'outcome'} for structured conditions like needs_auth",
+      "(surface these to the user — e.g. ask them to log in in the open tab, then retry the same call),",
+      "or {kind:'error'}.",
+    ].join(" "),
+    inputSchema: z.object({
+      lens: z.string().describe("lens name, file path, or URL of the lens spec"),
+      target: z.string().url().describe("the page URL to act on"),
+      args: z.record(z.string(), z.unknown()).optional().describe("extra arguments for the lens"),
+    }),
+  },
+  async ({ lens, target, args }, ctx) => {
+    const spec = await store.resolveRef(lens);
+    const callArgs = args ?? {};
+
+    if (!matchUrl(spec.accepts, target)) {
+      return errorResult(
+        `target ${target} does not match ${spec.lens}@v${spec.version} accepts patterns: ${spec.accepts.join(", ")}`
+      );
+    }
+
+    if (spec.effects.writes.length > 0 && !ALLOW_WRITES) {
+      return errorResult(
+        `lens ${spec.lens}@v${spec.version} declares writes (${spec.effects.writes.join(", ")}). ` +
+          `Write lenses are disabled by default; start lens-host with LENS_ALLOW_WRITES=1 after confirming with the user.`
+      );
+    }
+
+    const key = cacheKey(spec, target, callArgs);
+    const ttl = (spec.effects.cache ?? 0) * 1000;
+    const hit = cache.get(key);
+    if (ttl > 0 && hit && hit.expiresAt > Date.now()) {
+      return okResult({ ...hit.result, cached: true });
+    }
+
+    // The LLM resolver tier is served by the *calling agent's* model via MCP
+    // sampling — the product never holds an API key.
+    const sampler = async (prompt: string): Promise<string> => {
+      const res = await ctx.mcpReq.requestSampling({
+        messages: [{ role: "user", content: { type: "text", text: prompt } }],
+        maxTokens: 4000,
+      });
+      const content = res.content as { type: string; text?: string };
+      if (content.type === "text" && content.text) return content.text;
+      throw new Error("sampling returned non-text content");
+    };
+
+    const result = await bridge.call(spec, target, callArgs, sampler);
+    if (result.kind === "value" && ttl > 0) {
+      cache.set(key, { result, expiresAt: Date.now() + ttl });
+    }
+    return result.kind === "error" ? errorResult(result.message) : okResult(result);
+  }
+);
+
+server.registerTool(
+  "bridge_status",
+  { description: "Report whether the browser extension is connected to the lens host." },
+  async () => ({
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify({ bridge: bridge.info, port: PORT, lensDir: LENS_DIR, writesEnabled: ALLOW_WRITES }),
+      },
+    ],
+  })
+);
+
+function okResult(value: unknown) {
+  return { content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }] };
+}
+function errorResult(message: string) {
+  return { isError: true, content: [{ type: "text" as const, text: message }] };
+}
+
+async function main() {
+  await store.loadLocal();
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+  console.error(`[lens-host] MCP on stdio; extension bridge on ws://127.0.0.1:${PORT}; lenses from ${LENS_DIR}`);
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
