@@ -1,0 +1,26 @@
+{
+  "name": "@actors/host",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "lens-host": "dist/index.js"
+  },
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@actors/lens": "workspace:*",
+    "@modelcontextprotocol/server": "2.0.0-beta.2",
+    "ws": "^8.18.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.5.0",
+    "typescript": "^5.6.0",
+    "vitest": "^3.0.0"
+  }
+}

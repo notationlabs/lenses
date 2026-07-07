@@ -1,0 +1,39 @@
+{
+  "lens": "hn/item",
+  "version": 1,
+  "description": "A Hacker News story page: the story plus its comment thread.",
+  "accepts": ["https://news.ycombinator.com/item?id={id}"],
+  "returns": {
+    "story": { "title": "string", "url": "string", "score": "string" },
+    "comments": {
+      "type": "array",
+      "items": { "author": "string", "age": "string", "text": "string" }
+    }
+  },
+  "outcomes": {
+    "not_found": null
+  },
+  "effects": {
+    "reads": ["news.ycombinator.com"],
+    "writes": [],
+    "idempotent": true,
+    "cache": 120
+  },
+  "resolve": [
+    {
+      "kind": "dom",
+      "item": ".comtr",
+      "fields": {
+        "author": { "selector": ".hnuser" },
+        "age": { "selector": ".age" },
+        "text": { "selector": ".commtext" },
+        "indent": { "selector": ".ind", "attr": "indent" }
+      },
+      "post": "{ \"story\": { \"id\": $id }, \"comments\": $[text != null] }"
+    },
+    {
+      "kind": "llm",
+      "prompt": "Extract this Hacker News story page as {story: {title, url, score}, comments: [{author, age, text}]}. Include only top-level fields you can actually see."
+    }
+  ]
+}

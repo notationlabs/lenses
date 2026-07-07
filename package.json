@@ -1,0 +1,11 @@
+{
+  "name": "actors",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Lenses: the web as a typed graph of callable functions. MCP-connected browser extension host.",
+  "scripts": {
+    "build": "pnpm -r build",
+    "test": "pnpm -r test"
+  },
+  "packageManager": "pnpm@11.6.0"
+}
