@@ -65,6 +65,17 @@ async function onBridgeMessage(raw: string) {
     }
     return;
   }
+  if (msg.type === "observe") {
+    const { id, target, waitMs } = msg as unknown as { id: string; target: string; waitMs: number };
+    let result;
+    try {
+      result = await handleObserve(target, waitMs ?? 4000);
+    } catch (err) {
+      result = { kind: "error", message: err instanceof Error ? err.message : String(err) };
+    }
+    ws?.send(JSON.stringify({ type: "result", id, result }));
+    return;
+  }
   if (msg.type === "call") {
     const { id, spec, target, args } = msg as unknown as {
       id: string;
@@ -117,6 +128,38 @@ function waitForLoad(tabId: number, timeoutMs = 20000): Promise<void> {
 
 function tabMessage<T>(tabId: number, payload: unknown): Promise<T> {
   return chrome.tabs.sendMessage(tabId, payload) as Promise<T>;
+}
+
+// ---------- observe (lens authoring) ----------
+async function handleObserve(target: string, waitMs: number) {
+  const tabs = await chrome.tabs.query({});
+  const exact = tabs.find((t) => t.url === target || t.url === target.replace(/\/$/, ""));
+  let tabId: number;
+  if (exact?.id !== undefined) {
+    tabId = exact.id;
+    // reload so the buffer captures the page's own requests from a cold start
+    buffers.set(tabId, []);
+    await chrome.tabs.reload(tabId, { bypassCache: false });
+    await waitForLoad(tabId);
+  } else {
+    const created = await chrome.tabs.create({ url: target, active: false });
+    if (created.id === undefined) throw new Error("could not create tab");
+    tabId = created.id;
+    await waitForLoad(tabId);
+  }
+  await new Promise((r) => setTimeout(r, waitMs));
+
+  const captured = (buffers.get(tabId) ?? []).slice(-40).map((c) => ({
+    method: c.method,
+    url: c.url,
+    status: c.status,
+    bodyPreview: c.body.slice(0, 2000),
+  }));
+  const snapshot = await tabMessage<{ url: string; title: string; text: string }>(tabId, {
+    type: "snapshot",
+    maxChars: 6000,
+  });
+  return { kind: "value", value: { snapshot, requests: captured } };
 }
 
 // ---------- call execution ----------

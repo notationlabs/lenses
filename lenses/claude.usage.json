@@ -1,0 +1,47 @@
+{
+  "lens": "claude/usage",
+  "version": 1,
+  "description": "The logged-in user's Claude.ai usage settings page: current plan plus session and weekly usage limits and reset times.",
+  "accepts": ["https://claude.ai/settings/usage*"],
+  "returns": {
+    "type": "object",
+    "fields": {
+      "plan": "string",
+      "limits": {
+        "type": "array",
+        "items": {
+          "name": "string",
+          "used": "string",
+          "limit": "string",
+          "percent": "string",
+          "resets_at": "string"
+        }
+      }
+    }
+  },
+  "outcomes": {
+    "needs_auth": { "$lens": "claude/login@v1", "hint": "Ask the user to sign in to claude.ai in the open tab, then retry this call." }
+  },
+  "effects": {
+    "reads": ["claude.ai/settings/usage"],
+    "writes": [],
+    "idempotent": true,
+    "cache": 60
+  },
+  "resolve": [
+    {
+      "kind": "intercept",
+      "request": "GET https://claude.ai/api/*usage*",
+      "reloadOnMiss": true,
+      "waitMs": 8000,
+      "detect": {
+        "needs_auth": "status = 401 or status = 403"
+      },
+      "map": "$"
+    },
+    {
+      "kind": "llm",
+      "prompt": "This is the Claude.ai usage settings page. Return a single object {plan, limits} where plan is the current subscription plan name (e.g. 'Pro', 'Max 5x', 'Team'), and limits is an array of usage meters shown on the page. For each meter return {name, used, limit, percent, resets_at}: name is the meter label (e.g. 'Current session', 'Weekly limit', 'Opus weekly limit'), used and limit are the raw values shown, percent is the fill percentage if displayed (else ''), and resets_at is the reset time/date text if shown (else ''). If the page is a login/sign-in page, return the JSON string \"needs_auth\"."
+    }
+  ]
+}
