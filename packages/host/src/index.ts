@@ -120,6 +120,27 @@ server.registerTool(
 );
 
 server.registerTool(
+  "lens_observe",
+  {
+    description: [
+      "Observe a page in the user's browser to author a new lens: loads the target URL and returns",
+      "the JSON API requests the page made (method, url, status, body preview) plus a text snapshot.",
+      "Workflow: observe the page, then write a lens spec JSON file (resolve tiers: intercept for the",
+      "API calls you saw, llm as fallback; map/detect/items are JSONata) and call it immediately by",
+      "passing its file path to lens_call. Save reusable lenses under the lenses/ directory.",
+    ].join(" "),
+    inputSchema: z.object({
+      target: z.string().url().describe("the page URL to observe"),
+      waitMs: z.number().optional().describe("extra time to wait for the page's requests (default 4000)"),
+    }),
+  },
+  async ({ target, waitMs }) => {
+    const result = await bridge.observe(target, waitMs);
+    return result.kind === "error" ? errorResult(result.message) : okResult(result);
+  }
+);
+
+server.registerTool(
   "bridge_status",
   { description: "Report whether the browser extension is connected to the lens host." },
   async () => ({

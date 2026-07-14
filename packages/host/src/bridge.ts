@@ -30,6 +30,13 @@ interface LlmRequestMessage {
   prompt: string;
 }
 
+interface ObserveMessage {
+  type: "observe";
+  id: string;
+  target: string;
+  waitMs: number;
+}
+
 type ExtMessage = ResultMessage | LlmRequestMessage | { type: "hello"; ua?: string };
 
 export type Sampler = (prompt: string) => Promise<string>;
@@ -88,6 +95,27 @@ export class Bridge {
         resolve({ kind: "error", message: `lens call timed out after ${timeoutMs}ms` });
       }, timeoutMs);
       this.pending.set(id, { resolve, sampler, timer });
+      this.ext!.send(JSON.stringify(msg));
+    });
+  }
+
+  /** Observe a page: load it and report the JSON requests it makes plus a snapshot. */
+  observe(target: string, waitMs = 4000, timeoutMs = 60_000): Promise<LensResult> {
+    if (!this.connected) {
+      return Promise.resolve({
+        kind: "error",
+        message:
+          "browser extension is not connected — is Chrome running with the Lens Host extension installed?",
+      });
+    }
+    const id = `call_${++this.seq}`;
+    const msg: ObserveMessage = { type: "observe", id, target, waitMs };
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        resolve({ kind: "error", message: `observe timed out after ${timeoutMs}ms` });
+      }, timeoutMs);
+      this.pending.set(id, { resolve, sampler: async () => "", timer });
       this.ext!.send(JSON.stringify(msg));
     });
   }
