@@ -147,7 +147,22 @@ async function runLlm(
     `Respond with ONLY the JSON value, no prose, no code fences.`,
     `\nPage URL: ${snap.url}\nPage title: ${snap.title}\nPage content:\n${snap.text}`,
   ].join("\n\n");
-  const raw = await io.llmExtract(prompt);
+  let raw: string;
+  try {
+    raw = await io.llmExtract(prompt);
+  } catch (err) {
+    // The calling agent doesn't support MCP sampling: hand the snapshot back
+    // as a structured outcome so the agent extracts in its own context.
+    if (err instanceof Error && err.message === "sampling_unsupported") {
+      return {
+        kind: "outcome",
+        name: "agent_extract",
+        value: { url: snap.url, title: snap.title, text: snap.text, returns: spec.returns },
+        resolver: "llm",
+      };
+    }
+    throw err;
+  }
   const value = tryParse(stripFences(raw));
   if (value === undefined || value === null) return null;
   return { kind: "value", value, resolver: "llm" };
