@@ -181,3 +181,29 @@ describe("dom extraction spec shape", () => {
     expect(received?.fields?.title.selector).toBe(".t");
   });
 });
+
+describe("llm tier without sampling support", () => {
+  it("returns an agent_extract outcome carrying the snapshot", async () => {
+    const r = await executeLens(spec, "https://example.com/home", {}, io({
+      snapshot: async () => ({ url: "https://example.com/home", title: "Things", text: "thing a\nthing b" }),
+      llmExtract: async () => {
+        throw new Error("sampling_unsupported");
+      },
+    }));
+    expect(r).toEqual({
+      kind: "outcome",
+      name: "agent_extract",
+      resolver: "llm",
+      value: { url: "https://example.com/home", title: "Things", text: "thing a\nthing b", returns: undefined },
+    });
+  });
+
+  it("still errors on other llm failures", async () => {
+    const r = await executeLens(spec, "https://example.com/home", {}, io({
+      llmExtract: async () => {
+        throw new Error("sampling timed out");
+      },
+    }));
+    expect(r.kind).toBe("error");
+  });
+});

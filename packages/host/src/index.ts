@@ -54,9 +54,10 @@ server.registerTool(
     description: [
       "Call a lens against a target URL in the user's browser (their own logged-in session).",
       "`lens` is a name from lens_list (e.g. \"hn/top\"), a path, or an https URL to a lens JSON spec.",
-      "Returns {kind:'value'} on success, {kind:'outcome'} for structured conditions like needs_auth",
-      "(surface these to the user — e.g. ask them to log in in the open tab, then retry the same call),",
-      "or {kind:'error'}.",
+      "Returns {kind:'value'} on success, {kind:'outcome'} for structured conditions, or {kind:'error'}.",
+      "Outcome 'needs_auth': ask the user to log in in the open tab, then retry the same call.",
+      "Outcome 'agent_extract': your client doesn't support MCP sampling, so the raw page snapshot is in",
+      "value.text — extract the data yourself, matching the shape in value.returns, and answer from that.",
     ].join(" "),
     inputSchema: z.object({
       lens: z.string().describe("lens name, file path, or URL of the lens spec"),
@@ -91,10 +92,20 @@ server.registerTool(
     // The LLM resolver tier is served by the *calling agent's* model via MCP
     // sampling — the product never holds an API key.
     const sampler = async (prompt: string): Promise<string> => {
-      const res = await ctx.mcpReq.requestSampling({
-        messages: [{ role: "user", content: { type: "text", text: prompt } }],
-        maxTokens: 4000,
-      });
+      let res;
+      try {
+        res = await ctx.mcpReq.requestSampling({
+          messages: [{ role: "user", content: { type: "text", text: prompt } }],
+          maxTokens: 4000,
+        });
+      } catch (err) {
+        // JSON-RPC -32601: the client (e.g. Claude Code) doesn't support sampling.
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes("Method not found") || msg.includes("-32601")) {
+          throw new Error("sampling_unsupported");
+        }
+        throw err;
+      }
       const content = res.content as { type: string; text?: string };
       if (content.type === "text" && content.text) return content.text;
       throw new Error("sampling returned non-text content");
