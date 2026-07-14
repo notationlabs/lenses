@@ -6,7 +6,8 @@
 import { executeLens, matchUrl } from "@actors/lens";
 import type { DomResolver, EngineIO, InterceptedResponse, LensSpec } from "@actors/lens";
 
-const BRIDGE_URL = "ws://127.0.0.1:4319";
+const PORT_RANGE_START = 4319;
+const PORT_RANGE_END = 4329;
 const BUFFER_CAP = 200;
 
 // ---------- intercept buffers ----------
@@ -23,34 +24,37 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
 
 chrome.tabs.onRemoved.addListener((tabId) => buffers.delete(tabId));
 
-// ---------- websocket bridge ----------
-let ws: WebSocket | null = null;
-let backoff = 1000;
-const pendingLlm = new Map<string, { resolve: (t: string) => void; reject: (e: Error) => void }>();
+// ---------- websocket bridge (multiplexed across all live hosts) ----------
+// Every agent session runs its own lens-host bound to a port in the range;
+// the extension keeps a socket open to each one and replies on the originating socket.
+const sockets = new Map<number, WebSocket>();
+const pendingLlm = new Map<string, { resolve: (t: string) => void; reject: (e: Error) => void; ws: WebSocket }>();
 let llmSeq = 0;
 
-function connect() {
-  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
-  ws = new WebSocket(BRIDGE_URL);
-  ws.onopen = () => {
-    backoff = 1000;
-    ws?.send(JSON.stringify({ type: "hello", ua: navigator.userAgent }));
-  };
-  ws.onmessage = (ev) => void onBridgeMessage(String(ev.data));
+function connectPort(port: number) {
+  const existing = sockets.get(port);
+  if (existing && (existing.readyState === WebSocket.OPEN || existing.readyState === WebSocket.CONNECTING)) return;
+  const ws = new WebSocket(`ws://127.0.0.1:${port}`);
+  sockets.set(port, ws);
+  ws.onopen = () => ws.send(JSON.stringify({ type: "hello", ua: navigator.userAgent }));
+  ws.onmessage = (ev) => void onBridgeMessage(ws, String(ev.data));
   ws.onclose = () => {
-    ws = null;
-    setTimeout(connect, backoff);
-    backoff = Math.min(backoff * 2, 30000);
+    if (sockets.get(port) === ws) sockets.delete(port);
   };
-  ws.onerror = () => ws?.close();
+  // Failed connections are normal (most ports have no host); fail quietly and retry on the next sweep.
+  ws.onerror = () => ws.close();
+}
+
+function sweep() {
+  for (let port = PORT_RANGE_START; port <= PORT_RANGE_END; port++) connectPort(port);
 }
 
 chrome.alarms.create("lens-keepalive", { periodInMinutes: 0.4 });
-chrome.alarms.onAlarm.addListener(() => connect());
-chrome.runtime.onStartup.addListener(() => connect());
-connect();
+chrome.alarms.onAlarm.addListener(sweep);
+chrome.runtime.onStartup.addListener(sweep);
+sweep();
 
-async function onBridgeMessage(raw: string) {
+async function onBridgeMessage(ws: WebSocket, raw: string) {
   let msg: { type: string; [k: string]: unknown };
   try {
     msg = JSON.parse(raw);
@@ -73,7 +77,7 @@ async function onBridgeMessage(raw: string) {
     } catch (err) {
       result = { kind: "error", message: err instanceof Error ? err.message : String(err) };
     }
-    ws?.send(JSON.stringify({ type: "result", id, result }));
+    ws.send(JSON.stringify({ type: "result", id, result }));
     return;
   }
   if (msg.type === "call") {
@@ -85,11 +89,11 @@ async function onBridgeMessage(raw: string) {
     };
     let result;
     try {
-      result = await handleCall(id, spec, target, args);
+      result = await handleCall(ws, id, spec, target, args);
     } catch (err) {
       result = { kind: "error", message: err instanceof Error ? err.message : String(err) };
     }
-    ws?.send(JSON.stringify({ type: "result", id, result }));
+    ws.send(JSON.stringify({ type: "result", id, result }));
   }
 }
 
@@ -164,6 +168,7 @@ async function handleObserve(target: string, waitMs: number) {
 
 // ---------- call execution ----------
 async function handleCall(
+  ws: WebSocket,
   callId: string,
   spec: LensSpec,
   target: string,
@@ -192,9 +197,9 @@ async function handleCall(
     },
     llmExtract: (prompt: string) =>
       new Promise<string>((resolve, reject) => {
-        if (!ws || ws.readyState !== WebSocket.OPEN) return reject(new Error("bridge disconnected"));
+        if (ws.readyState !== WebSocket.OPEN) return reject(new Error("bridge disconnected"));
         const id = `llm_${++llmSeq}`;
-        pendingLlm.set(id, { resolve, reject });
+        pendingLlm.set(id, { resolve, reject, ws });
         ws.send(JSON.stringify({ type: "llm", id, callId, prompt }));
         setTimeout(() => {
           if (pendingLlm.delete(id)) reject(new Error("sampling timed out"));

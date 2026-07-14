@@ -8,12 +8,14 @@ import type { LensResult, LensSpec } from "@actors/lens";
 import { Bridge } from "./bridge.js";
 import { LensStore } from "./lens-store.js";
 
-const PORT = Number(process.env.LENS_BRIDGE_PORT ?? 4319);
+const PORT_RANGE_START = 4319;
+const PORT_RANGE_END = 4329;
+const PINNED_PORT = process.env.LENS_BRIDGE_PORT ? Number(process.env.LENS_BRIDGE_PORT) : null;
 const LENS_DIR = resolve(process.env.LENS_DIR ?? "lenses");
 const ALLOW_WRITES = process.env.LENS_ALLOW_WRITES === "1";
 
-const bridge = new Bridge(PORT);
 const store = new LensStore(LENS_DIR);
+let bridge: Bridge;
 
 interface CacheEntry {
   result: LensResult;
@@ -147,7 +149,7 @@ server.registerTool(
     content: [
       {
         type: "text",
-        text: JSON.stringify({ bridge: bridge.info, port: PORT, lensDir: LENS_DIR, writesEnabled: ALLOW_WRITES }),
+        text: JSON.stringify({ bridge: bridge.info, port: bridge.port, lensDir: LENS_DIR, writesEnabled: ALLOW_WRITES }),
       },
     ],
   })
@@ -162,9 +164,12 @@ function errorResult(message: string) {
 
 async function main() {
   await store.loadLocal();
+  bridge = PINNED_PORT
+    ? await Bridge.bind(PINNED_PORT)
+    : await Bridge.bindRange(PORT_RANGE_START, PORT_RANGE_END);
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error(`[lens-host] MCP on stdio; extension bridge on ws://127.0.0.1:${PORT}; lenses from ${LENS_DIR}`);
+  console.error(`[lens-host] MCP on stdio; extension bridge on ws://127.0.0.1:${bridge.port}; lenses from ${LENS_DIR}`);
 }
 
 main().catch((err) => {
