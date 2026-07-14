@@ -50,9 +50,11 @@ export class Bridge {
     { resolve: (r: LensResult) => void; sampler: Sampler; timer: NodeJS.Timeout }
   >();
   private seq = 0;
+  readonly port: number;
 
-  constructor(port: number, host = "127.0.0.1") {
-    this.wss = new WebSocketServer({ port, host });
+  private constructor(wss: WebSocketServer, port: number) {
+    this.wss = wss;
+    this.port = port;
     this.wss.on("connection", (ws) => {
       // Latest extension connection wins; an old SW instance may linger briefly.
       this.ext?.close();
@@ -62,6 +64,32 @@ export class Bridge {
         if (this.ext === ws) this.ext = null;
       });
     });
+  }
+
+  /** Bind a single explicit port, rejecting on failure (e.g. EADDRINUSE). */
+  static bind(port: number, host = "127.0.0.1"): Promise<Bridge> {
+    return new Promise((resolve, reject) => {
+      const wss = new WebSocketServer({ port, host });
+      const onError = (err: Error) => reject(err);
+      wss.once("error", onError);
+      wss.once("listening", () => {
+        wss.off("error", onError);
+        resolve(new Bridge(wss, port));
+      });
+    });
+  }
+
+  /** Bind the first free port in [start, end]; reject if all are taken. */
+  static async bindRange(start: number, end: number, host = "127.0.0.1"): Promise<Bridge> {
+    for (let port = start; port <= end; port++) {
+      try {
+        return await Bridge.bind(port, host);
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === "EADDRINUSE") continue;
+        throw err;
+      }
+    }
+    throw new Error(`no free port in range ${start}-${end} for the extension bridge`);
   }
 
   get connected(): boolean {

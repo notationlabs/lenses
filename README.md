@@ -103,6 +103,7 @@ available in every JSONata expression as variables (`$handle`, `$id`, …).
 
 ## Status / known gaps
 
+- Multi-session: each agent session's lens-host binds the first free port in the range 4319–4329 (`LENS_BRIDGE_PORT` still pins one exact port). The extension multiplexes — it keeps a socket open to every live host in that range and replies on the socket a request arrived on — so concurrent Claude Code sessions all reach the same browser.
 - Interception misses requests made by service workers or before `document_start` patching on already-open tabs (reload the tab once after installing the extension).
 - Content scripts aren't injected into tabs that were open before the extension loaded.
 - Lens URLs are not yet content-pinned (SRI-style hashing planned) — only load lenses you trust.
