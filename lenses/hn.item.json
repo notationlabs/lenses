@@ -1,13 +1,23 @@
 {
   "lens": "hn/item",
   "version": 1,
-  "description": "A Hacker News story page: the story plus its comment thread.",
-  "accepts": ["https://news.ycombinator.com/item?id={id}"],
+  "description": "A Hacker News story page: the story plus its comment thread. Long threads paginate; next_page is the following page of comments (null on the last page).",
+  "accepts": [
+    "https://news.ycombinator.com/item?id={id}",
+    "https://news.ycombinator.com/item?id={id}&p={p}"
+  ],
   "returns": {
-    "story": { "title": "string", "url": "string", "score": "string" },
-    "comments": {
-      "type": "array",
-      "items": { "author": "string", "age": "string", "text": "string" }
+    "type": "object",
+    "fields": {
+      "story": {
+        "type": "object",
+        "fields": { "title": "string", "url": "string", "score": "string" }
+      },
+      "comments": {
+        "type": "array",
+        "items": { "author": "string", "age": "string", "text": "string" }
+      },
+      "next_page": { "$lens": "hn/item@v1" }
     }
   },
   "outcomes": {
@@ -32,8 +42,14 @@
       "post": "{ \"story\": { \"id\": $id }, \"comments\": $[text != null] }"
     },
     {
+      "kind": "dom",
+      "fields": {
+        "next_page": { "selector": "a.morelink", "attr": "href" }
+      }
+    },
+    {
       "kind": "llm",
-      "prompt": "Extract this Hacker News story page as {story: {title, url, score}, comments: [{author, age, text}]}. Include only top-level fields you can actually see."
+      "prompt": "Extract this Hacker News story page as {story: {title, url, score}, comments: [{author, age, text}], next_page}. next_page is the href of the bottom 'More' link (the next page of comments) if present, otherwise null. Include only top-level fields you can actually see."
     }
   ]
 }

@@ -126,6 +126,32 @@ returns what it gathered but marks it `partial: true`, and the host **won't cach
 — so a one-off intercept flake that left only `plan` can't be replayed for the whole
 `cache` TTL and mask the recovered cheaper tier on the next call.
 
+### Pagination
+
+Pagination isn't a new primitive — it's a lens field that points back at a lens. A paginated
+lens returns an **object** carrying the page's items alongside a `next_page` field: the URL of
+the following page, typed as a self-referential `$lens` (the same lens, since the next page is
+the same shape). The cursor rides in the URL (`?p=2`), so `next_page` is just a bound lens ref
+— no separate args. It's `null` on the last page.
+
+```jsonc
+"returns": {
+  "type": "object",
+  "fields": {
+    "stories":   { "type": "array", "items": { /* … */ } },
+    "next_page": { "$lens": "hn/top@v1" }          // ← the same lens, next page
+  }
+}
+```
+
+Walking all pages is the recursive application of one primitive: call the lens, read
+`next_page`, call the lens on it, until `next_page` is null. Producing the cursor costs
+nothing extra — a second cheap `dom` tier reads the page's "More" link (`a.morelink`) and
+**reconciles** into `{ …items, next_page }`, so the engine gathers the page and its cursor in
+one pass. `hn/top` (front-page `?p=N`) and `hn/item` (long comment threads, `&p=N`) both do
+this; note their cursor is also a valid `accepts` target for the same lens, which is what
+closes the loop.
+
 ## Packages
 
 | path | what |
