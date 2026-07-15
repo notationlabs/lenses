@@ -22,16 +22,23 @@ interface DomExtractRequest {
 
 // 1 — relay intercepts (and fire results) up to the service worker
 const pendingFires = new Map<string, (r: unknown) => void>();
+// After an extension reload this script is orphaned and sendMessage throws
+// synchronously ("Extension context invalidated") — go permanently silent.
+let orphaned = false;
 window.addEventListener("message", (ev) => {
   const d = ev.data;
-  if (!d || d.source !== MARK) return;
+  if (!d || d.source !== MARK || orphaned) return;
   if (d.kind === "intercepted") {
-    chrome.runtime
-      .sendMessage({
-        type: "intercepted",
-        response: { url: d.url, method: d.method, status: d.status, body: d.body, timestamp: d.timestamp },
-      })
-      .catch(() => {});
+    try {
+      chrome.runtime
+        .sendMessage({
+          type: "intercepted",
+          response: { url: d.url, method: d.method, status: d.status, body: d.body, timestamp: d.timestamp },
+        })
+        .catch(() => {});
+    } catch {
+      orphaned = true;
+    }
   } else if (d.kind === "fire_result") {
     pendingFires.get(d.id)?.(d);
     pendingFires.delete(d.id);
