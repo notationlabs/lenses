@@ -121,6 +121,11 @@ fills the missing `plan`, and the llm tier stays the wholesale fallback — no d
 extraction. A tier omits fields it can't supply (absence is the signal; don't emit `""`).
 Non-object results (arrays) don't reconcile — the first wins.
 
+If the tiers exhaust without completing the declared `returns` shape, the engine still
+returns what it gathered but marks it `partial: true`, and the host **won't cache a partial**
+— so a one-off intercept flake that left only `plan` can't be replayed for the whole
+`cache` TTL and mask the recovered cheaper tier on the next call.
+
 ## Packages
 
 | path | what |

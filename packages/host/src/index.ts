@@ -115,7 +115,11 @@ server.registerTool(
     };
 
     const result = await bridge.call(spec, target, callArgs, sampler);
-    if (result.kind === "value" && ttl > 0) {
+    // Only cache a value that fully satisfied the declared `returns` shape — a
+    // `partial` reconciliation (e.g. intercept flaked, only the dom tier's
+    // `plan` came back) must not be replayed for the whole TTL and mask the
+    // recovered cheaper tier on the next call.
+    if (result.kind === "value" && !result.partial && ttl > 0) {
       cache.set(key, { result, expiresAt: Date.now() + ttl });
     }
     return result.kind === "error" ? errorResult(result.message) : okResult(result);

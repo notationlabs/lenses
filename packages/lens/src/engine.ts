@@ -75,9 +75,10 @@ export async function executeLens(
       lastMiss = `${resolver.kind} resolver failed: ${err instanceof Error ? err.message : String(err)}`;
     }
   }
-  // Ran out of tiers: return a partial reconciliation if we gathered anything.
+  // Ran out of tiers without completing the declared shape: return what we
+  // gathered, but flag it partial so the host won't cache a degraded result.
   if (acc && Object.keys(acc).length) {
-    return { kind: "value", value: acc, resolver: settledResolver(contributors) };
+    return { kind: "value", value: acc, resolver: settledResolver(contributors), partial: true };
   }
   return { kind: "error", message: `all resolvers exhausted (${lastMiss})` };
 }

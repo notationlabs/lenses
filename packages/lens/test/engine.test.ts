@@ -303,6 +303,26 @@ describe("cross-tier reconciliation", () => {
       value: { plan: "Team", renews_at: "2026-08-06", limits: [{ kind: "session" }] },
     });
   });
+
+  it("flags an incomplete reconciliation as partial (so the host won't cache it)", async () => {
+    // intercept omits plan, dom misses, llm returns nothing usable → plan absent.
+    const r = await executeLens(reconciled, "https://example.com/usage", {}, io({
+      getIntercepted: async () => [usage()],
+      domExtract: async () => ({ url: "u", title: "t", value: null }),
+      llmExtract: async () => "null",
+    }));
+    expect(r).toMatchObject({ kind: "value", partial: true });
+    if (r.kind === "value") expect(r.value).not.toHaveProperty("plan");
+  });
+
+  it("does not flag a complete reconciliation as partial", async () => {
+    const r = await executeLens(reconciled, "https://example.com/usage", {}, io({
+      getIntercepted: async () => [usage()],
+      domExtract: async () => ({ url: "u", title: "t", value: { plan: "Max (20x)" } }),
+    }));
+    expect(r).toMatchObject({ kind: "value", resolver: "reconciled" });
+    if (r.kind === "value") expect(r.partial).toBeUndefined();
+  });
 });
 
 describe("dom extraction spec shape", () => {
