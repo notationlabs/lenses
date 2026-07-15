@@ -8,6 +8,9 @@ importers:
 
   .:
     devDependencies:
+      '@actors/lens':
+        specifier: workspace:*
+        version: link:packages/lens
       '@pokit/core':
         specifier: ^0.3.1
         version: 0.3.1(zod@4.4.3)
