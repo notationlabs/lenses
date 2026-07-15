@@ -168,6 +168,102 @@ describe("executeLens", () => {
   });
 });
 
+describe("results are lenses too", () => {
+  it("materialises a declared $lens outcome with its target bound", async () => {
+    const s = defineLens({
+      lens: "claude/usage",
+      version: 1,
+      accepts: ["https://claude.ai/settings/{page}"],
+      effects: { reads: [], writes: [] },
+      outcomes: {
+        needs_auth: { $lens: "claude/login@v1", hint: "Sign in, then retry." },
+      },
+      resolve: [
+        {
+          kind: "intercept",
+          request: "GET https://claude.ai/api/*/usage*",
+          detect: { needs_auth: "status = 401 or status = 403" },
+        },
+      ],
+    });
+    const r = await executeLens(s, "https://claude.ai/settings/usage", {}, io({
+      getIntercepted: async () => [captured({ url: "https://claude.ai/api/x/usage", status: 401, body: "{}" })],
+    }));
+    expect(r).toEqual({
+      kind: "outcome",
+      name: "needs_auth",
+      resolver: "intercept",
+      value: {
+        $lens: "claude/login@v1",
+        target: "https://claude.ai/settings/usage",
+        hint: "Sign in, then retry.",
+      },
+    });
+  });
+
+  it("keeps the raw detect ctx when the outcome is declared null", async () => {
+    const s = defineLens({
+      lens: "example/maybe",
+      version: 1,
+      accepts: ["https://example.com/{page}"],
+      effects: { reads: [], writes: [] },
+      outcomes: { not_found: null },
+      resolve: [
+        {
+          kind: "intercept",
+          request: "GET https://api.example.com/things*",
+          detect: { not_found: "status = 404" },
+        },
+      ],
+    });
+    const r = await executeLens(s, "https://example.com/home", {}, io({
+      getIntercepted: async () => [captured({ status: 404, body: "{}" })],
+    }));
+    expect(r.kind).toBe("outcome");
+    if (r.kind === "outcome") {
+      expect(r.name).toBe("not_found");
+      expect(r.value).toMatchObject({ status: 404, url: expect.any(String) });
+    }
+  });
+
+  it("binds $lens result fields on every row of an array return", async () => {
+    const s = defineLens({
+      lens: "hn/top",
+      version: 1,
+      accepts: ["https://news.ycombinator.com/{page}"],
+      effects: { reads: [], writes: [] },
+      returns: {
+        type: "object",
+        fields: {
+          stories: {
+            type: "array",
+            items: { id: "string", item_url: { $lens: "hn/item@v1" } },
+          },
+          next_page: { $lens: "hn/top@v1" },
+        },
+      },
+      resolve: [
+        {
+          kind: "dom",
+          item: ".athing",
+          fields: { id: { selector: ":self", attr: "id" } },
+          post: "{ 'stories': $map($, function($v) { $merge([$v, {'item_url': 'https://news.ycombinator.com/item?id=' & $v.id}]) }), 'next_page': 'https://news.ycombinator.com/news?p=2' }",
+        },
+      ],
+    });
+    const r = await executeLens(s, "https://news.ycombinator.com/news", {}, io({
+      domExtract: async () => ({ url: "u", title: "t", value: [{ id: "1" }, { id: "2" }] }),
+    }));
+    expect(r.kind).toBe("value");
+    if (r.kind === "value") {
+      const v = r.value as { stories: Array<{ item_url: unknown }>; next_page: unknown };
+      expect(v.stories[0].item_url).toEqual({ $lens: "hn/item@v1", target: "https://news.ycombinator.com/item?id=1" });
+      expect(v.stories[1].item_url).toEqual({ $lens: "hn/item@v1", target: "https://news.ycombinator.com/item?id=2" });
+      expect(v.next_page).toEqual({ $lens: "hn/top@v1", target: "https://news.ycombinator.com/news?p=2" });
+    }
+  });
+});
+
 describe("intercept sources composition", () => {
   const composed = defineLens({
     lens: "example/usage",

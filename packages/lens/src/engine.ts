@@ -10,6 +10,7 @@ import type {
   Resolver,
 } from "./types.js";
 import { evaluate, evaluateBool } from "./expr.js";
+import { materialiseLenses } from "./materialise.js";
 import { matchRequestPattern, matchUrl } from "./url-pattern.js";
 
 /**
@@ -46,10 +47,10 @@ export async function executeLens(
       let result: LensResult | null;
       switch (resolver.kind) {
         case "intercept":
-          result = await runIntercept(resolver, params, io);
+          result = await runIntercept(resolver, params, io, spec.outcomes);
           break;
         case "dom":
-          result = await runDom(resolver, params, io);
+          result = await runDom(resolver, params, io, spec.outcomes);
           break;
         case "llm":
           result = await runLlm(resolver, spec, params, io);
@@ -61,15 +62,21 @@ export async function executeLens(
       }
       // Outcomes / errors are terminal — never reconciled.
       if (result.kind !== "value") return result;
-      // Non-object values don't merge; the first wins.
+      // Non-object values (e.g. arrays) don't merge; the first wins.
       if (!isPlainObject(result.value)) {
-        if (acc === undefined) return result;
+        if (acc === undefined) {
+          return { ...result, value: await materialiseLenses(result.value, spec.returns) };
+        }
         continue;
       }
       acc = fillAbsent(acc ?? {}, result.value);
       contributors.push(resolver.kind);
       if (isComplete(acc, spec.returns)) {
-        return { kind: "value", value: acc, resolver: settledResolver(contributors) };
+        return {
+          kind: "value",
+          value: await materialiseLenses(acc, spec.returns),
+          resolver: settledResolver(contributors),
+        };
       }
     } catch (err) {
       lastMiss = `${resolver.kind} resolver failed: ${err instanceof Error ? err.message : String(err)}`;
@@ -78,7 +85,12 @@ export async function executeLens(
   // Ran out of tiers without completing the declared shape: return what we
   // gathered, but flag it partial so the host won't cache a degraded result.
   if (acc && Object.keys(acc).length) {
-    return { kind: "value", value: acc, resolver: settledResolver(contributors), partial: true };
+    return {
+      kind: "value",
+      value: await materialiseLenses(acc, spec.returns),
+      resolver: settledResolver(contributors),
+      partial: true,
+    };
   }
   return { kind: "error", message: `all resolvers exhausted (${lastMiss})` };
 }
@@ -118,7 +130,8 @@ function settledResolver(contributors: Resolver["kind"][]): Resolver["kind"] | "
 async function runIntercept(
   r: InterceptResolver,
   params: Record<string, unknown>,
-  io: EngineIO
+  io: EngineIO,
+  outcomes: LensSpec["outcomes"]
 ): Promise<LensResult | null> {
   // Write lens: fire the request the page would have made.
   if (r.fire) {
@@ -128,7 +141,7 @@ async function runIntercept(
     const url = interpolate(space === -1 ? r.fire.request : r.fire.request.slice(space + 1), params);
     const body = r.fire.body ? await evaluate(r.fire.body, params, params) : undefined;
     const resp = await io.fireRequest(method, url, body);
-    const outcome = await detectOutcome(r.detect, responseContext(resp), params);
+    const outcome = await detectOutcome(r.detect, responseContext(resp), params, outcomes);
     if (outcome) return outcome;
     if (resp.status >= 200 && resp.status < 300) {
       const parsed = tryParse(resp.body);
@@ -139,7 +152,7 @@ async function runIntercept(
   }
 
   // Multi-source: compose several captured responses into one projection.
-  if (r.sources) return runInterceptSources(r, params, io);
+  if (r.sources) return runInterceptSources(r, params, io, outcomes);
 
   // Read lens: look for a captured response, optionally reloading to trigger one.
   let captured = await findMatch(r, io);
@@ -153,7 +166,7 @@ async function runIntercept(
   }
   if (!captured) return null;
 
-  const outcome = await detectOutcome(r.detect, responseContext(captured), params);
+  const outcome = await detectOutcome(r.detect, responseContext(captured), params, outcomes);
   if (outcome) return outcome;
   if (captured.status < 200 || captured.status >= 300) return null;
 
@@ -182,7 +195,8 @@ async function runIntercept(
 async function runInterceptSources(
   r: InterceptResolver,
   params: Record<string, unknown>,
-  io: EngineIO
+  io: EngineIO,
+  outcomes: LensSpec["outcomes"]
 ): Promise<LensResult | null> {
   const names = Object.keys(r.sources!);
   let found = await matchSources(r, io);
@@ -201,7 +215,7 @@ async function runInterceptSources(
   // detect over the response metas: `$usage.status = 401`
   const detectVars = { ...params };
   for (const n of names) detectVars[n] = responseContext(found[n]!);
-  const outcome = await detectOutcome(r.detect, detectVars, detectVars);
+  const outcome = await detectOutcome(r.detect, detectVars, detectVars, outcomes);
   if (outcome) return outcome;
 
   // any non-2xx source is a tier miss
@@ -277,10 +291,11 @@ async function matchSources(
 async function runDom(
   r: DomResolver,
   params: Record<string, unknown>,
-  io: EngineIO
+  io: EngineIO,
+  outcomes: LensSpec["outcomes"]
 ): Promise<LensResult | null> {
   const extracted = await io.domExtract(r);
-  const outcome = await detectOutcome(r.detect, { url: extracted.url, title: extracted.title }, params);
+  const outcome = await detectOutcome(r.detect, { url: extracted.url, title: extracted.title }, params, outcomes);
   if (outcome) return outcome;
 
   let value = extracted.value;
@@ -327,15 +342,40 @@ async function runLlm(
 async function detectOutcome(
   detect: Record<string, string> | undefined,
   ctx: unknown,
-  params: Record<string, unknown>
+  params: Record<string, unknown>,
+  outcomes: LensSpec["outcomes"]
 ): Promise<LensResult | null> {
   if (!detect) return null;
   for (const [name, expr] of Object.entries(detect)) {
     if (await evaluateBool(expr, ctx, params)) {
-      return { kind: "outcome", name, value: ctx, resolver: "intercept" };
+      const value = await outcomeValue(name, ctx, params, outcomes);
+      return { kind: "outcome", name, value, resolver: "intercept" };
     }
   }
   return null;
+}
+
+/**
+ * "Results are lenses too" for failure modes: when the fired outcome is declared
+ * in `spec.outcomes` as a `$lens` reference, hand back a *callable ref* with its
+ * `target` bound (declared JSONata evaluated against the detect ctx, else the
+ * original target URL) plus any extra declared fields (e.g. `hint`). A `null` or
+ * plain-schema outcome keeps returning the raw detect ctx for back-compat.
+ */
+async function outcomeValue(
+  name: string,
+  ctx: unknown,
+  params: Record<string, unknown>,
+  outcomes: LensSpec["outcomes"]
+): Promise<unknown> {
+  const declared = outcomes?.[name];
+  if (isPlainObject(declared) && typeof declared.$lens === "string") {
+    const { $lens, target: targetExpr, ...rest } = declared;
+    const target =
+      typeof targetExpr === "string" ? await evaluate(targetExpr, ctx, params) : params.target;
+    return { $lens, target, ...rest };
+  }
+  return ctx;
 }
 
 function responseContext(resp: InterceptedResponse) {
