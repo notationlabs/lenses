@@ -92,6 +92,35 @@ call it by URL). See `lenses/hn.top.json`. Shape:
 Resolvers run cheapest-first and fall through on a miss. URL holes and call args are
 available in every JSONata expression as variables (`$handle`, `$id`, …).
 
+### Composing sources and reconciling tiers
+
+`map` can be a single JSONata string, or a **per-field object** `{ field: "<jsonata>" }` so
+each field can draw from a different binding.
+
+The **intercept** tier can compose several responses via `sources` — a page fires many
+requests, so name the ones you need and each body binds as a `$var` (its `{status, url,
+body}` in `detect`, its body in `map`):
+
+```jsonc
+{ "kind": "intercept",
+  "sources": {
+    "usage": { "request": "GET https://x.com/api/*/usage*" },
+    "sub":   { "request": "GET https://x.com/api/*/subscription*" }
+  },
+  "detect": { "needs_auth": "$usage.status = 401" },
+  "map": { "limits": "$usage.limits", "renews_at": "$sub.next_charge_date" } }
+```
+
+A missing source is a tier miss (falls through). `sources` is intercept-only — dom and llm
+each have a single input.
+
+Tiers that return **objects reconcile**: each contributes the fields it has, later tiers
+fill only the keys still absent, and the engine stops once every field in `returns` is
+present (`resolver: "reconciled"`). So intercept can hand back `{limits}`, a cheap dom tier
+fills the missing `plan`, and the llm tier stays the wholesale fallback — no duplicated
+extraction. A tier omits fields it can't supply (absence is the signal; don't emit `""`).
+Non-object results (arrays) don't reconcile — the first wins.
+
 ## Packages
 
 | path | what |

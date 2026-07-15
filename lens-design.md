@@ -79,6 +79,8 @@ A lens declares up to three strategies for satisfying a call. The host runs them
 
 The author writes the layers in priority order; the host falls through automatically. A lens that has dropped to its LLM layer is still serving requests — it is simply serving them on the expensive layer, and a maintainer (human or agent) can watch which lenses are running there and patch the cheaper layers back. The LLM's transcripts are the data needed to do that patching.
 
+Two composition axes cut across the three layers. *Within* the intercept layer, a lens can name several of the page's responses as `sources` and project them together — a page fires many requests, so one tier can weave `limits` from one endpoint and `plan` from another. *Across* layers, tiers that return objects **reconcile** rather than merely fall through: each contributes the fields it has, later (cheaper-than-LLM) tiers fill only the keys still missing, and the host stops once the declared `returns` shape is complete. So the intercept layer can hand back everything it knows, a DOM read tops up the one field the API doesn't expose, and the LLM layer remains the wholesale fallback for when the cheap layers produce nothing at all — no layer has to re-derive what a cheaper one already got.
+
 ## The host runs in your own browser
 
 The runtime that fetches lens definitions and executes them is a browser extension installed in the user's everyday browser. Session cookies are the user's own, so auth is whatever the user already has. A CAPTCHA prompt becomes a `needs_captcha` outcome that the user solves in the tab they were going to look at anyway. The posture is the same as Greasemonkey or uBlock: the user is the one taking the action, and the lens is structuring its output.

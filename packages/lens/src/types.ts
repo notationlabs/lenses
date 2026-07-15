@@ -32,14 +32,35 @@ export interface LensEffects {
 
 export type Resolver = InterceptResolver | DomResolver | LlmResolver;
 
-export interface InterceptResolver {
-  kind: "intercept";
+/** One named network response to capture within an intercept tier. */
+export interface InterceptSource {
   /** "METHOD urlglob", e.g. "GET https://x.com/i/api/graphql/*\/TweetDetail*" */
   request: string;
-  /** JSONata over the parsed response body producing the working value */
+  /** JSONata over the parsed response body producing this source's bound value */
   items?: ExprString;
-  /** JSONata over the working value (or each item) producing the result */
-  map?: ExprString;
+}
+
+/**
+ * A map projection: either a single JSONata expression producing the whole
+ * result, or an object whose values are per-field JSONata expressions. The
+ * object form lets each field draw from a different source binding.
+ */
+export type MapSpec = ExprString | Record<string, ExprString>;
+
+export interface InterceptResolver {
+  kind: "intercept";
+  /** Single-source shorthand: "METHOD urlglob". Omit when using `sources`. */
+  request?: string;
+  /**
+   * Compose several captured responses. Each key binds that source's body as a
+   * JSONata variable ($name) available to `map` and `detect`. Only the intercept
+   * tier fans out like this — a page fires many responses; dom/llm have one input.
+   */
+  sources?: Record<string, InterceptSource>;
+  /** JSONata over the parsed response body producing the working value (single-source) */
+  items?: ExprString;
+  /** JSONata (or per-field object) over the working value / source bindings */
+  map?: MapSpec;
   /** outcome name -> JSONata over {status, url, body}; truthy triggers the outcome */
   detect?: Record<string, ExprString>;
   /** if no captured response matches, reload the tab and wait for one */
@@ -94,7 +115,7 @@ export interface InterceptedResponse {
 }
 
 export type LensResult =
-  | { kind: "value"; value: unknown; resolver: Resolver["kind"] }
+  | { kind: "value"; value: unknown; resolver: Resolver["kind"] | "reconciled" }
   | { kind: "outcome"; name: string; value: unknown; resolver: Resolver["kind"] }
   | { kind: "error"; message: string };
 
