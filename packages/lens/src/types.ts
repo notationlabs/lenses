@@ -115,7 +115,7 @@ export interface InterceptedResponse {
 }
 
 export type LensResult =
-  | { kind: "value"; value: unknown; resolver: Resolver["kind"] | "reconciled" }
+  | { kind: "value"; value: unknown; resolver: Resolver["kind"] | "reconciled"; partial?: boolean }
   | { kind: "outcome"; name: string; value: unknown; resolver: Resolver["kind"] }
   | { kind: "error"; message: string };
 
