@@ -1,20 +1,26 @@
 {
   "lens": "hn/top",
   "version": 1,
-  "description": "Front-page stories on Hacker News. Each story links onward to hn/item via item_url.",
+  "description": "Front-page stories on Hacker News. Each story links onward to hn/item via item_url. Paginated: next_page is the following page of stories (null on the last page).",
   "accepts": [
     "https://news.ycombinator.com/",
     "https://news.ycombinator.com/news*"
   ],
   "returns": {
-    "type": "array",
-    "items": {
-      "title": "string",
-      "url": "string",
-      "id": "string",
-      "score": "string",
-      "comments": "string",
-      "item_url": { "$lens": "hn/item@v1" }
+    "type": "object",
+    "fields": {
+      "stories": {
+        "type": "array",
+        "items": {
+          "title": "string",
+          "url": "string",
+          "id": "string",
+          "score": "string",
+          "comments": "string",
+          "item_url": { "$lens": "hn/item@v1" }
+        }
+      },
+      "next_page": { "$lens": "hn/top@v1" }
     }
   },
   "outcomes": {
@@ -37,11 +43,17 @@
         "score": { "selector": ".score", "sibling": true },
         "comments": { "selector": ".subline > a:last-child", "sibling": true }
       },
-      "post": "$map($, function($v) { $merge([$v, {\"item_url\": \"https://news.ycombinator.com/item?id=\" & $v.id}]) })"
+      "post": "{ \"stories\": $map($, function($v) { $merge([$v, {\"item_url\": \"https://news.ycombinator.com/item?id=\" & $v.id}]) }) }"
+    },
+    {
+      "kind": "dom",
+      "fields": {
+        "next_page": { "selector": "a.morelink", "attr": "href" }
+      }
     },
     {
       "kind": "llm",
-      "prompt": "Extract the ranked list of stories from this Hacker News front page. For each story return title, url, id, score, comments (e.g. '42 comments'), and item_url (https://news.ycombinator.com/item?id=<id>)."
+      "prompt": "Extract this Hacker News front page as {stories, next_page}. stories is the ranked list; for each story return title, url, id, score, comments (e.g. '42 comments'), and item_url (https://news.ycombinator.com/item?id=<id>). next_page is the href of the bottom 'More' link (the next page of stories) if present, otherwise null."
     }
   ]
 }
