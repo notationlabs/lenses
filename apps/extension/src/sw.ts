@@ -200,17 +200,57 @@ async function onBridgeMessage(ws: WebSocket, raw: string) {
 }
 
 // ---------- tab binding ----------
-async function bindTab(spec: LensSpec, target: string): Promise<number> {
+interface BoundTab {
+  tabId: number;
+  /** true when this call opened the tab — the caller may close it when done */
+  created: boolean;
+}
+
+async function bindTab(spec: LensSpec, target: string): Promise<BoundTab> {
   const tabs = await chrome.tabs.query({});
   // prefer a tab already on the exact target, then any tab matching accepts
   const exact = tabs.find((t) => t.url === target || t.url === target.replace(/\/$/, ""));
-  if (exact?.id !== undefined) return exact.id;
+  if (exact?.id !== undefined) {
+    await ensureContentScript(exact.id);
+    return { tabId: exact.id, created: false };
+  }
   const accepted = tabs.find((t) => t.url && matchUrl(spec.accepts, t.url));
-  if (accepted?.id !== undefined) return accepted.id;
+  if (accepted?.id !== undefined) {
+    await ensureContentScript(accepted.id);
+    return { tabId: accepted.id, created: false };
+  }
   const created = await chrome.tabs.create({ url: target, active: false });
   if (created.id === undefined) throw new Error("could not create tab");
   await waitForLoad(created.id);
-  return created.id;
+  return { tabId: created.id, created: true };
+}
+
+/**
+ * A tab open before the extension (re)loaded holds an orphaned content script
+ * that can't answer the SW — `chrome.tabs.sendMessage` then throws "Receiving
+ * end does not exist". Ping it; if there's no live listener, reload the tab so
+ * the current content + page scripts re-inject.
+ */
+async function ensureContentScript(tabId: number): Promise<void> {
+  try {
+    await chrome.tabs.sendMessage(tabId, { type: "ping" });
+  } catch {
+    buffers.set(tabId, []);
+    await chrome.tabs.reload(tabId, { bypassCache: false });
+    await waitForLoad(tabId);
+  }
+}
+
+/** Close a tab this call opened, unless the result needs the user to act in it. */
+async function closeIfCreated(bound: BoundTab, result: { kind: string; name?: string }) {
+  if (!bound.created) return;
+  // Keep the tab for outcomes that require the user (sign-in, captcha, 2FA…).
+  if (result.kind === "outcome" && typeof result.name === "string" && result.name.startsWith("needs_")) return;
+  try {
+    await chrome.tabs.remove(bound.tabId);
+  } catch {
+    /* already gone */
+  }
 }
 
 function waitForLoad(tabId: number, timeoutMs = 20000): Promise<void> {
@@ -241,6 +281,7 @@ async function handleObserve(target: string, waitMs: number) {
   const tabs = await chrome.tabs.query({});
   const exact = tabs.find((t) => t.url === target || t.url === target.replace(/\/$/, ""));
   let tabId: number;
+  let created = false;
   if (exact?.id !== undefined) {
     tabId = exact.id;
     // reload so the buffer captures the page's own requests from a cold start
@@ -248,24 +289,35 @@ async function handleObserve(target: string, waitMs: number) {
     await chrome.tabs.reload(tabId, { bypassCache: false });
     await waitForLoad(tabId);
   } else {
-    const created = await chrome.tabs.create({ url: target, active: false });
-    if (created.id === undefined) throw new Error("could not create tab");
-    tabId = created.id;
+    const tab = await chrome.tabs.create({ url: target, active: false });
+    if (tab.id === undefined) throw new Error("could not create tab");
+    tabId = tab.id;
+    created = true;
     await waitForLoad(tabId);
   }
-  await new Promise((r) => setTimeout(r, waitMs));
+  try {
+    await new Promise((r) => setTimeout(r, waitMs));
 
-  const captured = (buffers.get(tabId) ?? []).slice(-40).map((c) => ({
-    method: c.method,
-    url: c.url,
-    status: c.status,
-    bodyPreview: c.body.slice(0, 2000),
-  }));
-  const snapshot = await tabMessage<{ url: string; title: string; text: string }>(tabId, {
-    type: "snapshot",
-    maxChars: 6000,
-  });
-  return { kind: "value", value: { snapshot, requests: captured } };
+    const captured = (buffers.get(tabId) ?? []).slice(-40).map((c) => ({
+      method: c.method,
+      url: c.url,
+      status: c.status,
+      bodyPreview: c.body.slice(0, 2000),
+    }));
+    const snapshot = await tabMessage<{ url: string; title: string; text: string }>(tabId, {
+      type: "snapshot",
+      maxChars: 6000,
+    });
+    return { kind: "value", value: { snapshot, requests: captured } };
+  } finally {
+    if (created) {
+      try {
+        await chrome.tabs.remove(tabId);
+      } catch {
+        /* already gone */
+      }
+    }
+  }
 }
 
 // ---------- call execution ----------
@@ -276,7 +328,8 @@ async function handleCall(
   target: string,
   args: Record<string, unknown>
 ) {
-  const tabId = await bindTab(spec, target);
+  const bound = await bindTab(spec, target);
+  const tabId = bound.tabId;
 
   const io: EngineIO = {
     getIntercepted: async () => buffers.get(tabId) ?? [],
@@ -310,5 +363,12 @@ async function handleCall(
     sleep: (ms: number) => new Promise((r) => setTimeout(r, ms)),
   };
 
-  return executeLens(spec, target, args, io);
+  try {
+    const result = await executeLens(spec, target, args, io);
+    await closeIfCreated(bound, result);
+    return result;
+  } catch (err) {
+    await closeIfCreated(bound, { kind: "error" });
+    throw err;
+  }
 }

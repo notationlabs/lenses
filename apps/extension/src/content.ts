@@ -47,6 +47,11 @@ window.addEventListener("message", (ev) => {
 
 // 2 — serve SW requests
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg.type === "ping") {
+    // liveness probe — the SW reloads the tab if this script never answers
+    sendResponse({ ok: true });
+    return false;
+  }
   if (msg.type === "dom_extract") {
     runDomExtract(msg as DomExtractRequest)
       .then(sendResponse)
