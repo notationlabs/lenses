@@ -25,55 +25,136 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
 chrome.tabs.onRemoved.addListener((tabId) => buffers.delete(tabId));
 
 // ---------- websocket bridge (multiplexed across all live hosts) ----------
-// Every agent session runs its own lens-host bound to a port in the range;
-// the extension keeps a socket open to each one and replies on the originating socket.
+// Every agent session runs its own lens-host bound to a port in the range; the
+// extension keeps a socket open to each one and replies on the originating socket.
+//
+// Discovery is *lazy*. Chrome logs `WebSocket ... failed: ERR_CONNECTION_REFUSED`
+// at the network layer for every probe of a dead port, and no JS handler can
+// suppress it — so the only way to stay quiet is to not probe when we've no
+// reason to expect a host. We therefore probe on startup and on page loads (the
+// moments a lens might be wanted), not on a blind timer, and remember the ports
+// we've reached so reconnects hit only real hosts. An idle browser with no host
+// running stays silent.
 const sockets = new Map<number, WebSocket>();
-// Ports that refused get skipped for a growing number of sweeps (cap ~1 min)
-// to keep the SW console from filling with connection-refused noise.
-const skipSweeps = new Map<number, number>();
-const refusals = new Map<number, number>();
 const pendingLlm = new Map<string, { resolve: (t: string) => void; reject: (e: Error) => void; ws: WebSocket }>();
 let llmSeq = 0;
+
+// Persisted in session storage so a revived SW reconnects to known hosts silently.
+const KNOWN_PORTS_KEY = "livePorts";
+const DISCOVER_COOLDOWN_MS = 10_000;
+let lastDiscover = 0;
+
+async function loadKnownPorts(): Promise<number[]> {
+  const got = await chrome.storage.session.get(KNOWN_PORTS_KEY);
+  const arr = got[KNOWN_PORTS_KEY];
+  return Array.isArray(arr) ? (arr as number[]) : [];
+}
+
+async function rememberPort(port: number, live: boolean) {
+  const set = new Set(await loadKnownPorts());
+  if (live) set.add(port);
+  else set.delete(port);
+  await chrome.storage.session.set({ [KNOWN_PORTS_KEY]: [...set] });
+}
 
 function connectPort(port: number) {
   const existing = sockets.get(port);
   if (existing && (existing.readyState === WebSocket.OPEN || existing.readyState === WebSocket.CONNECTING)) return;
   const ws = new WebSocket(`ws://127.0.0.1:${port}`);
   sockets.set(port, ws);
-  let opened = false;
   ws.onopen = () => {
-    opened = true;
-    refusals.delete(port);
+    void rememberPort(port, true);
     ws.send(JSON.stringify({ type: "hello", ua: navigator.userAgent }));
   };
   ws.onmessage = (ev) => void onBridgeMessage(ws, String(ev.data));
   ws.onclose = () => {
     if (sockets.get(port) === ws) sockets.delete(port);
-    if (!opened) {
-      const n = (refusals.get(port) ?? 0) + 1;
-      refusals.set(port, n);
-      skipSweeps.set(port, Math.min(2 ** (n - 1), 2));
-    }
+    // The host is gone (or was never there); forget the port so keepalive won't
+    // re-probe it. Rediscovery happens on the next page load or SW start.
+    void rememberPort(port, false);
   };
-  // Failed connections are normal (most ports have no host); fail quietly and retry on a later sweep.
+  // Refused connections are expected (most ports have no host); Chrome logs them
+  // regardless of this handler. Close quietly.
   ws.onerror = () => ws.close();
 }
 
-function sweep() {
-  for (let port = PORT_RANGE_START; port <= PORT_RANGE_END; port++) {
-    const skip = skipSweeps.get(port) ?? 0;
-    if (skip > 0) {
-      skipSweeps.set(port, skip - 1);
-      continue;
+/** Probe the whole range for live hosts. Cooldown-gated unless forced. */
+function discover(force = false) {
+  if (nativeHealthy) return; // the native helper is authoritative and silent
+  const now = Date.now();
+  if (!force && now - lastDiscover < DISCOVER_COOLDOWN_MS) return;
+  lastDiscover = now;
+  for (let port = PORT_RANGE_START; port <= PORT_RANGE_END; port++) connectPort(port);
+}
+
+/** Re-open sockets to hosts we've already reached (silent on success). */
+async function reconnectKnown() {
+  for (const port of await loadKnownPorts()) connectPort(port);
+}
+
+// ---------- native-messaging discovery (preferred) ----------
+// A locally-installed helper (see `pok setup native`) watches the lens-host
+// registry and *pushes* the live-port list over a stdio pipe. This channel never
+// touches a dead TCP port, so discovery is instant and silent — even for a host
+// that starts while the user is parked on a page with no navigation happening.
+// When the helper isn't installed the port disconnects immediately; we read
+// lastError (so Chrome logs nothing) and fall back to the lazy probing above.
+const NATIVE_HOST = "com.actors.lens_host";
+let nativePort: chrome.runtime.Port | null = null;
+let nativeHealthy = false;
+
+/** Reconcile live sockets against the authoritative set the helper reported. */
+function syncPorts(ports: number[]) {
+  const want = new Set(ports);
+  for (const p of want) connectPort(p);
+  for (const [p, ws] of sockets) {
+    if (!want.has(p)) {
+      ws.close();
+      sockets.delete(p);
     }
-    connectPort(port);
   }
 }
 
+function connectNative() {
+  if (nativePort) return;
+  let port: chrome.runtime.Port;
+  try {
+    port = chrome.runtime.connectNative(NATIVE_HOST);
+  } catch {
+    return; // permission missing; the lazy path covers us
+  }
+  nativePort = port;
+  port.onMessage.addListener((msg: { ports?: number[] }) => {
+    nativeHealthy = true;
+    if (Array.isArray(msg?.ports)) syncPorts(msg.ports);
+  });
+  port.onDisconnect.addListener(() => {
+    // Reading lastError suppresses Chrome's unchecked-error console warning.
+    void chrome.runtime.lastError;
+    nativePort = null;
+    nativeHealthy = false;
+  });
+}
+
+// Keep the native channel up and known hosts warm; keeps the SW alive too. None
+// of this probes a dead port, so an idle browser with no host stays quiet.
 chrome.alarms.create("lens-keepalive", { periodInMinutes: 0.4 });
-chrome.alarms.onAlarm.addListener(sweep);
-chrome.runtime.onStartup.addListener(sweep);
-sweep();
+chrome.alarms.onAlarm.addListener(() => {
+  connectNative(); // reconnect the helper if it dropped (or got installed since)
+  void reconnectKnown();
+});
+
+// Fallback discovery trigger: every completed page load — a no-op while the
+// native helper is healthy, the safety net when it isn't installed.
+chrome.tabs.onUpdated.addListener((_id, info, tab) => {
+  if (info.status === "complete" && tab.url?.startsWith("http")) discover();
+});
+
+// SW spin-up (install, browser start, or revival): prefer the native channel;
+// only fall back to a lazy probe if it hasn't come up shortly.
+connectNative();
+void reconnectKnown();
+setTimeout(() => discover(true), 1500);
 
 async function onBridgeMessage(ws: WebSocket, raw: string) {
   let msg: { type: string; [k: string]: unknown };

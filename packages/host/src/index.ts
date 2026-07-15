@@ -7,6 +7,7 @@ import { matchUrl } from "@actors/lens";
 import type { LensResult, LensSpec } from "@actors/lens";
 import { Bridge } from "./bridge.js";
 import { LensStore } from "./lens-store.js";
+import { registerHost } from "./registry.js";
 
 const PORT_RANGE_START = 4319;
 const PORT_RANGE_END = 4329;
@@ -167,6 +168,8 @@ async function main() {
   bridge = PINNED_PORT
     ? await Bridge.bind(PINNED_PORT)
     : await Bridge.bindRange(PORT_RANGE_START, PORT_RANGE_END);
+  // Announce our port so the extension's native helper can push it (no probing).
+  registerHost(bridge.port);
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error(`[lens-host] MCP on stdio; extension bridge on ws://127.0.0.1:${bridge.port}; lenses from ${LENS_DIR}`);
