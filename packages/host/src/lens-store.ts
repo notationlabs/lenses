@@ -16,11 +16,30 @@ export class LensStore {
 
   async loadLocal(): Promise<LensSpec[]> {
     this.byName.clear();
-    let files: string[] = [];
+    let entries: string[] = [];
     try {
-      files = (await readdir(this.dir)).filter((f) => f.endsWith(".json"));
+      entries = await readdir(this.dir);
     } catch {
       return [];
+    }
+    // A lens authored as `<name>.ts` is compiled (via `pok lens build`) to
+    // `<name>.json`, which is the canonical artifact the engine runs. Prefer
+    // that compiled JSON; fall back to raw `<name>.json` for JSON-only lenses.
+    const bases = new Set<string>();
+    for (const e of entries) {
+      if (e.endsWith(".ts")) bases.add(e.slice(0, -3));
+      else if (e.endsWith(".json")) bases.add(e.slice(0, -5));
+    }
+    const files: string[] = [];
+    for (const base of bases) {
+      const json = `${base}.json`;
+      if (entries.includes(json)) {
+        files.push(json);
+      } else if (entries.includes(`${base}.ts`)) {
+        console.error(
+          `[lens-host] ${base}.ts has no compiled ${json} — run \`pok lens build\``
+        );
+      }
     }
     for (const f of files) {
       try {
