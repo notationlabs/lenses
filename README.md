@@ -145,12 +145,21 @@ the same shape). The cursor rides in the URL (`?p=2`), so `next_page` is just a 
 ```
 
 Walking all pages is the recursive application of one primitive: call the lens, read
-`next_page`, call the lens on it, until `next_page` is null. Producing the cursor costs
-nothing extra — a second cheap `dom` tier reads the page's "More" link (`a.morelink`) and
-**reconciles** into `{ …items, next_page }`, so the engine gathers the page and its cursor in
-one pass. `hn/top` (front-page `?p=N`) and `hn/item` (long comment threads, `&p=N`) both do
-this; note their cursor is also a valid `accepts` target for the same lens, which is what
-closes the loop.
+`next_page`, call the lens on it, until `next_page` is null. The cursor is always a valid
+`accepts` target for the same lens, which is what closes the loop. There are two ways a lens
+sources its pages:
+
+- **Follow the source's pagination** when the site paginates server-side. `hn/top` reads the
+  front page's "More" link (`a.morelink`) — a second cheap `dom` tier that **reconciles** into
+  `{ stories, next_page }` — so each `?p=N` fetches the next 30 stories the way the site serves
+  them.
+- **Window client-side** when the site serves everything in one document. A single page load
+  of a Hacker News thread returns *all* comments, so a naive lens hands back a 200-comment,
+  100k-char payload that overflows the caller. `hn/item` instead slices the extracted comments
+  into pages in its `post` (default 30/page, override with `args:{limit}`) and emits a
+  `next_page` whose `&p=N` is a pure cursor — HN ignores the param and re-serves the whole
+  thread, and the lens slices the next window from it. The result stays bounded no matter how
+  large the thread.
 
 ## Packages
 

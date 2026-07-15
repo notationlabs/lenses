@@ -1,7 +1,7 @@
 {
   "lens": "hn/item",
   "version": 1,
-  "description": "A Hacker News story page: the story plus its comment thread. Long threads paginate; next_page is the following page of comments (null on the last page).",
+  "description": "A Hacker News story page: the story plus a page of its comment thread. HN serves the whole thread in one document, so the lens windows it client-side (default 30 comments/page); next_page is the same lens at the next window (null on the last page). Pass args {p, limit} to control the window.",
   "accepts": [
     "https://news.ycombinator.com/item?id={id}",
     "https://news.ycombinator.com/item?id={id}&p={p}"
@@ -39,17 +39,11 @@
         "text": { "selector": ".commtext" },
         "indent": { "selector": ".ind", "attr": "indent" }
       },
-      "post": "{ \"story\": { \"id\": $id }, \"comments\": $[text != null] }"
-    },
-    {
-      "kind": "dom",
-      "fields": {
-        "next_page": { "selector": "a.morelink", "attr": "href" }
-      }
+      "post": "($all := $[text != null]; $size := $number($limit ? $limit : 30); $pg := $number($p ? $p : 1); $start := ($pg - 1) * $size; { \"story\": { \"id\": $id }, \"comments\": [$all#$i[$i >= $start and $i < $start + $size]], \"next_page\": ($count($all) > $start + $size) ? \"https://news.ycombinator.com/item?id=\" & $id & \"&p=\" & ($pg + 1) : null })"
     },
     {
       "kind": "llm",
-      "prompt": "Extract this Hacker News story page as {story: {title, url, score}, comments: [{author, age, text}], next_page}. next_page is the href of the bottom 'More' link (the next page of comments) if present, otherwise null. Include only top-level fields you can actually see."
+      "prompt": "This is a Hacker News story page. Return {story: {title, url, score}, comments: [{author, age, text}], next_page}. Return at most 30 comments in reading order. If you can see more than 30 comments on the page, set next_page to the URL of this page with the query param &p=2 appended (page 2 of the client-side window); otherwise set next_page to null. Include only fields you can actually see."
     }
   ]
 }
