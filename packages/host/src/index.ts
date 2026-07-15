@@ -61,6 +61,9 @@ server.registerTool(
       "Outcome 'needs_auth': ask the user to log in in the open tab, then retry the same call.",
       "Outcome 'agent_extract': your client doesn't support MCP sampling, so the raw page snapshot is in",
       "value.text — extract the data yourself, matching the shape in value.returns, and answer from that.",
+      "Results are lenses too: any value or outcome containing {\"$lens\": <name>, \"target\": <url>}",
+      "is a callable reference — feed it straight back with lens_call({lens: <$lens>, target: <target>})",
+      "to follow it (e.g. a story's item_url, a next_page link, or a 'needs_auth' login lens).",
     ].join(" "),
     inputSchema: z.object({
       lens: z.string().describe("lens name, file path, or URL of the lens spec"),
