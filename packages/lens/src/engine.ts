@@ -6,15 +6,22 @@ import type {
   LensResult,
   LensSpec,
   LlmResolver,
+  MapSpec,
+  Resolver,
 } from "./types.js";
 import { evaluate, evaluateBool } from "./expr.js";
 import { matchRequestPattern, matchUrl } from "./url-pattern.js";
 
 /**
  * Execute a lens against a target URL. Runs the resolver list in order,
- * cheapest first, falling through on a miss:
- *   intercept (free) -> dom (cheap) -> llm (paid)
- * An outcome detected at any tier returns early.
+ * cheapest first: intercept (free) -> dom (cheap) -> llm (paid).
+ *
+ * Tiers that return an object *reconcile*: each contributes whatever fields it
+ * has, later tiers fill only the keys still absent, and the engine stops once
+ * every field in `returns` is present. So the intercept tier can hand back
+ * {limits, renews_at} and a cheap DOM tier fills the one missing `plan` — no
+ * LLM call, no duplicated extraction. Non-object results (e.g. arrays) don't
+ * reconcile: the first one wins. An outcome detected at any tier returns early.
  */
 export async function executeLens(
   spec: LensSpec,
@@ -32,6 +39,8 @@ export async function executeLens(
   const params = { ...match.params, ...args, target: targetUrl };
 
   let lastMiss = "no resolvers defined";
+  let acc: Record<string, unknown> | undefined;
+  const contributors: Resolver["kind"][] = [];
   for (const resolver of spec.resolve) {
     try {
       let result: LensResult | null;
@@ -46,13 +55,63 @@ export async function executeLens(
           result = await runLlm(resolver, spec, params, io);
           break;
       }
-      if (result) return result;
-      lastMiss = `${resolver.kind} resolver missed`;
+      if (!result) {
+        lastMiss = `${resolver.kind} resolver missed`;
+        continue;
+      }
+      // Outcomes / errors are terminal — never reconciled.
+      if (result.kind !== "value") return result;
+      // Non-object values don't merge; the first wins.
+      if (!isPlainObject(result.value)) {
+        if (acc === undefined) return result;
+        continue;
+      }
+      acc = fillAbsent(acc ?? {}, result.value);
+      contributors.push(resolver.kind);
+      if (isComplete(acc, spec.returns)) {
+        return { kind: "value", value: acc, resolver: settledResolver(contributors) };
+      }
     } catch (err) {
       lastMiss = `${resolver.kind} resolver failed: ${err instanceof Error ? err.message : String(err)}`;
     }
   }
+  // Ran out of tiers: return a partial reconciliation if we gathered anything.
+  if (acc && Object.keys(acc).length) {
+    return { kind: "value", value: acc, resolver: settledResolver(contributors) };
+  }
   return { kind: "error", message: `all resolvers exhausted (${lastMiss})` };
+}
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+/** Copy `incoming` fields into `acc`, but only where `acc` lacks them. */
+function fillAbsent(
+  acc: Record<string, unknown>,
+  incoming: Record<string, unknown>
+): Record<string, unknown> {
+  const out = { ...acc };
+  for (const [k, v] of Object.entries(incoming)) {
+    if (!(k in out) || out[k] === undefined) out[k] = v;
+  }
+  return out;
+}
+
+/**
+ * A reconciliation is complete once every top-level field declared in `returns`
+ * is present. Absent `returns` (or no field map) means there's no completeness
+ * to assess, so the first contribution suffices — preserving single-tier lenses.
+ * Only top-level keys are checked: an empty `limits: []` is still "present".
+ */
+function isComplete(acc: Record<string, unknown>, returns: unknown): boolean {
+  const fields = (returns as { fields?: unknown } | undefined)?.fields;
+  if (!isPlainObject(fields)) return true;
+  return Object.keys(fields).every((k) => k in acc && acc[k] !== undefined);
+}
+
+function settledResolver(contributors: Resolver["kind"][]): Resolver["kind"] | "reconciled" {
+  return contributors.length > 1 ? "reconciled" : contributors[0];
 }
 
 async function runIntercept(
@@ -72,11 +131,14 @@ async function runIntercept(
     if (outcome) return outcome;
     if (resp.status >= 200 && resp.status < 300) {
       const parsed = tryParse(resp.body);
-      const value = r.map ? await evaluate(r.map, parsed, params) : parsed;
+      const value = r.map ? await project(r.map, parsed, params) : parsed;
       return { kind: "value", value, resolver: "intercept" };
     }
     return null;
   }
+
+  // Multi-source: compose several captured responses into one projection.
+  if (r.sources) return runInterceptSources(r, params, io);
 
   // Read lens: look for a captured response, optionally reloading to trigger one.
   let captured = await findMatch(r, io);
@@ -101,21 +163,114 @@ async function runIntercept(
   let value: unknown;
   if (r.map && Array.isArray(working)) {
     value = [];
-    for (const item of working) (value as unknown[]).push(await evaluate(r.map, item, params));
+    for (const item of working) (value as unknown[]).push(await project(r.map, item, params));
   } else if (r.map) {
-    value = await evaluate(r.map, working, params);
+    value = await project(r.map, working, params);
   } else {
     value = working;
   }
   return { kind: "value", value, resolver: "intercept" };
 }
 
+/**
+ * Intercept tier that composes several named responses. Each source's body is
+ * bound as a JSONata variable ($name) for `map` and `detect`, so one projection
+ * can pull `limits` from $usage and `plan` from $sub. A missing source is a tier
+ * miss (fall through to dom/llm) — the whole-page llm stays the wholesale fallback.
+ */
+async function runInterceptSources(
+  r: InterceptResolver,
+  params: Record<string, unknown>,
+  io: EngineIO
+): Promise<LensResult | null> {
+  const names = Object.keys(r.sources!);
+  let found = await matchSources(r, io);
+  const missing = () => names.filter((n) => !found[n]);
+
+  if (missing().length && r.reloadOnMiss && io.reload) {
+    await io.reload();
+    const deadline = Date.now() + (r.waitMs ?? 8000);
+    while (missing().length && Date.now() < deadline) {
+      await io.sleep(250);
+      found = await matchSources(r, io);
+    }
+  }
+  if (missing().length) return null;
+
+  // detect over the response metas: `$usage.status = 401`
+  const detectVars = { ...params };
+  for (const n of names) detectVars[n] = responseContext(found[n]!);
+  const outcome = await detectOutcome(r.detect, detectVars, detectVars);
+  if (outcome) return outcome;
+
+  // any non-2xx source is a tier miss
+  for (const n of names) {
+    if (found[n]!.status < 200 || found[n]!.status >= 300) return null;
+  }
+
+  // map over the bodies: `$usage`, `$sub` bound to each (post-`items`) body
+  const mapVars = { ...params };
+  for (const n of names) {
+    let body = tryParse(found[n]!.body);
+    const items = r.sources![n].items;
+    if (items) body = await evaluate(items, body, params);
+    mapVars[n] = body;
+  }
+  const value = r.map ? await project(r.map, mapVars, mapVars) : mapVars;
+  if (value === undefined || value === null) return null;
+  return { kind: "value", value, resolver: "intercept" };
+}
+
+/** Evaluate a map projection — a single expression, or per-field object. */
+async function project(
+  map: MapSpec,
+  data: unknown,
+  params: Record<string, unknown>
+): Promise<unknown> {
+  if (typeof map === "string") return plain(await evaluate(map, data, params));
+  const out: Record<string, unknown> = {};
+  for (const [field, expr] of Object.entries(map)) out[field] = plain(await evaluate(expr, data, params));
+  return out;
+}
+
+/**
+ * Strip JSONata's internal array markers (e.g. the non-enumerable `sequence`
+ * flag on constructed arrays) so results are plain data — what the host
+ * serializes and what structural comparisons expect.
+ */
+function plain<T>(value: T): T {
+  if (Array.isArray(value)) return value.map(plain) as unknown as T;
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value)) out[k] = plain(v);
+    return out as T;
+  }
+  return value;
+}
+
 async function findMatch(r: InterceptResolver, io: EngineIO): Promise<InterceptedResponse | null> {
   const all = await io.getIntercepted();
   for (let i = all.length - 1; i >= 0; i--) {
-    if (matchRequestPattern(r.request, all[i].method, all[i].url)) return all[i];
+    if (r.request && matchRequestPattern(r.request, all[i].method, all[i].url)) return all[i];
   }
   return null;
+}
+
+async function matchSources(
+  r: InterceptResolver,
+  io: EngineIO
+): Promise<Record<string, InterceptedResponse>> {
+  const all = await io.getIntercepted();
+  const out: Record<string, InterceptedResponse> = {};
+  for (const [name, src] of Object.entries(r.sources!)) {
+    for (let i = all.length - 1; i >= 0; i--) {
+      if (matchRequestPattern(src.request, all[i].method, all[i].url)) {
+        out[name] = all[i];
+        break;
+      }
+    }
+  }
+  return out;
 }
 
 async function runDom(

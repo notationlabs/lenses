@@ -168,6 +168,143 @@ describe("executeLens", () => {
   });
 });
 
+describe("intercept sources composition", () => {
+  const composed = defineLens({
+    lens: "example/usage",
+    version: 1,
+    accepts: ["https://example.com/{page}"],
+    effects: { reads: ["example.com"], writes: [] },
+    resolve: [
+      {
+        kind: "intercept",
+        sources: {
+          usage: { request: "GET https://api.example.com/usage*" },
+          sub: { request: "GET https://api.example.com/subscription*" },
+        },
+        detect: { needs_auth: "$usage.status = 401 or $sub.status = 401" },
+        map: {
+          plan: "$sub.plan_label",
+          limits: "$usage.limits.{ 'name': kind, 'percent': $string(percent) & '%' }",
+        },
+      },
+      { kind: "llm", prompt: "Read the whole page." },
+    ],
+  });
+
+  const usageResp = (over: Partial<InterceptedResponse> = {}): InterceptedResponse => ({
+    url: "https://api.example.com/usage",
+    method: "GET",
+    status: 200,
+    body: JSON.stringify({ limits: [{ kind: "session", percent: 1 }, { kind: "weekly", percent: 65 }] }),
+    timestamp: Date.now(),
+    ...over,
+  });
+  const subResp = (over: Partial<InterceptedResponse> = {}): InterceptedResponse => ({
+    url: "https://api.example.com/subscription_details",
+    method: "GET",
+    status: 200,
+    body: JSON.stringify({ plan_label: "Max (20x)" }),
+    timestamp: Date.now(),
+    ...over,
+  });
+
+  it("composes two responses via $-bound source names and an object map", async () => {
+    const r = await executeLens(composed, "https://example.com/usage", {}, io({
+      getIntercepted: async () => [usageResp(), subResp()],
+    }));
+    expect(r).toEqual({
+      kind: "value",
+      resolver: "intercept",
+      value: {
+        plan: "Max (20x)",
+        limits: [
+          { name: "session", percent: "1%" },
+          { name: "weekly", percent: "65%" },
+        ],
+      },
+    });
+  });
+
+  it("falls through to llm when one source is missing", async () => {
+    const r = await executeLens(composed, "https://example.com/usage", {}, io({
+      getIntercepted: async () => [usageResp()], // no subscription response
+      llmExtract: async () => '{"plan":"from-llm","limits":[]}',
+    }));
+    expect(r).toMatchObject({ kind: "value", resolver: "llm", value: { plan: "from-llm" } });
+  });
+
+  it("detects an outcome across source metas", async () => {
+    const r = await executeLens(composed, "https://example.com/usage", {}, io({
+      getIntercepted: async () => [usageResp({ status: 401, body: "{}" }), subResp()],
+    }));
+    expect(r.kind).toBe("outcome");
+    if (r.kind === "outcome") expect(r.name).toBe("needs_auth");
+  });
+});
+
+describe("cross-tier reconciliation", () => {
+  // intercept supplies {limits, renews_at} but omits plan; a cheap dom tier fills plan.
+  const reconciled = defineLens({
+    lens: "example/reconcile",
+    version: 1,
+    accepts: ["https://example.com/{page}"],
+    effects: { reads: [], writes: [] },
+    returns: { type: "object", fields: { plan: "string", renews_at: "string", limits: { type: "array" } } },
+    resolve: [
+      {
+        kind: "intercept",
+        sources: { usage: { request: "GET https://api.example.com/usage*" } },
+        map: { renews_at: "'2026-08-06'", limits: "$usage.limits" },
+      },
+      { kind: "dom", fields: { plan: { selector: ".plan" } }, post: "{ 'plan': plan }" },
+      { kind: "llm", prompt: "Read the whole page." },
+    ],
+  });
+
+  const usage = (): InterceptedResponse => ({
+    url: "https://api.example.com/usage",
+    method: "GET",
+    status: 200,
+    body: JSON.stringify({ limits: [{ kind: "session" }] }),
+    timestamp: Date.now(),
+  });
+
+  it("fills the missing field from dom and reports 'reconciled'", async () => {
+    const r = await executeLens(reconciled, "https://example.com/usage", {}, io({
+      getIntercepted: async () => [usage()],
+      domExtract: async () => ({ url: "u", title: "t", value: { plan: "Max (20x)" } }),
+    }));
+    expect(r).toEqual({
+      kind: "value",
+      resolver: "reconciled",
+      value: { renews_at: "2026-08-06", limits: [{ kind: "session" }], plan: "Max (20x)" },
+    });
+  });
+
+  it("does not clobber a field an earlier tier already supplied", async () => {
+    const r = await executeLens(reconciled, "https://example.com/usage", {}, io({
+      getIntercepted: async () => [usage()],
+      // dom returns a stale/empty limits too — must not overwrite intercept's
+      domExtract: async () => ({ url: "u", title: "t", value: { plan: "Pro", limits: [] } }),
+    }));
+    expect(r).toMatchObject({ kind: "value", value: { limits: [{ kind: "session" }], plan: "Pro" } });
+  });
+
+  it("falls to llm for the missing field when dom also misses", async () => {
+    const r = await executeLens(reconciled, "https://example.com/usage", {}, io({
+      getIntercepted: async () => [usage()],
+      domExtract: async () => ({ url: "u", title: "t", value: null }),
+      llmExtract: async () => '{"plan":"Team","renews_at":"x","limits":[]}',
+    }));
+    // intercept's limits/renews_at survive; llm only fills the absent plan
+    expect(r).toMatchObject({
+      kind: "value",
+      resolver: "reconciled",
+      value: { plan: "Team", renews_at: "2026-08-06", limits: [{ kind: "session" }] },
+    });
+  });
+});
+
 describe("dom extraction spec shape", () => {
   it("passes the resolver spec through to the content-script adapter", async () => {
     let received: DomResolver | undefined;
