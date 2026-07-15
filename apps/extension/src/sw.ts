@@ -28,6 +28,10 @@ chrome.tabs.onRemoved.addListener((tabId) => buffers.delete(tabId));
 // Every agent session runs its own lens-host bound to a port in the range;
 // the extension keeps a socket open to each one and replies on the originating socket.
 const sockets = new Map<number, WebSocket>();
+// Ports that refused get skipped for a growing number of sweeps (cap ~1 min)
+// to keep the SW console from filling with connection-refused noise.
+const skipSweeps = new Map<number, number>();
+const refusals = new Map<number, number>();
 const pendingLlm = new Map<string, { resolve: (t: string) => void; reject: (e: Error) => void; ws: WebSocket }>();
 let llmSeq = 0;
 
@@ -36,17 +40,34 @@ function connectPort(port: number) {
   if (existing && (existing.readyState === WebSocket.OPEN || existing.readyState === WebSocket.CONNECTING)) return;
   const ws = new WebSocket(`ws://127.0.0.1:${port}`);
   sockets.set(port, ws);
-  ws.onopen = () => ws.send(JSON.stringify({ type: "hello", ua: navigator.userAgent }));
+  let opened = false;
+  ws.onopen = () => {
+    opened = true;
+    refusals.delete(port);
+    ws.send(JSON.stringify({ type: "hello", ua: navigator.userAgent }));
+  };
   ws.onmessage = (ev) => void onBridgeMessage(ws, String(ev.data));
   ws.onclose = () => {
     if (sockets.get(port) === ws) sockets.delete(port);
+    if (!opened) {
+      const n = (refusals.get(port) ?? 0) + 1;
+      refusals.set(port, n);
+      skipSweeps.set(port, Math.min(2 ** (n - 1), 2));
+    }
   };
-  // Failed connections are normal (most ports have no host); fail quietly and retry on the next sweep.
+  // Failed connections are normal (most ports have no host); fail quietly and retry on a later sweep.
   ws.onerror = () => ws.close();
 }
 
 function sweep() {
-  for (let port = PORT_RANGE_START; port <= PORT_RANGE_END; port++) connectPort(port);
+  for (let port = PORT_RANGE_START; port <= PORT_RANGE_END; port++) {
+    const skip = skipSweeps.get(port) ?? 0;
+    if (skip > 0) {
+      skipSweeps.set(port, skip - 1);
+      continue;
+    }
+    connectPort(port);
+  }
 }
 
 chrome.alarms.create("lens-keepalive", { periodInMinutes: 0.4 });
