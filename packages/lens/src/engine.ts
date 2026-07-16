@@ -322,13 +322,15 @@ async function runLlm(
   try {
     raw = await io.llmExtract(prompt);
   } catch (err) {
-    // The calling agent doesn't support MCP sampling: hand the snapshot back
-    // as a structured outcome so the agent extracts in its own context.
+    // The calling agent doesn't support MCP sampling: hand the raw snapshot
+    // back and let the agent answer from it directly. No schema — structure
+    // only pays for itself when the host consumes the result (cache,
+    // reconcile, materialise refs), and this path bypasses all of that.
     if (err instanceof Error && err.message === "sampling_unsupported") {
       return {
         kind: "outcome",
         name: "agent_extract",
-        value: { url: snap.url, title: snap.title, text: snap.text, returns: spec.returns },
+        value: { url: snap.url, title: snap.title, text: snap.text },
         resolver: "llm",
       };
     }

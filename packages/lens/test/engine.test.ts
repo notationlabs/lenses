@@ -447,7 +447,7 @@ describe("llm tier without sampling support", () => {
       kind: "outcome",
       name: "agent_extract",
       resolver: "llm",
-      value: { url: "https://example.com/home", title: "Things", text: "thing a\nthing b", returns: undefined },
+      value: { url: "https://example.com/home", title: "Things", text: "thing a\nthing b" },
     });
   });
 
