@@ -1,12 +1,7 @@
 import jsonata from "jsonata";
 
 /**
- * Evaluate a JSONata expression against data. JSONata is the whole
- * "scripting" surface a lens gets — no host access, pure data-to-data —
- * which is what makes third-party lens documents safe to execute.
- *
- * `params` (URL hole bindings and call args) are exposed as JSONata
- * variables, e.g. `$handle`, plus `$params` for the whole bag.
+ * Evaluate sandboxed JSONata with call arguments exposed as `$name` and `$params`.
  */
 export async function evaluate(
   expr: string,
@@ -21,11 +16,7 @@ export async function evaluate(
   return compiled.evaluate(data, bindings);
 }
 
-/**
- * A detect expression that throws (e.g. a syntax error) is an authoring bug:
- * let it propagate so the tier fails loudly instead of the outcome silently
- * never firing. Missing data doesn't throw in JSONata — it's just falsy.
- */
+/** Evaluate detection and let authoring errors propagate. */
 export async function evaluateBool(
   expr: string,
   data: unknown,

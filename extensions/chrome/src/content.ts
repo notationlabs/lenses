@@ -1,8 +1,4 @@
-/**
- * Isolated-world content script. Two jobs:
- *  1. relay intercepted responses from the MAIN-world patch to the SW
- *  2. serve DOM extraction / snapshot requests from the SW
- */
+/** Relay page intercepts and serve service-worker extraction requests. */
 
 export {};
 
@@ -21,9 +17,7 @@ interface DomExtractRequest {
   };
 }
 
-// 1 — relay intercepts up to the service worker
-// After an extension reload this script is orphaned and sendMessage throws
-// synchronously ("Extension context invalidated") — go permanently silent.
+// Stop relaying once an extension reload orphans this script.
 let orphaned = false;
 window.addEventListener("message", (ev) => {
   const d = ev.data;
@@ -40,10 +34,9 @@ window.addEventListener("message", (ev) => {
   }
 });
 
-// 2 — serve SW requests
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === "ping") {
-    // liveness probe — the SW reloads the tab if this script never answers
+    // The service worker reloads tabs that fail this probe.
     sendResponse({ ok: true });
     return false;
   }
@@ -71,7 +64,6 @@ function extractField(root: Element, f: DomFieldSpec): string | null {
   if (!el) return null;
   if (f.attr) {
     const v = el.getAttribute(f.attr);
-    // resolve relative URLs for href/src
     if (v && (f.attr === "href" || f.attr === "src")) {
       try {
         return new URL(v, location.href).href;

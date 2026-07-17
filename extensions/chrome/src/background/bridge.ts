@@ -38,8 +38,7 @@ async function rememberPort(port: number, live: boolean): Promise<void> {
   await update;
 }
 
-// Chrome reports refused WebSocket probes even when onerror is handled. Probe
-// only around likely host activity, then reconnect ports known to be live.
+// Limit noisy refused-connection probes; reconnect known ports directly.
 function connectPort(port: number): void {
   const existing = sockets.get(port);
   if (

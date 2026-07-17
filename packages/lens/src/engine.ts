@@ -8,13 +8,8 @@ import { isPlainObject } from "./util.js";
 import { fillAbsent, satisfiesReturns } from "./reconcile.js";
 
 /**
- * Execute a lens against a target URL. Runs the resolver list in order,
- * cheapest first: intercept (free) -> dom (cheap) -> llm (paid).
- *
- * Object results *reconcile*: each tier fills only the keys still absent.
- * Every result shape is checked against `returns`; an incomplete value is
- * passed to the LLM tier as gathered context or returned as explicitly partial.
- * An outcome detected at any tier returns early.
+ * Run resolvers in cost order, filling fields until `returns` is satisfied.
+ * Outcomes return immediately; incomplete values become LLM context or partial results.
  */
 export async function executeLens(
   spec: LensSpec,
@@ -51,8 +46,7 @@ export async function executeLens(
       lastMiss = `${resolver.kind} resolver missed`;
       continue;
     }
-    // Outcomes / errors are terminal — never reconciled. agent_extract
-    // additionally carries whatever fields cheaper tiers already gathered.
+    // Outcomes and errors are terminal; agent extraction includes gathered fields.
     if (result.kind !== "value") {
       if (result.kind === "outcome" && result.name === "agent_extract" && gathered !== undefined) {
         return {
@@ -79,8 +73,7 @@ export async function executeLens(
       };
     }
   }
-  // Out of tiers without completing `returns`: return what we gathered, but
-  // flag it partial so the host won't cache a degraded result.
+  // Mark incomplete results so the host will not cache them.
   if (gathered !== undefined) {
     return {
       kind: "value",

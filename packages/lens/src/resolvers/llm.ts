@@ -1,7 +1,6 @@
 import type { EngineIO, LensResult, LlmResolver } from "../types.js";
 
-// The calling agent is itself a model, so extraction is handed back to it as
-// an `agent_extract` outcome: the author's prompt plus the page snapshot.
+// Return the prompt and snapshot to the calling model for extraction.
 export async function runLlm(r: LlmResolver, io: EngineIO): Promise<LensResult> {
   const snap = await io.snapshot(r.maxSnapshotChars ?? 20000);
   return {

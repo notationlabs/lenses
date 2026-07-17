@@ -19,9 +19,7 @@ export async function detectOutcome(
   return null;
 }
 
-// An outcome declared as a `$lens` ref becomes a callable ref with `target`
-// bound (declared JSONata against the detect ctx, else the original target).
-// Otherwise the raw detect ctx is returned.
+// Bind declared lens outcomes; otherwise return the detection context.
 async function outcomeValue(
   name: string,
   ctx: unknown,
