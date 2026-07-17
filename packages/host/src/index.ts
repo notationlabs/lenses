@@ -82,6 +82,7 @@ server.registerTool(
     const key = cacheKey(spec, target, callArgs);
     const ttl = (spec.effects.cache ?? 0) * 1000;
     const hit = cache.get(key);
+    if (hit && hit.expiresAt <= Date.now()) cache.delete(key);
     if (ttl > 0 && hit && hit.expiresAt > Date.now()) {
       return okResult({ ...hit.result, cached: true });
     }
