@@ -31,7 +31,7 @@ export async function callLens(
   const bound = await bindTab(spec, target);
   const io: EngineIO = {
     getIntercepted: async () => interceptedResponses(bound.tabId),
-    reload: () => reloadTab(bound.tabId),
+    reload: () => reloadTab(bound.tabId, spec.loadTimeoutMs),
     domExtract: (resolver: DomResolver) =>
       tabMessage(bound.tabId, { type: "dom_extract", spec: resolver }),
     snapshot: (maxChars: number) => tabMessage(bound.tabId, { type: "snapshot", maxChars }),

@@ -25,14 +25,21 @@ interface ObserveMessage {
   waitMs: number;
 }
 
-type ExtMessage = ResultMessage | { type: "hello"; ua?: string };
+type ExtMessage = ResultMessage | { type: "hello"; ua?: string } | { type: "pong" };
+
+const INITIAL_CONNECT_WAIT_MS = 5_000;
+const RECONNECT_WAIT_MS = 35_000;
+const KEEPALIVE_MS = 20_000;
 
 export class Bridge {
   private wss: WebSocketServer;
   private ext: WebSocket | null = null;
   private extInfo = "";
   private pending = new Map<string, { resolve: (r: LensResult) => void; timer: NodeJS.Timeout }>();
+  private connectionWaiters = new Set<() => void>();
+  private hasConnected = false;
   private seq = 0;
+  private keepalive: NodeJS.Timeout;
   readonly port: number;
 
   private constructor(wss: WebSocketServer, port: number) {
@@ -46,6 +53,9 @@ export class Bridge {
       this.ext?.close();
       this.ext = ws;
       this.extInfo = "";
+      this.hasConnected = true;
+      for (const resolve of this.connectionWaiters) resolve();
+      this.connectionWaiters.clear();
       ws.on("message", (data) => this.onMessage(ws, data.toString()));
       ws.on("close", () => {
         if (this.ext === ws) {
@@ -54,6 +64,15 @@ export class Bridge {
         }
       });
     });
+    this.keepalive = setInterval(() => {
+      if (!this.connected) return;
+      try {
+        this.ext!.send(JSON.stringify({ type: "ping" }));
+      } catch {
+        // The close event owns connection cleanup and pending-call resolution.
+      }
+    }, KEEPALIVE_MS);
+    this.keepalive.unref();
   }
 
   /** Bind a single explicit port, rejecting on failure (e.g. EADDRINUSE). */
@@ -105,16 +124,17 @@ export class Bridge {
     return this.request((id) => ({ type: "observe", id, target, waitMs }), timeoutMs);
   }
 
-  private request(
+  private async request(
     make: (id: string) => CallMessage | ObserveMessage,
     timeoutMs: number
   ): Promise<LensResult> {
-    if (!this.connected) {
-      return Promise.resolve({
+    const connectionWaitMs = this.hasConnected ? RECONNECT_WAIT_MS : INITIAL_CONNECT_WAIT_MS;
+    if (!this.connected && !(await this.waitForConnection(connectionWaitMs))) {
+      return {
         kind: "error",
         message:
-          "browser extension is not connected — is Chrome running with the Lens Host extension installed?",
-      });
+          `browser extension did not connect within ${connectionWaitMs}ms — is Chrome running with the Lens Host extension installed?`,
+      };
     }
     const id = `call_${++this.seq}`;
     const msg = make(id);
@@ -135,6 +155,26 @@ export class Bridge {
     });
   }
 
+  private waitForConnection(timeoutMs: number): Promise<boolean> {
+    if (this.connected) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      let settled = false;
+      const connected = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(true);
+      };
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        this.connectionWaiters.delete(connected);
+        resolve(false);
+      }, timeoutMs);
+      this.connectionWaiters.add(connected);
+    });
+  }
+
   private onMessage(_ws: WebSocket, raw: string) {
     let msg: ExtMessage;
     try {
@@ -146,6 +186,7 @@ export class Bridge {
       this.extInfo = msg.ua ?? "";
       return;
     }
+    if (msg.type === "pong") return;
     if (msg.type === "result") {
       const p = this.pending.get(msg.id);
       if (p) {
@@ -157,6 +198,7 @@ export class Bridge {
   }
 
   close() {
+    clearInterval(this.keepalive);
     this.resolvePending({ kind: "error", message: "extension bridge closed" });
     this.ext?.close();
     this.wss.close();
