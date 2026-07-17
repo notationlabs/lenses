@@ -454,12 +454,12 @@ describe("llm tier", () => {
     });
   });
 
-  it("errors when the snapshot itself fails", async () => {
-    const r = await executeLens(spec, "https://example.com/home", {}, io({
+  it("propagates snapshot failures", async () => {
+    const execution = executeLens(spec, "https://example.com/home", {}, io({
       snapshot: async () => {
         throw new Error("tab closed");
       },
     }));
-    expect(r.kind).toBe("error");
+    await expect(execution).rejects.toThrow("tab closed");
   });
 });

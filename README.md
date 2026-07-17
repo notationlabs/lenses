@@ -94,8 +94,10 @@ Chrome extension (extensions/chrome)   ← MV3 service worker runs the resolver 
    └─ snapshot returned to the caller  → llm tier
 ```
 
-The resolver engine lives in `packages/lens` – pure, environment-free, unit-tested.
-The host and the extension are thin shells around it.
+The resolver engine lives in `packages/lens` – pure and environment-free. Focused
+unit tests cover its reusable machinery, while shipped-document integration tests
+run real lens specs through validation, extraction, reconciliation, and lens-ref
+materialisation. The host and the extension are thin shells around it.
 
 ## Lens spec reference
 
