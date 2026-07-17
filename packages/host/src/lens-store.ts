@@ -18,8 +18,10 @@ export class LensStore {
     let entries: string[] = [];
     try {
       entries = await readdir(this.dir);
-    } catch {
-      return [];
+    } catch (err) {
+      // No lens dir yet is normal; anything else (perms, not-a-dir) should surface.
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw err;
     }
     for (const file of entries.filter((e) => e.endsWith(".json"))) {
       try {

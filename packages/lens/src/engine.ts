@@ -175,8 +175,8 @@ async function runIntercept(
   const metas: Record<string, unknown> = {};
   for (const n of names) metas[n] = responseContext(found.get(n)!);
   const outcome = r.sources
-    ? await detectOutcome(r.detect, { ...params, ...metas }, { ...params, ...metas }, outcomes)
-    : await detectOutcome(r.detect, metas[names[0]], params, outcomes);
+    ? await detectOutcome(r.detect, { ...params, ...metas }, { ...params, ...metas }, outcomes, "intercept")
+    : await detectOutcome(r.detect, metas[names[0]], params, outcomes, "intercept");
   if (outcome) return outcome;
 
   // any non-2xx response is a tier miss
@@ -268,7 +268,7 @@ async function runDom(
   outcomes: LensSpec["outcomes"]
 ): Promise<LensResult | null> {
   const extracted = await io.domExtract(r);
-  const outcome = await detectOutcome(r.detect, { url: extracted.url, title: extracted.title }, params, outcomes);
+  const outcome = await detectOutcome(r.detect, { url: extracted.url, title: extracted.title }, params, outcomes, "dom");
   if (outcome) return outcome;
 
   let value = extracted.value;
@@ -296,13 +296,14 @@ async function detectOutcome(
   detect: Record<string, string> | undefined,
   ctx: unknown,
   params: Record<string, unknown>,
-  outcomes: LensSpec["outcomes"]
+  outcomes: LensSpec["outcomes"],
+  resolver: Resolver["kind"]
 ): Promise<LensResult | null> {
   if (!detect) return null;
   for (const [name, expr] of Object.entries(detect)) {
     if (await evaluateBool(expr, ctx, params)) {
       const value = await outcomeValue(name, ctx, params, outcomes);
-      return { kind: "outcome", name, value, resolver: "intercept" };
+      return { kind: "outcome", name, value, resolver };
     }
   }
   return null;

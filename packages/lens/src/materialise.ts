@@ -13,21 +13,7 @@ import { evaluate } from "./expr.js";
  */
 export async function materialiseLenses(value: unknown, returns: unknown): Promise<unknown> {
   if (!isPlainObject(returns)) return value;
-  return applySchema(value, returns);
-}
-
-/** A schema node: an object with a `type` (object/array) plus fields/items. */
-async function applySchema(value: unknown, schema: Record<string, unknown>): Promise<unknown> {
-  if (schema.type === "array" && isPlainObject(schema.items)) {
-    if (!Array.isArray(value)) return value;
-    const out: unknown[] = [];
-    for (const row of value) out.push(await applyFieldMap(row, schema.items));
-    return out;
-  }
-  if (schema.type === "object" && isPlainObject(schema.fields)) {
-    return applyFieldMap(value, schema.fields);
-  }
-  return value;
+  return materialiseField(value, returns, {});
 }
 
 /** Apply a field map (fieldName -> field schema) to a single object. */

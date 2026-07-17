@@ -21,14 +21,15 @@ export async function evaluate(
   return compiled.evaluate(data, bindings);
 }
 
+/**
+ * A detect expression that throws (e.g. a syntax error) is an authoring bug:
+ * let it propagate so the tier fails loudly instead of the outcome silently
+ * never firing. Missing data doesn't throw in JSONata — it's just falsy.
+ */
 export async function evaluateBool(
   expr: string,
   data: unknown,
   params: Record<string, unknown> = {}
 ): Promise<boolean> {
-  try {
-    return Boolean(await evaluate(expr, data, params));
-  } catch {
-    return false;
-  }
+  return Boolean(await evaluate(expr, data, params));
 }

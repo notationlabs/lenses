@@ -147,7 +147,9 @@ interface BoundTab {
 
 async function bindTab(spec: LensSpec, target: string): Promise<BoundTab> {
   const tabs = await chrome.tabs.query({});
-  // prefer a tab already on the exact target, then any tab matching accepts
+  // reuse a tab already on the exact target (its intercept buffer is warm);
+  // else navigate a tab matching `accepts` — right site, wrong page — to the
+  // target, so calls churn one tab instead of opening a new one each time.
   const exact = tabs.find((t) => t.url === target || t.url === target.replace(/\/$/, ""));
   if (exact?.id !== undefined) {
     await ensureContentScript(exact.id);
@@ -155,7 +157,9 @@ async function bindTab(spec: LensSpec, target: string): Promise<BoundTab> {
   }
   const accepted = tabs.find((t) => t.url && matchUrl(spec.accepts, t.url));
   if (accepted?.id !== undefined) {
-    await ensureContentScript(accepted.id);
+    buffers.set(accepted.id, []);
+    await chrome.tabs.update(accepted.id, { url: target });
+    await waitForLoad(accepted.id);
     return { tabId: accepted.id, created: false };
   }
   const created = await chrome.tabs.create({ url: target, active: false });
