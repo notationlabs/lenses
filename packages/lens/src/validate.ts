@@ -47,6 +47,24 @@ const llmSchema = z.strictObject({
   maxSnapshotChars: z.number().int().positive().optional(),
 });
 
+const returnSchema: z.ZodType<unknown> = z.lazy(() =>
+  z.union([
+    z.enum(["string", "number", "boolean", "integer", "null"]),
+    z.strictObject({
+      $lens: z.string(),
+      target: expression.optional(),
+    }),
+    z.strictObject({
+      type: z.literal("object"),
+      fields: z.record(z.string(), returnSchema).optional(),
+    }),
+    z.strictObject({
+      type: z.literal("array"),
+      items: z.record(z.string(), returnSchema).optional(),
+    }),
+  ])
+);
+
 const lensSpecSchema = z.strictObject({
   lens: z.string().regex(/^[a-z0-9_-]+\/[a-z0-9_-]+$/, {
     message: 'must be a namespaced name like "hn/top"',
@@ -54,7 +72,7 @@ const lensSpecSchema = z.strictObject({
   version: z.number().int().positive(),
   description: z.string().optional(),
   accepts: z.array(z.string()).min(1),
-  returns: z.unknown().optional(),
+  returns: returnSchema.optional(),
   outcomes: z.record(z.string(), z.unknown()).optional(),
   effects: z.strictObject({
     reads: z.array(z.string()),

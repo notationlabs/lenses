@@ -35,4 +35,13 @@ describe("validateSpec", () => {
       })
     ).toThrow(/either.*request.*sources/i);
   });
+
+  it("rejects return contracts the engine cannot enforce", () => {
+    expect(() =>
+      validateSpec({
+        ...validSpec,
+        returns: { type: "list", items: { title: "string" } },
+      })
+    ).toThrow(/returns/);
+  });
 });

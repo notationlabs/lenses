@@ -17,7 +17,8 @@ describe("resolver result reconciliation", () => {
       },
     };
     expect(satisfiesReturns({ story: { title: "hello" } }, returns)).toBe(false);
-    expect(satisfiesReturns({ story: { title: "hello", score: null } }, returns)).toBe(true);
+    expect(satisfiesReturns({ story: { title: "hello", score: null } }, returns)).toBe(false);
+    expect(satisfiesReturns({ story: { title: "hello", score: "42 points" } }, returns)).toBe(true);
   });
 
   it("checks every object in a declared array", () => {
@@ -26,5 +27,10 @@ describe("resolver result reconciliation", () => {
       items: { title: "string", url: "string" },
     };
     expect(satisfiesReturns([{ title: "one", url: "/1" }, { title: "two" }], returns)).toBe(false);
+  });
+
+  it("checks primitive field types", () => {
+    expect(satisfiesReturns({ count: "2" }, { type: "object", fields: { count: "number" } })).toBe(false);
+    expect(satisfiesReturns({ count: 2 }, { type: "object", fields: { count: "number" } })).toBe(true);
   });
 });

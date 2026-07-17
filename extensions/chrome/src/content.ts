@@ -4,6 +4,8 @@
  *  2. serve DOM extraction / snapshot requests from the SW
  */
 
+export {};
+
 const MARK = "__lens_host__";
 
 interface DomFieldSpec {

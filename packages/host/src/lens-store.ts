@@ -14,26 +14,26 @@ export class LensStore {
   constructor(private dir: string) {}
 
   async loadLocal(): Promise<LensSpec[]> {
-    this.byName.clear();
+    const loaded = new Map<string, LensSpec>();
     let entries: string[] = [];
     try {
       entries = await readdir(this.dir);
     } catch (err) {
       // No lens dir yet is normal; anything else (perms, not-a-dir) should surface.
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        this.byName = loaded;
+        return [];
+      }
       throw err;
     }
     for (const file of entries.filter((e) => e.endsWith(".json"))) {
-      try {
-        const spec = validateSpec(JSON.parse(await readFile(join(this.dir, file), "utf8")));
-        this.byName.set(`${spec.lens}@v${spec.version}`, spec);
-        // unversioned name points at the highest version
-        const existing = this.byName.get(spec.lens);
-        if (!existing || existing.version < spec.version) this.byName.set(spec.lens, spec);
-      } catch (err) {
-        console.error(`[lens-host] skipping ${file}: ${err instanceof Error ? err.message : err}`);
-      }
+      const spec = validateSpec(JSON.parse(await readFile(join(this.dir, file), "utf8")));
+      loaded.set(`${spec.lens}@v${spec.version}`, spec);
+      // unversioned name points at the highest version
+      const existing = loaded.get(spec.lens);
+      if (!existing || existing.version < spec.version) loaded.set(spec.lens, spec);
     }
+    this.byName = loaded;
     return this.list();
   }
 

@@ -44,11 +44,18 @@ export class Bridge {
     this.port = port;
     this.wss.on("connection", (ws) => {
       // Latest extension connection wins; an old SW instance may linger briefly.
+      if (this.ext) {
+        this.resolvePending({ kind: "error", message: "browser extension connection replaced" });
+      }
       this.ext?.close();
       this.ext = ws;
+      this.extInfo = "";
       ws.on("message", (data) => this.onMessage(ws, data.toString()));
       ws.on("close", () => {
-        if (this.ext === ws) this.ext = null;
+        if (this.ext === ws) {
+          this.ext = null;
+          this.resolvePending({ kind: "error", message: "browser extension disconnected" });
+        }
       });
     });
   }
@@ -121,7 +128,14 @@ export class Bridge {
         resolve({ kind: "error", message: `${msg.type} timed out after ${timeoutMs}ms` });
       }, timeoutMs);
       this.pending.set(id, { resolve, timer });
-      this.ext!.send(JSON.stringify(msg));
+      this.ext!.send(JSON.stringify(msg), (error) => {
+        if (!error) return;
+        const pending = this.pending.get(id);
+        if (!pending) return;
+        clearTimeout(pending.timer);
+        this.pending.delete(id);
+        pending.resolve({ kind: "error", message: `sending ${msg.type} to browser extension: ${error.message}` });
+      });
     });
   }
 
@@ -147,6 +161,16 @@ export class Bridge {
   }
 
   close() {
+    this.resolvePending({ kind: "error", message: "extension bridge closed" });
+    this.ext?.close();
     this.wss.close();
+  }
+
+  private resolvePending(result: LensResult) {
+    for (const pending of this.pending.values()) {
+      clearTimeout(pending.timer);
+      pending.resolve(result);
+    }
+    this.pending.clear();
   }
 }
