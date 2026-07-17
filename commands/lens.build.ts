@@ -2,7 +2,7 @@ import { readdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { defineCommand } from "@pokit/core";
-import { defineLens, validateSpec } from "@actors/lens";
+import { defineLens, validateSpec } from "@djgrant/lens";
 
 /** Serialize to canonical JSON: 2-space indent, insertion-ordered keys, trailing newline. */
 function canonical(spec: unknown): string {

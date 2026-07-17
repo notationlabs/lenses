@@ -1,11 +1,10 @@
 import { WebSocketServer, WebSocket } from "ws";
-import type { LensResult, LensSpec } from "@actors/lens";
+import type { LensResult, LensSpec } from "@djgrant/lens";
 
 /**
  * The bridge between the lens-host process and the browser extension.
  * The extension's service worker dials out to ws://127.0.0.1:<port>;
- * the host pushes lens calls in and gets results (or LLM-tier sampling
- * requests, which it forwards to the connected MCP client) back.
+ * the host pushes lens calls in and gets results back.
  */
 
 interface CallMessage {
@@ -23,13 +22,6 @@ interface ResultMessage {
   result: LensResult;
 }
 
-interface LlmRequestMessage {
-  type: "llm";
-  id: string;
-  callId: string;
-  prompt: string;
-}
-
 interface ObserveMessage {
   type: "observe";
   id: string;
@@ -37,18 +29,13 @@ interface ObserveMessage {
   waitMs: number;
 }
 
-type ExtMessage = ResultMessage | LlmRequestMessage | { type: "hello"; ua?: string };
-
-export type Sampler = (prompt: string) => Promise<string>;
+type ExtMessage = ResultMessage | { type: "hello"; ua?: string };
 
 export class Bridge {
   private wss: WebSocketServer;
   private ext: WebSocket | null = null;
   private extInfo = "";
-  private pending = new Map<
-    string,
-    { resolve: (r: LensResult) => void; sampler: Sampler; timer: NodeJS.Timeout }
-  >();
+  private pending = new Map<string, { resolve: (r: LensResult) => void; timer: NodeJS.Timeout }>();
   private seq = 0;
   readonly port: number;
 
@@ -100,12 +87,11 @@ export class Bridge {
     return this.connected ? `connected${this.extInfo ? ` (${this.extInfo})` : ""}` : "not connected";
   }
 
-  /** Execute a lens in the browser. `sampler` serves the LLM tier for this call. */
+  /** Execute a lens in the browser. */
   call(
     spec: LensSpec,
     target: string,
     args: Record<string, unknown>,
-    sampler: Sampler,
     timeoutMs = 90_000
   ): Promise<LensResult> {
     if (!this.connected) {
@@ -122,7 +108,7 @@ export class Bridge {
         this.pending.delete(id);
         resolve({ kind: "error", message: `lens call timed out after ${timeoutMs}ms` });
       }, timeoutMs);
-      this.pending.set(id, { resolve, sampler, timer });
+      this.pending.set(id, { resolve, timer });
       this.ext!.send(JSON.stringify(msg));
     });
   }
@@ -143,12 +129,12 @@ export class Bridge {
         this.pending.delete(id);
         resolve({ kind: "error", message: `observe timed out after ${timeoutMs}ms` });
       }, timeoutMs);
-      this.pending.set(id, { resolve, sampler: async () => "", timer });
+      this.pending.set(id, { resolve, timer });
       this.ext!.send(JSON.stringify(msg));
     });
   }
 
-  private async onMessage(ws: WebSocket, raw: string) {
+  private onMessage(_ws: WebSocket, raw: string) {
     let msg: ExtMessage;
     try {
       msg = JSON.parse(raw);
@@ -166,27 +152,6 @@ export class Bridge {
         this.pending.delete(msg.id);
         p.resolve(msg.result);
       }
-      return;
-    }
-    if (msg.type === "llm") {
-      const p = this.pending.get(msg.callId);
-      let reply: { type: "llm_result"; id: string; ok: boolean; text?: string; error?: string };
-      if (!p) {
-        reply = { type: "llm_result", id: msg.id, ok: false, error: "no pending call for sampling" };
-      } else {
-        try {
-          const text = await p.sampler(msg.prompt);
-          reply = { type: "llm_result", id: msg.id, ok: true, text };
-        } catch (err) {
-          reply = {
-            type: "llm_result",
-            id: msg.id,
-            ok: false,
-            error: err instanceof Error ? err.message : String(err),
-          };
-        }
-      }
-      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(reply));
     }
   }
 

@@ -3,8 +3,8 @@ import { McpServer } from "@modelcontextprotocol/server";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import * as z from "zod/v4";
 import { resolve } from "node:path";
-import { matchUrl } from "@actors/lens";
-import type { LensResult, LensSpec } from "@actors/lens";
+import { matchUrl } from "@djgrant/lens";
+import type { LensResult, LensSpec } from "@djgrant/lens";
 import { Bridge } from "./bridge.js";
 import { LensStore } from "./lens-store.js";
 import { registerHost } from "./registry.js";
@@ -59,8 +59,8 @@ server.registerTool(
       "`lens` is a name from lens_list (e.g. \"hn/top\"), a path, or an https URL to a lens JSON spec.",
       "Returns {kind:'value'} on success, {kind:'outcome'} for structured conditions, or {kind:'error'}.",
       "Outcome 'needs_auth': ask the user to log in in the open tab, then retry the same call.",
-      "Outcome 'agent_extract': your client doesn't support MCP sampling, so the raw page snapshot is in",
-      "value.text — answer from it directly.",
+      "Outcome 'agent_extract': the raw page snapshot is in value.text and the lens's extraction",
+      "instruction in value.prompt — answer from them directly.",
       "Results are lenses too: any value or outcome containing {\"$lens\": <name>, \"target\": <url>}",
       "is a callable reference — feed it straight back with lens_call({lens: <$lens>, target: <target>})",
       "to follow it (e.g. a story's item_url, a next_page link, or a 'needs_auth' login lens).",
@@ -71,7 +71,7 @@ server.registerTool(
       args: z.record(z.string(), z.unknown()).optional().describe("extra arguments for the lens"),
     }),
   },
-  async ({ lens, target, args }, ctx) => {
+  async ({ lens, target, args }) => {
     const spec = await store.resolveRef(lens);
     const callArgs = args ?? {};
 
@@ -95,29 +95,7 @@ server.registerTool(
       return okResult({ ...hit.result, cached: true });
     }
 
-    // The LLM resolver tier is served by the *calling agent's* model via MCP
-    // sampling — the product never holds an API key.
-    const sampler = async (prompt: string): Promise<string> => {
-      let res;
-      try {
-        res = await ctx.mcpReq.requestSampling({
-          messages: [{ role: "user", content: { type: "text", text: prompt } }],
-          maxTokens: 4000,
-        });
-      } catch (err) {
-        // JSON-RPC -32601: the client (e.g. Claude Code) doesn't support sampling.
-        const msg = err instanceof Error ? err.message : String(err);
-        if (msg.includes("Method not found") || msg.includes("-32601")) {
-          throw new Error("sampling_unsupported");
-        }
-        throw err;
-      }
-      const content = res.content as { type: string; text?: string };
-      if (content.type === "text" && content.text) return content.text;
-      throw new Error("sampling returned non-text content");
-    };
-
-    const result = await bridge.call(spec, target, callArgs, sampler);
+    const result = await bridge.call(spec, target, callArgs);
     // Only cache a value that fully satisfied the declared `returns` shape — a
     // `partial` reconciliation (e.g. intercept flaked, only the dom tier's
     // `plan` came back) must not be replayed for the whole TTL and mask the

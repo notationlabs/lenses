@@ -1,5 +1,5 @@
 {
-  "name": "actors",
+  "name": "lenses",
   "private": true,
   "version": "0.1.0",
   "description": "Lenses: the web as a typed graph of callable functions. MCP-connected browser extension host.",
@@ -9,10 +9,8 @@
   },
   "packageManager": "pnpm@11.6.0",
   "devDependencies": {
-    "@actors/lens": "workspace:*",
+    "@djgrant/lens": "workspace:*",
     "@pokit/core": "^0.3.1",
-    "@pokit/terminal": "^0.3.1",
-    "ws": "^8.21.0",
-    "zod": "^4.4.3"
+    "@pokit/terminal": "^0.3.1"
   }
 }

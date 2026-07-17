@@ -9,7 +9,7 @@ import {
   stream,
   string,
   url,
-} from "@actors/lens";
+} from "@djgrant/lens";
 
 export default defineLens({
   lens: "hn/top",

@@ -1,10 +1,10 @@
 /**
  * Service worker: connects out to the lens-host process over a local
  * WebSocket, receives lens calls, binds each call to a tab, and runs
- * the @actors/lens resolver engine against that tab.
+ * the @djgrant/lens resolver engine against that tab.
  */
-import { executeLens, matchUrl } from "@actors/lens";
-import type { DomResolver, EngineIO, InterceptedResponse, LensSpec } from "@actors/lens";
+import { executeLens, matchUrl } from "@djgrant/lens";
+import type { DomResolver, EngineIO, InterceptedResponse, LensSpec } from "@djgrant/lens";
 
 const PORT_RANGE_START = 4319;
 const PORT_RANGE_END = 4329;
@@ -36,8 +36,6 @@ chrome.tabs.onRemoved.addListener((tabId) => buffers.delete(tabId));
 // we've reached so reconnects hit only real hosts. An idle browser with no host
 // running stays silent.
 const sockets = new Map<number, WebSocket>();
-const pendingLlm = new Map<string, { resolve: (t: string) => void; reject: (e: Error) => void; ws: WebSocket }>();
-let llmSeq = 0;
 
 // Persisted in session storage so a revived SW reconnects to known hosts silently.
 const KNOWN_PORTS_KEY = "livePorts";
@@ -99,7 +97,7 @@ async function reconnectKnown() {
 // that starts while the user is parked on a page with no navigation happening.
 // When the helper isn't installed the port disconnects immediately; we read
 // lastError (so Chrome logs nothing) and fall back to the lazy probing above.
-const NATIVE_HOST = "com.actors.lens_host";
+const NATIVE_HOST = "com.djgrant.lens_host";
 let nativePort: chrome.runtime.Port | null = null;
 let nativeHealthy = false;
 
@@ -163,14 +161,6 @@ async function onBridgeMessage(ws: WebSocket, raw: string) {
   } catch {
     return;
   }
-  if (msg.type === "llm_result") {
-    const p = pendingLlm.get(msg.id as string);
-    if (p) {
-      pendingLlm.delete(msg.id as string);
-      msg.ok ? p.resolve(msg.text as string) : p.reject(new Error((msg.error as string) ?? "sampling failed"));
-    }
-    return;
-  }
   if (msg.type === "observe") {
     const { id, target, waitMs } = msg as unknown as { id: string; target: string; waitMs: number };
     let result;
@@ -191,7 +181,7 @@ async function onBridgeMessage(ws: WebSocket, raw: string) {
     };
     let result;
     try {
-      result = await handleCall(ws, id, spec, target, args);
+      result = await handleCall(spec, target, args);
     } catch (err) {
       result = { kind: "error", message: err instanceof Error ? err.message : String(err) };
     }
@@ -321,13 +311,7 @@ async function handleObserve(target: string, waitMs: number) {
 }
 
 // ---------- call execution ----------
-async function handleCall(
-  ws: WebSocket,
-  callId: string,
-  spec: LensSpec,
-  target: string,
-  args: Record<string, unknown>
-) {
+async function handleCall(spec: LensSpec, target: string, args: Record<string, unknown>) {
   const bound = await bindTab(spec, target);
   const tabId = bound.tabId;
 
@@ -350,16 +334,6 @@ async function handleCall(
       if (r.error) throw new Error(r.error);
       return r;
     },
-    llmExtract: (prompt: string) =>
-      new Promise<string>((resolve, reject) => {
-        if (ws.readyState !== WebSocket.OPEN) return reject(new Error("bridge disconnected"));
-        const id = `llm_${++llmSeq}`;
-        pendingLlm.set(id, { resolve, reject, ws });
-        ws.send(JSON.stringify({ type: "llm", id, callId, prompt }));
-        setTimeout(() => {
-          if (pendingLlm.delete(id)) reject(new Error("sampling timed out"));
-        }, 60000);
-      }),
     sleep: (ms: number) => new Promise((r) => setTimeout(r, ms)),
   };
 

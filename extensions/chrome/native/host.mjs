@@ -3,7 +3,7 @@
  * Native-messaging bridge between Chrome and the lens-host processes.
  *
  * Chrome launches this over a stdio pipe (see `pok setup native`). Each running
- * lens-host writes a `<port>.json` file into ~/.actors/hosts on bind and removes
+ * lens-host writes a `<port>.json` file into ~/.lenses/hosts on bind and removes
  * it on exit; this helper watches that directory and pushes the live-port list to
  * the extension whenever it changes. Because the extension is *told* which ports
  * are live, it only ever opens WebSockets to real hosts — so discovery is instant
@@ -16,7 +16,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, watch } from "node:fs";
 
-const DIR = join(homedir(), ".actors", "hosts");
+const DIR = join(homedir(), ".lenses", "hosts");
 
 // ---- native messaging framing: 4-byte LE length prefix + UTF-8 JSON ----
 function send(obj) {

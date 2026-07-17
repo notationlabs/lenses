@@ -8,7 +8,7 @@ importers:
 
   .:
     devDependencies:
-      '@actors/lens':
+      '@djgrant/lens':
         specifier: workspace:*
         version: link:packages/lens
       '@pokit/core':
@@ -17,16 +17,10 @@ importers:
       '@pokit/terminal':
         specifier: ^0.3.1
         version: 0.3.1(@pokit/core@0.3.1(zod@4.4.3))
-      ws:
-        specifier: ^8.21.0
-        version: 8.21.0
-      zod:
-        specifier: ^4.4.3
-        version: 4.4.3
 
-  apps/extension:
+  extensions/chrome:
     dependencies:
-      '@actors/lens':
+      '@djgrant/lens':
         specifier: workspace:*
         version: link:../../packages/lens
     devDependencies:
@@ -42,7 +36,7 @@ importers:
 
   packages/host:
     dependencies:
-      '@actors/lens':
+      '@djgrant/lens':
         specifier: workspace:*
         version: link:../lens
       '@modelcontextprotocol/server':
@@ -64,9 +58,6 @@ importers:
       typescript:
         specifier: ^5.6.0
         version: 5.9.3
-      vitest:
-        specifier: ^3.0.0
-        version: 3.2.6(@types/node@22.20.0)(yaml@2.9.0)
 
   packages/lens:
     dependencies:

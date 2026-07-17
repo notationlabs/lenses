@@ -24,4 +24,4 @@ for (const name of ["content", "page"]) {
 }
 
 await copyFile("manifest.json", "dist/manifest.json");
-console.log("extension built → apps/extension/dist (load unpacked from there)");
+console.log("extension built → extensions/chrome/dist (load unpacked from there)");
