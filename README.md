@@ -41,24 +41,47 @@ page fetched anyway, the dom tier fills in `plan`, and the llm tier never runs.
 
 ## Setup
 
+Build the MCP server and Chrome extension:
+
 ```sh
 pnpm install
 pnpm build   # type-checks every package and bundles the Chrome extension
 ```
 
-1. **Load the extension:** Chrome → `chrome://extensions` → Developer mode →
-   *Load unpacked* → `extensions/chrome/dist`.
+Load the extension in Chrome. Open `chrome://extensions`, enable **Developer mode**,
+then choose **Load unpacked** and select `extensions/chrome/dist`.
 
-2. **Register `lens-host` with your agent.** `lens-host` is a stdio MCP server – the
-   client you register it with spawns it per session (under [bun](https://bun.sh),
-   straight from source), so nothing runs as a daemon. For Claude Code:
+### Install the MCP server
 
-   ```sh
-   claude mcp add lens-host --env LENS_DIR="$PWD/lenses" -- bun "$PWD/packages/host/src/index.ts"
-   ```
+`lens-host` is a stdio MCP server. Add it to the MCP client using absolute paths to
+the built server and lens directory:
 
-3. Ask your agent to try `lens_call` on the Hacker News front page. The extension
-   finds running hosts by probing ports 4319–4329 on page loads.
+```json
+{
+  "mcpServers": {
+    "lens-host": {
+      "command": "node",
+      "args": ["/absolute/path/to/lenses/packages/host/dist/index.js"],
+      "env": {
+        "LENS_DIR": "/absolute/path/to/lenses/lenses"
+      }
+    }
+  }
+}
+```
+
+Claude Code can register the same server from the repository root:
+
+```sh
+claude mcp add lens-host --env LENS_DIR="$PWD/lenses" -- node "$PWD/packages/host/dist/index.js"
+```
+
+The MCP client starts the host for each session. The Chrome extension connects to
+it over a local port, so there is no separate daemon to run.
+
+Restart the MCP client after adding the server. Ask it to run `lens_list`, then try
+`lens_call` on the Hacker News front page. The extension finds running hosts by
+probing ports 4319–4329 on page loads.
 
 ## How a call resolves
 
