@@ -98,7 +98,7 @@ export type DomAction =
 
 export interface LlmResolver {
   kind: "llm";
-  /** instruction for the model; the host appends the page snapshot and returns schema */
+  /** extraction instruction, returned to the calling agent alongside the page snapshot */
   prompt: string;
   /** max characters of page snapshot to send */
   maxSnapshotChars?: number;
@@ -131,7 +131,5 @@ export interface EngineIO {
   fireRequest?(method: string, url: string, body: unknown): Promise<InterceptedResponse>;
   /** plain-text snapshot of the page for the LLM tier */
   snapshot(maxChars: number): Promise<{ url: string; title: string; text: string }>;
-  /** ask the connected agent's model to extract; returns raw model text */
-  llmExtract(prompt: string): Promise<string>;
   sleep(ms: number): Promise<void>;
 }

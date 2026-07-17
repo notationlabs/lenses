@@ -53,15 +53,28 @@ export async function executeLens(
           result = await runDom(resolver, params, io, spec.outcomes);
           break;
         case "llm":
-          result = await runLlm(resolver, spec, params, io);
+          result = await runLlm(resolver, io);
           break;
       }
       if (!result) {
         lastMiss = `${resolver.kind} resolver missed`;
         continue;
       }
-      // Outcomes / errors are terminal — never reconciled.
-      if (result.kind !== "value") return result;
+      // Outcomes / errors are terminal — never reconciled. agent_extract
+      // additionally carries whatever fields cheaper tiers already gathered,
+      // so the agent only has to extract the gap.
+      if (result.kind !== "value") {
+        if (result.kind === "outcome" && result.name === "agent_extract" && acc && Object.keys(acc).length) {
+          return {
+            ...result,
+            value: {
+              ...(result.value as Record<string, unknown>),
+              gathered: await materialiseLenses(acc, spec.returns),
+            },
+          };
+        }
+        return result;
+      }
       // Non-object values (e.g. arrays) don't merge; the first wins.
       if (!isPlainObject(result.value)) {
         if (acc === undefined) {
@@ -305,40 +318,18 @@ async function runDom(
   return { kind: "value", value, resolver: "dom" };
 }
 
-async function runLlm(
-  r: LlmResolver,
-  spec: LensSpec,
-  params: Record<string, unknown>,
-  io: EngineIO
-): Promise<LensResult | null> {
+async function runLlm(r: LlmResolver, io: EngineIO): Promise<LensResult> {
+  // The calling agent is itself a model, so extraction is handed back to it:
+  // the lens author's prompt plus the page snapshot. No schema — structure
+  // only pays for itself when the host consumes the result (cache, reconcile,
+  // materialise refs), and this path bypasses all of that.
   const snap = await io.snapshot(r.maxSnapshotChars ?? 20000);
-  const prompt = [
-    r.prompt,
-    spec.returns ? `Return JSON matching this shape:\n${JSON.stringify(spec.returns, null, 2)}` : "Return JSON.",
-    `Respond with ONLY the JSON value, no prose, no code fences.`,
-    `\nPage URL: ${snap.url}\nPage title: ${snap.title}\nPage content:\n${snap.text}`,
-  ].join("\n\n");
-  let raw: string;
-  try {
-    raw = await io.llmExtract(prompt);
-  } catch (err) {
-    // The calling agent doesn't support MCP sampling: hand the raw snapshot
-    // back and let the agent answer from it directly. No schema — structure
-    // only pays for itself when the host consumes the result (cache,
-    // reconcile, materialise refs), and this path bypasses all of that.
-    if (err instanceof Error && err.message === "sampling_unsupported") {
-      return {
-        kind: "outcome",
-        name: "agent_extract",
-        value: { url: snap.url, title: snap.title, text: snap.text },
-        resolver: "llm",
-      };
-    }
-    throw err;
-  }
-  const value = tryParse(stripFences(raw));
-  if (value === undefined || value === null) return null;
-  return { kind: "value", value, resolver: "llm" };
+  return {
+    kind: "outcome",
+    name: "agent_extract",
+    value: { prompt: r.prompt, url: snap.url, title: snap.title, text: snap.text },
+    resolver: "llm",
+  };
 }
 
 async function detectOutcome(
@@ -390,11 +381,6 @@ function tryParse(text: string): unknown {
   } catch {
     return text;
   }
-}
-
-function stripFences(text: string): string {
-  const m = text.trim().match(/^```(?:json)?\s*([\s\S]*?)\s*```$/);
-  return m ? m[1] : text.trim();
 }
 
 function interpolate(template: string, params: Record<string, unknown>): string {

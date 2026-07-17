@@ -1,14 +1,13 @@
 {
-  "name": "@actors/extension",
+  "name": "@djgrant/lens-extension-chrome",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "node build.mjs",
-    "test": "echo 'no tests (engine is tested in @actors/lens)'"
+    "build": "node build.mjs"
   },
   "dependencies": {
-    "@actors/lens": "workspace:*"
+    "@djgrant/lens": "workspace:*"
   },
   "devDependencies": {
     "@types/chrome": "^0.0.280",

@@ -4,11 +4,11 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 
 /**
  * Announce this lens-host to the browser extension by writing a per-port file
- * into ~/.actors/hosts. The native-messaging helper watches that directory and
+ * into ~/.lenses/hosts. The native-messaging helper watches that directory and
  * pushes the live-port list to the extension, so the extension only ever dials
  * ports that actually have a host — no speculative probing, no console noise.
  */
-const DIR = join(homedir(), ".actors", "hosts");
+const DIR = join(homedir(), ".lenses", "hosts");
 
 export function registerHost(port: number): void {
   const file = join(DIR, `${port}.json`);

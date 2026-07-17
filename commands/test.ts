@@ -3,6 +3,6 @@ import { defineCommand } from "@pokit/core";
 export const command = defineCommand({
   label: "Run the resolver engine unit tests (vitest)",
   run: async (r) => {
-    await r.exec("pnpm --filter @actors/lens test");
+    await r.exec("pnpm --filter @djgrant/lens test");
   },
 });

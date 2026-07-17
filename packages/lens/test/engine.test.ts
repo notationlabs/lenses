@@ -8,7 +8,6 @@ function io(overrides: Partial<EngineIO> = {}): EngineIO {
     getIntercepted: async () => [],
     domExtract: async () => ({ url: "https://example.com", title: "t", value: null }),
     snapshot: async () => ({ url: "https://example.com", title: "t", text: "" }),
-    llmExtract: async () => "null",
     sleep: async () => {},
     ...overrides,
   };
@@ -86,12 +85,13 @@ describe("executeLens", () => {
 
   it("falls through to the LLM tier when DOM is empty", async () => {
     const r = await executeLens(spec, "https://example.com/home", {}, io({
-      llmExtract: async () => '```json\n[{"title": "from-llm"}]\n```',
+      snapshot: async () => ({ url: "https://example.com/home", title: "Things", text: "thing a" }),
     }));
     expect(r).toMatchObject({
-      kind: "value",
+      kind: "outcome",
+      name: "agent_extract",
       resolver: "llm",
-      value: [{ title: "from-llm" }],
+      value: { prompt: "Extract the things.", text: "thing a" },
     });
   });
 
@@ -324,9 +324,13 @@ describe("intercept sources composition", () => {
   it("falls through to llm when one source is missing", async () => {
     const r = await executeLens(composed, "https://example.com/usage", {}, io({
       getIntercepted: async () => [usageResp()], // no subscription response
-      llmExtract: async () => '{"plan":"from-llm","limits":[]}',
     }));
-    expect(r).toMatchObject({ kind: "value", resolver: "llm", value: { plan: "from-llm" } });
+    expect(r).toMatchObject({
+      kind: "outcome",
+      name: "agent_extract",
+      resolver: "llm",
+      value: { prompt: "Read the whole page." },
+    });
   });
 
   it("detects an outcome across source metas", async () => {
@@ -386,26 +390,29 @@ describe("cross-tier reconciliation", () => {
     expect(r).toMatchObject({ kind: "value", value: { limits: [{ kind: "session" }], plan: "Pro" } });
   });
 
-  it("falls to llm for the missing field when dom also misses", async () => {
+  it("hands agent_extract the fields gathered so far when dom also misses", async () => {
     const r = await executeLens(reconciled, "https://example.com/usage", {}, io({
       getIntercepted: async () => [usage()],
       domExtract: async () => ({ url: "u", title: "t", value: null }),
-      llmExtract: async () => '{"plan":"Team","renews_at":"x","limits":[]}',
     }));
-    // intercept's limits/renews_at survive; llm only fills the absent plan
+    // intercept's limits/renews_at ride along; the agent only extracts plan
     expect(r).toMatchObject({
-      kind: "value",
-      resolver: "reconciled",
-      value: { plan: "Team", renews_at: "2026-08-06", limits: [{ kind: "session" }] },
+      kind: "outcome",
+      name: "agent_extract",
+      resolver: "llm",
+      value: {
+        prompt: "Read the whole page.",
+        gathered: { renews_at: "2026-08-06", limits: [{ kind: "session" }] },
+      },
     });
   });
 
   it("flags an incomplete reconciliation as partial (so the host won't cache it)", async () => {
-    // intercept omits plan, dom misses, llm returns nothing usable → plan absent.
-    const r = await executeLens(reconciled, "https://example.com/usage", {}, io({
+    // no llm tier: intercept omits plan, dom misses → plan absent.
+    const noLlm = { ...reconciled, resolve: reconciled.resolve.slice(0, 2) };
+    const r = await executeLens(noLlm, "https://example.com/usage", {}, io({
       getIntercepted: async () => [usage()],
       domExtract: async () => ({ url: "u", title: "t", value: null }),
-      llmExtract: async () => "null",
     }));
     expect(r).toMatchObject({ kind: "value", partial: true });
     if (r.kind === "value") expect(r.value).not.toHaveProperty("plan");
@@ -435,26 +442,28 @@ describe("dom extraction spec shape", () => {
   });
 });
 
-describe("llm tier without sampling support", () => {
-  it("returns an agent_extract outcome carrying the snapshot", async () => {
+describe("llm tier", () => {
+  it("returns an agent_extract outcome carrying the prompt and snapshot", async () => {
     const r = await executeLens(spec, "https://example.com/home", {}, io({
       snapshot: async () => ({ url: "https://example.com/home", title: "Things", text: "thing a\nthing b" }),
-      llmExtract: async () => {
-        throw new Error("sampling_unsupported");
-      },
     }));
     expect(r).toEqual({
       kind: "outcome",
       name: "agent_extract",
       resolver: "llm",
-      value: { url: "https://example.com/home", title: "Things", text: "thing a\nthing b" },
+      value: {
+        prompt: "Extract the things.",
+        url: "https://example.com/home",
+        title: "Things",
+        text: "thing a\nthing b",
+      },
     });
   });
 
-  it("still errors on other llm failures", async () => {
+  it("errors when the snapshot itself fails", async () => {
     const r = await executeLens(spec, "https://example.com/home", {}, io({
-      llmExtract: async () => {
-        throw new Error("sampling timed out");
+      snapshot: async () => {
+        throw new Error("tab closed");
       },
     }));
     expect(r.kind).toBe("error");
