@@ -38,7 +38,7 @@
         "needs_auth": "status = 401 or status = 403"
       },
       "map": {
-        "limits": "limits.{ 'name': kind = 'session' ? 'Current session' : kind = 'weekly_all' ? 'Weekly limit' : kind = 'weekly_scoped' ? ((scope.model.display_name ? scope.model.display_name & ' ' : '') & 'weekly limit') : kind, 'used': used_dollars ? $string(used_dollars) : '', 'limit': limit_dollars ? $string(limit_dollars) : '', 'percent': $string(percent) & '%', 'resets_at': resets_at }"
+        "limits": "[limits.{ 'name': kind = 'session' ? 'Current session' : kind = 'weekly_all' ? 'Weekly limit' : kind = 'weekly_scoped' ? ((scope.model.display_name ? scope.model.display_name & ' ' : '') & 'weekly limit') : kind, 'used': used_dollars ? $string(used_dollars) : '', 'limit': limit_dollars ? $string(limit_dollars) : '', 'percent': $string(percent) & '%', 'resets_at': resets_at }]"
       }
     },
     {

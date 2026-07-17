@@ -17,7 +17,12 @@ export function fillAbsent(current: unknown, incoming: unknown): unknown {
 
 /** Whether a value contains every object field declared by a returns schema. */
 export function satisfiesReturns(value: unknown, schema: unknown): boolean {
+  if (typeof schema === "string") return primitiveMatches(value, schema);
   if (!isPlainObject(schema)) return value !== undefined;
+
+  if (typeof schema.$lens === "string") {
+    return value === null || typeof value === "string" || isLensRef(value);
+  }
 
   if (schema.type === "object" && isPlainObject(schema.fields)) {
     if (!isPlainObject(value)) return false;
@@ -26,10 +31,15 @@ export function satisfiesReturns(value: unknown, schema: unknown): boolean {
     );
   }
 
-  if (schema.type === "array" && isPlainObject(schema.items)) {
+  if (schema.type === "object") return isPlainObject(value);
+
+  if (schema.type === "array") {
+    if (!Array.isArray(value)) return false;
     const itemFields = schema.items;
-    return Array.isArray(value) && value.every((item) => satisfiesFieldMap(item, itemFields));
+    return !isPlainObject(itemFields) || value.every((item) => satisfiesFieldMap(item, itemFields));
   }
+
+  if (typeof schema.type === "string") return primitiveMatches(value, schema.type);
 
   return value !== undefined;
 }
@@ -39,4 +49,16 @@ function satisfiesFieldMap(value: unknown, fields: Record<string, unknown>): boo
   return Object.entries(fields).every(
     ([field, fieldSchema]) => field in value && satisfiesReturns(value[field], fieldSchema)
   );
+}
+
+function primitiveMatches(value: unknown, type: string): boolean {
+  if (type === "integer") return Number.isInteger(value);
+  if (type === "null") return value === null;
+  if (type === "array") return Array.isArray(value);
+  if (type === "object") return isPlainObject(value);
+  return typeof value === type;
+}
+
+function isLensRef(value: unknown): boolean {
+  return isPlainObject(value) && typeof value.$lens === "string" && typeof value.target === "string";
 }

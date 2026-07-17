@@ -28,7 +28,7 @@ Here is `claude/usage`, trimmed:
     { "kind": "intercept",
       "request": "GET https://claude.ai/api/organizations/*/usage*",
       "detect": { "needs_auth": "status = 401 or status = 403" },
-      "map": { "limits": "limits.{ 'name': kind, 'percent': $string(percent) & '%' }" } },
+      "map": { "limits": "[limits.{ 'name': kind, 'percent': $string(percent) & '%' }]" } },
     { "kind": "dom", "post": "…" },
     { "kind": "llm", "prompt": "Return {plan, limits} from this usage settings page…" }
   ]
@@ -43,7 +43,7 @@ page fetched anyway, the dom tier fills in `plan`, and the llm tier never runs.
 
 ```sh
 pnpm install
-pnpm build   # bundles the Chrome extension — the only build step; everything else runs from source
+pnpm build   # type-checks every package and bundles the Chrome extension
 ```
 
 1. **Load the extension:** Chrome → `chrome://extensions` → Developer mode →
@@ -96,8 +96,14 @@ Chrome extension (extensions/chrome)   ← MV3 service worker runs the resolver 
 
 The resolver engine lives in `packages/lens` – pure and environment-free. Focused
 unit tests cover its reusable machinery, while shipped-document integration tests
-run real lens specs through validation, extraction, reconciliation, and lens-ref
-materialisation. The host and the extension are thin shells around it.
+describe what each bundled lens does and run the real specs through validation,
+extraction, reconciliation, fallback, and lens-ref materialisation.
+
+The extension background code is split by responsibility: `background/bridge.ts`
+owns host discovery and transport, `background/tabs.ts` owns browser tab lifecycle,
+`background/intercepts.ts` owns captured response state, and
+`background/operations.ts` adapts browser capabilities to lens calls. `sw.ts` only
+assembles those modules.
 
 ## Lens spec reference
 

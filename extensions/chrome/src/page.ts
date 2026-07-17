@@ -5,6 +5,8 @@
  * script via postMessage.
  */
 
+export {};
+
 const MARK = "__lens_host__";
 const MAX_BODY = 512 * 1024;
 
@@ -45,7 +47,10 @@ window.fetch = async (...fetchArgs: Parameters<typeof fetch>) => {
 
 // --- XHR ---
 const origOpen = XMLHttpRequest.prototype.open;
-const origSend = XMLHttpRequest.prototype.send;
+const origSend = XMLHttpRequest.prototype.send as (
+  this: XMLHttpRequest,
+  body?: Document | XMLHttpRequestBodyInit | null
+) => void;
 XMLHttpRequest.prototype.open = function (this: XMLHttpRequest & { __lensMeta?: { method: string; url: string } }, method: string, url: string | URL, ...rest: unknown[]) {
   this.__lensMeta = { method, url: String(url) };
   // @ts-expect-error variadic passthrough

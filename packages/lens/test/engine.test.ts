@@ -437,6 +437,28 @@ describe("dom extraction spec shape", () => {
 });
 
 describe("llm tier", () => {
+  it("hands an incomplete array result to the agent instead of reporting success", async () => {
+    const arraySpec = validateSpec({
+      lens: "example/list",
+      version: 1,
+      accepts: ["https://example.com/{page}"],
+      returns: { type: "array", items: { title: "string", reason: "string" } },
+      effects: { reads: [], writes: [] },
+      resolve: [
+        { kind: "dom", item: ".item", fields: { title: { selector: ".title" } } },
+        { kind: "llm", prompt: "Complete the list." },
+      ],
+    });
+    const r = await executeLens(arraySpec, "https://example.com/list", {}, io({
+      domExtract: async () => ({ url: "u", title: "t", value: [{ title: "One" }] }),
+    }));
+    expect(r).toMatchObject({
+      kind: "outcome",
+      name: "agent_extract",
+      value: { gathered: [{ title: "One" }] },
+    });
+  });
+
   it("returns an agent_extract outcome carrying the prompt and snapshot", async () => {
     const r = await executeLens(spec, "https://example.com/home", {}, io({
       snapshot: async () => ({ url: "https://example.com/home", title: "Things", text: "thing a\nthing b" }),
