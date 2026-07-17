@@ -3,9 +3,6 @@
  * bodies, so the intercept tier is implemented by patching fetch/XHR in
  * the page's own JS world and relaying JSON responses to the content
  * script via postMessage.
- *
- * Also handles "fire" requests for write lenses — the request is made
- * from the page context, so it carries the page's cookies and origin.
  */
 
 const MARK = "__lens_host__";
@@ -70,27 +67,3 @@ XMLHttpRequest.prototype.send = function (this: XMLHttpRequest & { __lensMeta?: 
   });
   return origSend.call(this, body);
 };
-
-// --- fire (write lenses) ---
-window.addEventListener("message", async (ev) => {
-  const d = ev.data;
-  if (!d || d.source !== MARK || d.kind !== "fire") return;
-  try {
-    const res = await origFetch(d.url, {
-      method: d.method,
-      credentials: "include",
-      headers: { "content-type": "application/json" },
-      body: d.body === undefined ? undefined : JSON.stringify(d.body),
-    });
-    const body = await res.text();
-    window.postMessage(
-      { source: MARK, kind: "fire_result", id: d.id, url: res.url, method: d.method, status: res.status, body, timestamp: Date.now() },
-      "*"
-    );
-  } catch (err) {
-    window.postMessage(
-      { source: MARK, kind: "fire_result", id: d.id, error: err instanceof Error ? err.message : String(err) },
-      "*"
-    );
-  }
-});

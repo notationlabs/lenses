@@ -7,13 +7,11 @@ import { matchUrl } from "@djgrant/lens";
 import type { LensResult, LensSpec } from "@djgrant/lens";
 import { Bridge } from "./bridge.js";
 import { LensStore } from "./lens-store.js";
-import { registerHost } from "./registry.js";
 
 const PORT_RANGE_START = 4319;
 const PORT_RANGE_END = 4329;
 const PINNED_PORT = process.env.LENS_BRIDGE_PORT ? Number(process.env.LENS_BRIDGE_PORT) : null;
 const LENS_DIR = resolve(process.env.LENS_DIR ?? "lenses");
-const ALLOW_WRITES = process.env.LENS_ALLOW_WRITES === "1";
 
 const store = new LensStore(LENS_DIR);
 let bridge: Bridge;
@@ -81,13 +79,6 @@ server.registerTool(
       );
     }
 
-    if (spec.effects.writes.length > 0 && !ALLOW_WRITES) {
-      return errorResult(
-        `lens ${spec.lens}@v${spec.version} declares writes (${spec.effects.writes.join(", ")}). ` +
-          `Write lenses are disabled by default; start lens-host with LENS_ALLOW_WRITES=1 after confirming with the user.`
-      );
-    }
-
     const key = cacheKey(spec, target, callArgs);
     const ttl = (spec.effects.cache ?? 0) * 1000;
     const hit = cache.get(key);
@@ -135,7 +126,7 @@ server.registerTool(
     content: [
       {
         type: "text",
-        text: JSON.stringify({ bridge: bridge.info, port: bridge.port, lensDir: LENS_DIR, writesEnabled: ALLOW_WRITES }),
+        text: JSON.stringify({ bridge: bridge.info, port: bridge.port, lensDir: LENS_DIR }),
       },
     ],
   })
@@ -153,8 +144,6 @@ async function main() {
   bridge = PINNED_PORT
     ? await Bridge.bind(PINNED_PORT)
     : await Bridge.bindRange(PORT_RANGE_START, PORT_RANGE_END);
-  // Announce our port so the extension's native helper can push it (no probing).
-  registerHost(bridge.port);
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error(`[lens-host] MCP on stdio; extension bridge on ws://127.0.0.1:${bridge.port}; lenses from ${LENS_DIR}`);

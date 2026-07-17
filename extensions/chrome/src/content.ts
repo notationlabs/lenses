@@ -1,7 +1,7 @@
 /**
  * Isolated-world content script. Two jobs:
  *  1. relay intercepted responses from the MAIN-world patch to the SW
- *  2. serve DOM extraction / snapshot / fire requests from the SW
+ *  2. serve DOM extraction / snapshot requests from the SW
  */
 
 const MARK = "__lens_host__";
@@ -16,32 +16,25 @@ interface DomExtractRequest {
   spec: {
     item?: string;
     fields?: Record<string, DomFieldSpec>;
-    actions?: Array<{ click?: string; type?: { selector: string; text: string } }>;
   };
 }
 
-// 1 — relay intercepts (and fire results) up to the service worker
-const pendingFires = new Map<string, (r: unknown) => void>();
+// 1 — relay intercepts up to the service worker
 // After an extension reload this script is orphaned and sendMessage throws
 // synchronously ("Extension context invalidated") — go permanently silent.
 let orphaned = false;
 window.addEventListener("message", (ev) => {
   const d = ev.data;
-  if (!d || d.source !== MARK || orphaned) return;
-  if (d.kind === "intercepted") {
-    try {
-      chrome.runtime
-        .sendMessage({
-          type: "intercepted",
-          response: { url: d.url, method: d.method, status: d.status, body: d.body, timestamp: d.timestamp },
-        })
-        .catch(() => {});
-    } catch {
-      orphaned = true;
-    }
-  } else if (d.kind === "fire_result") {
-    pendingFires.get(d.id)?.(d);
-    pendingFires.delete(d.id);
+  if (!d || d.source !== MARK || d.kind !== "intercepted" || orphaned) return;
+  try {
+    chrome.runtime
+      .sendMessage({
+        type: "intercepted",
+        response: { url: d.url, method: d.method, status: d.status, body: d.body, timestamp: d.timestamp },
+      })
+      .catch(() => {});
+  } catch {
+    orphaned = true;
   }
 });
 
@@ -65,15 +58,6 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       text: (document.body?.innerText ?? "").slice(0, msg.maxChars ?? 20000),
     });
     return false;
-  }
-  if (msg.type === "fire") {
-    const id = `fire_${Math.random().toString(36).slice(2)}`;
-    pendingFires.set(id, (r) => sendResponse(r));
-    window.postMessage({ source: MARK, kind: "fire", id, method: msg.method, url: msg.url, body: msg.body }, "*");
-    setTimeout(() => {
-      if (pendingFires.delete(id)) sendResponse({ error: "fire timed out" });
-    }, 30000);
-    return true;
   }
   return false;
 });
@@ -101,23 +85,6 @@ function extractField(root: Element, f: DomFieldSpec): string | null {
 async function runDomExtract(req: DomExtractRequest) {
   const { spec } = req;
 
-  if (spec.actions) {
-    for (const action of spec.actions) {
-      if (action.click) {
-        const el = document.querySelector<HTMLElement>(action.click);
-        if (!el) throw new Error(`click target not found: ${action.click}`);
-        el.click();
-      } else if (action.type) {
-        const el = document.querySelector<HTMLInputElement>(action.type.selector);
-        if (!el) throw new Error(`type target not found: ${action.type.selector}`);
-        el.focus();
-        el.value = action.type.text;
-        el.dispatchEvent(new Event("input", { bubbles: true }));
-      }
-      await new Promise((r) => setTimeout(r, 150));
-    }
-  }
-
   let value: unknown = null;
   if (spec.item && spec.fields) {
     const items: Record<string, string | null>[] = [];
@@ -131,8 +98,6 @@ async function runDomExtract(req: DomExtractRequest) {
     const row: Record<string, string | null> = {};
     for (const [name, f] of Object.entries(spec.fields)) row[name] = extractField(document.documentElement, f);
     value = row;
-  } else if (spec.actions) {
-    value = { done: true };
   }
 
   return { url: location.href, title: document.title, value };

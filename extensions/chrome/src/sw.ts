@@ -78,7 +78,6 @@ function connectPort(port: number) {
 
 /** Probe the whole range for live hosts. Cooldown-gated unless forced. */
 function discover(force = false) {
-  if (nativeHealthy) return; // the native helper is authoritative and silent
   const now = Date.now();
   if (!force && now - lastDiscover < DISCOVER_COOLDOWN_MS) return;
   lastDiscover = now;
@@ -90,67 +89,17 @@ async function reconnectKnown() {
   for (const port of await loadKnownPorts()) connectPort(port);
 }
 
-// ---------- native-messaging discovery (preferred) ----------
-// A locally-installed helper (see `pok setup native`) watches the lens-host
-// registry and *pushes* the live-port list over a stdio pipe. This channel never
-// touches a dead TCP port, so discovery is instant and silent — even for a host
-// that starts while the user is parked on a page with no navigation happening.
-// When the helper isn't installed the port disconnects immediately; we read
-// lastError (so Chrome logs nothing) and fall back to the lazy probing above.
-const NATIVE_HOST = "com.djgrant.lens_host";
-let nativePort: chrome.runtime.Port | null = null;
-let nativeHealthy = false;
-
-/** Reconcile live sockets against the authoritative set the helper reported. */
-function syncPorts(ports: number[]) {
-  const want = new Set(ports);
-  for (const p of want) connectPort(p);
-  for (const [p, ws] of sockets) {
-    if (!want.has(p)) {
-      ws.close();
-      sockets.delete(p);
-    }
-  }
-}
-
-function connectNative() {
-  if (nativePort) return;
-  let port: chrome.runtime.Port;
-  try {
-    port = chrome.runtime.connectNative(NATIVE_HOST);
-  } catch {
-    return; // permission missing; the lazy path covers us
-  }
-  nativePort = port;
-  port.onMessage.addListener((msg: { ports?: number[] }) => {
-    nativeHealthy = true;
-    if (Array.isArray(msg?.ports)) syncPorts(msg.ports);
-  });
-  port.onDisconnect.addListener(() => {
-    // Reading lastError suppresses Chrome's unchecked-error console warning.
-    void chrome.runtime.lastError;
-    nativePort = null;
-    nativeHealthy = false;
-  });
-}
-
-// Keep the native channel up and known hosts warm; keeps the SW alive too. None
-// of this probes a dead port, so an idle browser with no host stays quiet.
+// Keep known hosts warm (and the SW alive). Reconnecting only remembered ports
+// means an idle browser with no host running stays quiet.
 chrome.alarms.create("lens-keepalive", { periodInMinutes: 0.4 });
-chrome.alarms.onAlarm.addListener(() => {
-  connectNative(); // reconnect the helper if it dropped (or got installed since)
-  void reconnectKnown();
-});
+chrome.alarms.onAlarm.addListener(() => void reconnectKnown());
 
-// Fallback discovery trigger: every completed page load — a no-op while the
-// native helper is healthy, the safety net when it isn't installed.
+// Discovery trigger: every completed page load — the moments a lens might be wanted.
 chrome.tabs.onUpdated.addListener((_id, info, tab) => {
   if (info.status === "complete" && tab.url?.startsWith("http")) discover();
 });
 
-// SW spin-up (install, browser start, or revival): prefer the native channel;
-// only fall back to a lazy probe if it hasn't come up shortly.
-connectNative();
+// SW spin-up (install, browser start, or revival).
 void reconnectKnown();
 setTimeout(() => discover(true), 1500);
 
@@ -324,16 +273,6 @@ async function handleCall(spec: LensSpec, target: string, args: Record<string, u
     },
     domExtract: (domSpec: DomResolver) => tabMessage(tabId, { type: "dom_extract", spec: domSpec }),
     snapshot: (maxChars: number) => tabMessage(tabId, { type: "snapshot", maxChars }),
-    fireRequest: async (method, url, body) => {
-      const r = await tabMessage<InterceptedResponse & { error?: string }>(tabId, {
-        type: "fire",
-        method,
-        url,
-        body,
-      });
-      if (r.error) throw new Error(r.error);
-      return r;
-    },
     sleep: (ms: number) => new Promise((r) => setTimeout(r, ms)),
   };
 

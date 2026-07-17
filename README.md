@@ -57,27 +57,8 @@ pnpm build   # bundles the Chrome extension — the only build step; everything 
    claude mcp add lens-host --env LENS_DIR="$PWD/lenses" -- bun "$PWD/packages/host/src/index.ts"
    ```
 
-3. **Optional: install the native-messaging helper.** The extension finds running
-   hosts by probing ports 4319–4329; the helper announces them instead, which is
-   instant and silent. Chrome executes the helper directly, so it must be
-   executable, and each browser reads its manifest from its own
-   `NativeMessagingHosts` directory (macOS paths shown):
-
-   ```sh
-   chmod +x extensions/chrome/native/host.mjs
-   cat > ~/Library/Application\ Support/Google/Chrome/NativeMessagingHosts/com.djgrant.lens_host.json <<EOF
-   {
-     "name": "com.djgrant.lens_host",
-     "path": "$PWD/extensions/chrome/native/host.mjs",
-     "type": "stdio",
-     "allowed_origins": ["chrome-extension://mbanohpojdbbnbnmppepaihihmkoibaj/"]
-   }
-   EOF
-   ```
-
-   Reload the extension afterwards.
-
-4. Ask your agent to try `lens_call` on the Hacker News front page.
+3. Ask your agent to try `lens_call` on the Hacker News front page. The extension
+   finds running hosts by probing ports 4319–4329 on page loads.
 
 ## How a call resolves
 
@@ -95,9 +76,8 @@ no nested model call, and the host holds no API key.
 
 Lens `map` and `detect` bodies are JSONata expressions. JSONata can transform data
 but cannot reach the network or the DOM, so a third-party lens can run in your
-session without you auditing its author's code. A lens that declares
-`effects.writes` stays disabled unless the host is started with
-`LENS_ALLOW_WRITES=1`.
+session without you auditing its author's code. Lenses are read-only: they observe
+what the page already does, and cannot fire requests or act on the page.
 
 ## Architecture
 
@@ -150,25 +130,12 @@ call it by URL.
 - `effects` – `{ "reads": [...], "writes": [...], "idempotent": true, "cache": 60 }`.
   `cache` is a TTL in seconds; partial results are never cached.
 - `resolve` – the tier list. Per kind:
-  - **intercept**: `request` ("METHOD url-pattern") or named `sources` to compose
-    several responses; `detect` runs over `{status, url, body}`; `items`/`map` over
-    the body. `reloadOnMiss` and `waitMs` control capture.
+  - **intercept**: `request` ("METHOD url-pattern"); `detect` runs over
+    `{status, url, body}`; `items`/`map` over the body. `reloadOnMiss` and
+    `waitMs` control capture.
   - **dom**: `item` (repeating element selector) plus `fields` of
     `{ selector, attr?, sibling? }`; `post` reshapes the extraction.
   - **llm**: `prompt`.
-
-Lenses can also be authored in TypeScript. The host loads `.ts` modules directly;
-`pok lens build` compiles them to canonical JSON for publishing:
-
-```ts
-import { defineLens } from "@djgrant/lens";
-
-export default defineLens({
-  lens: "hn/top",
-  version: 1,
-  // …typed spec, checked at compile time
-});
-```
 
 `pok lens validate` checks every spec in `lenses/` against the engine's validator.
 

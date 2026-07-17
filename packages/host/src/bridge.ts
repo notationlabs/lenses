@@ -94,27 +94,18 @@ export class Bridge {
     args: Record<string, unknown>,
     timeoutMs = 90_000
   ): Promise<LensResult> {
-    if (!this.connected) {
-      return Promise.resolve({
-        kind: "error",
-        message:
-          "browser extension is not connected — is Chrome running with the Lens Host extension installed?",
-      });
-    }
-    const id = `call_${++this.seq}`;
-    const msg: CallMessage = { type: "call", id, spec, target, args, timeoutMs };
-    return new Promise((resolve) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(id);
-        resolve({ kind: "error", message: `lens call timed out after ${timeoutMs}ms` });
-      }, timeoutMs);
-      this.pending.set(id, { resolve, timer });
-      this.ext!.send(JSON.stringify(msg));
-    });
+    return this.request((id) => ({ type: "call", id, spec, target, args, timeoutMs }), timeoutMs);
   }
 
   /** Observe a page: load it and report the JSON requests it makes plus a snapshot. */
   observe(target: string, waitMs = 4000, timeoutMs = 60_000): Promise<LensResult> {
+    return this.request((id) => ({ type: "observe", id, target, waitMs }), timeoutMs);
+  }
+
+  private request(
+    make: (id: string) => CallMessage | ObserveMessage,
+    timeoutMs: number
+  ): Promise<LensResult> {
     if (!this.connected) {
       return Promise.resolve({
         kind: "error",
@@ -123,11 +114,11 @@ export class Bridge {
       });
     }
     const id = `call_${++this.seq}`;
-    const msg: ObserveMessage = { type: "observe", id, target, waitMs };
+    const msg = make(id);
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        resolve({ kind: "error", message: `observe timed out after ${timeoutMs}ms` });
+        resolve({ kind: "error", message: `${msg.type} timed out after ${timeoutMs}ms` });
       }, timeoutMs);
       this.pending.set(id, { resolve, timer });
       this.ext!.send(JSON.stringify(msg));

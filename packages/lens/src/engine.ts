@@ -146,28 +146,7 @@ async function runIntercept(
   io: EngineIO,
   outcomes: LensSpec["outcomes"]
 ): Promise<LensResult | null> {
-  // Write lens: fire the request the page would have made.
-  if (r.fire) {
-    if (!io.fireRequest) return null;
-    const space = r.fire.request.indexOf(" ");
-    const method = space === -1 ? "POST" : r.fire.request.slice(0, space);
-    const url = interpolate(space === -1 ? r.fire.request : r.fire.request.slice(space + 1), params);
-    const body = r.fire.body ? await evaluate(r.fire.body, params, params) : undefined;
-    const resp = await io.fireRequest(method, url, body);
-    const outcome = await detectOutcome(r.detect, responseContext(resp), params, outcomes);
-    if (outcome) return outcome;
-    if (resp.status >= 200 && resp.status < 300) {
-      const parsed = tryParse(resp.body);
-      const value = r.map ? await project(r.map, parsed, params) : parsed;
-      return { kind: "value", value, resolver: "intercept" };
-    }
-    return null;
-  }
-
-  // Multi-source: compose several captured responses into one projection.
-  if (r.sources) return runInterceptSources(r, params, io, outcomes);
-
-  // Read lens: look for a captured response, optionally reloading to trigger one.
+  // Look for a captured response, optionally reloading to trigger one.
   let captured = await findMatch(r, io);
   if (!captured && r.reloadOnMiss && io.reload) {
     await io.reload();
@@ -196,56 +175,6 @@ async function runIntercept(
   } else {
     value = working;
   }
-  return { kind: "value", value, resolver: "intercept" };
-}
-
-/**
- * Intercept tier that composes several named responses. Each source's body is
- * bound as a JSONata variable ($name) for `map` and `detect`, so one projection
- * can pull `limits` from $usage and `plan` from $sub. A missing source is a tier
- * miss (fall through to dom/llm) — the whole-page llm stays the wholesale fallback.
- */
-async function runInterceptSources(
-  r: InterceptResolver,
-  params: Record<string, unknown>,
-  io: EngineIO,
-  outcomes: LensSpec["outcomes"]
-): Promise<LensResult | null> {
-  const names = Object.keys(r.sources!);
-  let found = await matchSources(r, io);
-  const missing = () => names.filter((n) => !found[n]);
-
-  if (missing().length && r.reloadOnMiss && io.reload) {
-    await io.reload();
-    const deadline = Date.now() + (r.waitMs ?? 8000);
-    while (missing().length && Date.now() < deadline) {
-      await io.sleep(250);
-      found = await matchSources(r, io);
-    }
-  }
-  if (missing().length) return null;
-
-  // detect over the response metas: `$usage.status = 401`
-  const detectVars = { ...params };
-  for (const n of names) detectVars[n] = responseContext(found[n]!);
-  const outcome = await detectOutcome(r.detect, detectVars, detectVars, outcomes);
-  if (outcome) return outcome;
-
-  // any non-2xx source is a tier miss
-  for (const n of names) {
-    if (found[n]!.status < 200 || found[n]!.status >= 300) return null;
-  }
-
-  // map over the bodies: `$usage`, `$sub` bound to each (post-`items`) body
-  const mapVars = { ...params };
-  for (const n of names) {
-    let body = tryParse(found[n]!.body);
-    const items = r.sources![n].items;
-    if (items) body = await evaluate(items, body, params);
-    mapVars[n] = body;
-  }
-  const value = r.map ? await project(r.map, mapVars, mapVars) : mapVars;
-  if (value === undefined || value === null) return null;
   return { kind: "value", value, resolver: "intercept" };
 }
 
@@ -279,26 +208,9 @@ function plain<T>(value: T): T {
 async function findMatch(r: InterceptResolver, io: EngineIO): Promise<InterceptedResponse | null> {
   const all = await io.getIntercepted();
   for (let i = all.length - 1; i >= 0; i--) {
-    if (r.request && matchRequestPattern(r.request, all[i].method, all[i].url)) return all[i];
+    if (matchRequestPattern(r.request, all[i].method, all[i].url)) return all[i];
   }
   return null;
-}
-
-async function matchSources(
-  r: InterceptResolver,
-  io: EngineIO
-): Promise<Record<string, InterceptedResponse>> {
-  const all = await io.getIntercepted();
-  const out: Record<string, InterceptedResponse> = {};
-  for (const [name, src] of Object.entries(r.sources!)) {
-    for (let i = all.length - 1; i >= 0; i--) {
-      if (matchRequestPattern(src.request, all[i].method, all[i].url)) {
-        out[name] = all[i];
-        break;
-      }
-    }
-  }
-  return out;
 }
 
 async function runDom(
@@ -313,7 +225,7 @@ async function runDom(
 
   let value = extracted.value;
   if (value === undefined || value === null) return null;
-  if (Array.isArray(value) && value.length === 0 && !r.actions) return null;
+  if (Array.isArray(value) && value.length === 0) return null;
   if (r.post) value = await evaluate(r.post, value, params);
   return { kind: "value", value, resolver: "dom" };
 }
@@ -381,10 +293,4 @@ function tryParse(text: string): unknown {
   } catch {
     return text;
   }
-}
-
-function interpolate(template: string, params: Record<string, unknown>): string {
-  return template.replace(/\{([a-zA-Z_][a-zA-Z0-9_]*)\}/g, (_, k) =>
-    params[k] !== undefined ? String(params[k]) : `{${k}}`
-  );
 }
