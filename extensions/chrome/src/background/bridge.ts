@@ -1,4 +1,4 @@
-import type { LensResult, LensSpec } from "@djgrant/lens";
+import type { LensBridgeServerMessage, LensResult } from "@djgrant/lens";
 import { callLens, observePage } from "./operations.js";
 import { formatError } from "../errors.js";
 
@@ -76,7 +76,7 @@ async function reconnectKnown(): Promise<void> {
 }
 
 async function onBridgeMessage(socket: WebSocket, raw: string): Promise<void> {
-  const message = JSON.parse(raw) as { type: string; id: string; [key: string]: unknown };
+  const message = JSON.parse(raw) as LensBridgeServerMessage;
   if (message.type === "ping") {
     socket.send(JSON.stringify({ type: "pong" }));
     return;
@@ -85,15 +85,9 @@ async function onBridgeMessage(socket: WebSocket, raw: string): Promise<void> {
 
   try {
     if (message.type === "observe") {
-      result = await observePage(message.target as string, (message.waitMs as number) ?? 4000);
-    } else if (message.type === "call") {
-      result = await callLens(
-        message.spec as LensSpec,
-        message.target as string,
-        message.args as Record<string, unknown>
-      );
+      result = await observePage(message.target, message.waitMs);
     } else {
-      throw new Error(`unknown bridge message type: ${message.type}`);
+      result = await callLens(message.spec, message.target, message.args);
     }
   } catch (error) {
     result = { kind: "error", message: formatError(error) };

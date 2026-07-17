@@ -2,7 +2,7 @@
   "name": "lenses",
   "private": true,
   "version": "0.1.0",
-  "description": "Lenses: the web as a typed graph of callable functions. MCP-connected browser extension host.",
+  "description": "Typed webpage functions for TypeScript, CLI, and MCP consumers.",
   "scripts": {
     "build": "pnpm -r build",
     "test": "pnpm -r test"
