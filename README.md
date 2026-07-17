@@ -1,17 +1,11 @@
 # Lenses
 
-A lens is a one-file, declarative document that turns a webpage into a typed function
-an agent can call.
+A lens is a one-file declarative document that turns a webpage into a typed function.
+The call runs in your own browser through a Chrome extension, so it can use your
+existing signed-in session without exporting cookies or running scraping infrastructure.
 
-The call runs in your own browser. A headless Chrome extension executes the lens
-against a background tab, in your existing session, and returns typed data over MCP
-to whichever agent asked. You are already logged in, so a lens can read what you can
-read – there are no cookies to export and no scraping infrastructure to run.
-
-A lens declares `resolve` tiers, tried cheapest first: **intercept** reads the JSON
-responses the page is already fetching, **dom** extracts from the rendered page with
-CSS selectors, and **llm** hands the page snapshot back to the calling agent as the
-last resort. A tier that finds nothing falls through to the next.
+Applications use the TypeScript client directly. A CLI and an MCP server expose the
+same client without reimplementing lens loading, caching, validation, or browser transport.
 
 Here is `claude/usage`, trimmed:
 
@@ -35,152 +29,149 @@ Here is `claude/usage`, trimmed:
 }
 ```
 
-With that file loaded, *"how much Claude usage do I have left?"* becomes one
-`lens_call` and one typed reply: the intercept tier reads the usage API response the
-page fetched anyway, the dom tier fills in `plan`, and the llm tier never runs.
-
 ## Setup
-
-Build the MCP server and Chrome extension:
 
 ```sh
 pnpm install
-pnpm build   # type-checks every package and bundles the Chrome extension
+pnpm build
 ```
 
-Load the extension in Chrome. Open `chrome://extensions`, enable **Developer mode**,
-then choose **Load unpacked** and select `extensions/chrome/dist`.
+Load the browser extension by opening `chrome://extensions`, enabling **Developer
+mode**, choosing **Load unpacked**, and selecting `extensions/chrome/dist`.
 
-### Install the MCP server
+The extension discovers clients by probing local ports 4319–4329.
 
-`lens-host` is a stdio MCP server. Add it to the MCP client using absolute paths to
-the built server and lens directory:
+## TypeScript client
+
+`@djgrant/lens-client` is the primary API:
+
+```ts
+import { createLensClient } from "@djgrant/lens-client";
+
+await using lenses = await createLensClient({ directory: "./lenses" });
+
+const available = await lenses.list();
+const result = await lenses.call({
+  lens: "claude/usage",
+  target: "https://claude.ai/settings/usage",
+});
+```
+
+The client owns lens discovery, reference resolution, URL checks, TTL caching, and the
+local extension bridge. `call` returns a `value`, a structured `outcome`, or an `error`.
+An `agent_extract` outcome contains the page snapshot and lens prompt for the consumer's
+own model; the client does not select or call an LLM provider.
+
+Use `observe` to inspect the JSON requests and text snapshot needed to author a lens:
+
+```ts
+const observation = await lenses.observe({
+  target: "https://github.com/notifications",
+  waitMs: 4_000,
+});
+```
+
+## CLI
+
+`@djgrant/lens-cli` installs the `lens` command. It prints JSON to stdout and uses a
+non-zero exit status for command and lens errors.
+
+```sh
+lens list --directory ./lenses
+lens call hn/top https://news.ycombinator.com/
+lens call example/search https://example.com/search --args '{"query":"lenses"}'
+lens observe https://github.com/notifications --wait-ms 4000
+lens status --wait-ms 5000
+```
+
+Each command starts a client for the duration of that invocation and then closes its
+extension bridge.
+
+## MCP
+
+`@djgrant/lens-mcp` is a thin stdio adapter over `@djgrant/lens-client`. Configure it
+with the lens directory and built entry point:
 
 ```json
 {
   "mcpServers": {
-    "lens-host": {
+    "lenses": {
       "command": "node",
-      "args": ["/absolute/path/to/lenses/packages/host/dist/index.js"],
-      "env": {
-        "LENS_DIR": "/absolute/path/to/lenses/lenses"
-      }
+      "args": ["/absolute/path/to/packages/mcp/dist/index.js"],
+      "env": { "LENS_DIR": "/absolute/path/to/lenses" }
     }
   }
 }
 ```
 
-Claude Code can register the same server from the repository root:
+It exposes `lens_list`, `lens_call`, `lens_observe`, and `bridge_status`. The adapter
+only validates tool inputs and formats tool results; all behavior lives in the client.
 
-```sh
-claude mcp add lens-host --env LENS_DIR="$PWD/lenses" -- node "$PWD/packages/host/dist/index.js"
-```
+## Resolution
 
-The MCP client starts the host for each session. The Chrome extension connects to
-it over a local port, so there is no separate daemon to run.
+The engine walks resolver tiers in order. Each tier produces a result, contributes
+fields, detects a named outcome, or misses and falls through.
 
-Restart the MCP client after adding the server. Ask it to run `lens_list`, then try
-`lens_call` on the Hacker News front page. The extension finds running hosts by
-probing ports 4319–4329 on page loads.
+- **intercept** reads JSON responses already fetched by the page.
+- **dom** extracts fields from the rendered document with CSS selectors.
+- **llm** returns a page snapshot and extraction prompt to the caller.
 
-## How a call resolves
+When `returns` is an object, fields accumulate across tiers. The engine stops when all
+declared fields are present, so each tier only needs to supply its part of the result.
 
-The engine walks the tiers in order. Each tier produces the result, contributes some
-of its fields, detects a named outcome (`needs_auth`), or misses and falls through.
-
-When `returns` is an object, fields accumulate across tiers: each tier fills the
-fields it can, and the engine stops as soon as every declared field is present. A
-cheap tier therefore only needs to cover its share; nothing is extracted twice.
-
-The llm tier returns an `agent_extract` outcome: the page snapshot plus the lens
-author's extraction prompt, along with any fields the cheaper tiers already
-gathered. The calling agent is itself a model, so it extracts the rest directly –
-no nested model call, and the host holds no API key.
-
-Lens `map` and `detect` bodies are JSONata expressions. JSONata can transform data
-but cannot reach the network or the DOM, so a third-party lens can run in your
-session without you auditing its author's code. Lenses are read-only: they observe
-what the page already does, and cannot fire requests or act on the page.
+Lens `map` and `detect` bodies are JSONata expressions. They cannot reach the network or
+DOM. Lenses observe what a page already does and cannot fire requests or act on the page.
 
 ## Architecture
 
-```
-your agent (Claude Code / Desktop / any MCP client)
-   │  stdio (MCP): lens_list · lens_call · lens_observe · bridge_status
-   ▼
-lens-host (packages/host)              ← loads lens specs from lenses/ or any URL
-   │  ws://127.0.0.1:4319
-   ▼
-Chrome extension (extensions/chrome)   ← MV3 service worker runs the resolver engine
-   ├─ page.js     patches fetch/XHR    → intercept tier
-   ├─ content.js  extracts from DOM    → dom tier
-   └─ snapshot returned to the caller  → llm tier
+```text
+application ─┐
+lens CLI ────┼─► @djgrant/lens-client ── WebSocket ──► Chrome extension
+lens MCP ────┘           │                                    │
+                         └──── @djgrant/lens resolver engine ◄─┘
 ```
 
-The resolver engine lives in `packages/lens` – pure and environment-free. Focused
-unit tests cover its reusable machinery, while shipped-document integration tests
-describe what each bundled lens does and run the real specs through validation,
-extraction, reconciliation, fallback, and lens-ref materialisation.
-
-The extension background code is split by responsibility: `background/bridge.ts`
-owns host discovery and transport, `background/tabs.ts` owns browser tab lifecycle,
-`background/intercepts.ts` owns captured response state, and
-`background/operations.ts` adapts browser capabilities to lens calls. `sw.ts` only
-assembles those modules.
+The extension background code separates transport, tab lifecycle, intercepted response
+state, and browser operations. The service worker only assembles those modules.
 
 ## Lens spec reference
 
-A lens is a JSON file in `lenses/`, or hosted at any URL – publish one as a gist and
-call it by URL.
+A lens is a JSON file in `lenses/` or at an HTTP URL.
 
-- `lens` – namespaced name, `"site/operation"`. Referenced elsewhere as
-  `site/operation@v1`.
-- `version` – integer, bumped on breaking shape changes.
-- `accepts` – URL patterns the lens applies to. `{holes}` bind as JSONata variables,
-  as do call args:
+- `lens` — namespaced name such as `site/operation`.
+- `version` — positive integer, bumped when the result contract breaks.
+- `accepts` — target URL patterns. Named holes become JSONata variables:
 
   ```jsonc
-  "accepts": ["https://x.com/{handle}/status/{id}"]   // $handle, $id in every expression
+  "accepts": ["https://x.com/{handle}/status/{id}"]
   ```
 
-- `returns` – the result shape, which also guides the llm tier. A field may be a
-  `$lens` ref, making the result callable – `next_page` typed as the lens itself is
-  how pagination works:
+- `returns` — result shape. A field can contain a callable lens reference:
 
   ```jsonc
-  "next_page": { "$lens": "hn/top@v1" }   // call it again on the returned URL; null on the last page
+  "next_page": { "$lens": "hn/top@v1" }
   ```
 
-- `outcomes` – named non-happy paths. An outcome may carry the `$lens` that resolves
-  it:
+- `outcomes` — named non-happy paths, optionally carrying the lens that resolves them.
+- `effects` — `{ "reads": [...], "writes": [...], "idempotent": true, "cache": 60 }`.
+- `loadTimeoutMs` — optional page-load timeout; the default is 30 seconds.
+- `resolve` — ordered intercept, DOM, and LLM resolver definitions.
 
-  ```jsonc
-  "needs_auth": { "$lens": "site/login@v1", "hint": "Ask the user to sign in, then retry." }
-  ```
+An intercept resolver can capture one request or declare named `sources` that join several
+responses. A DOM resolver declares an optional repeating `item` selector and named fields.
+An LLM resolver declares the extraction prompt and optional snapshot limit.
 
-- `effects` – `{ "reads": [...], "writes": [...], "idempotent": true, "cache": 60 }`.
-  `cache` is a TTL in seconds; partial results are never cached.
-- `loadTimeoutMs` – optional page-load ceiling in milliseconds for slow applications;
-  the default is 30000.
-- `resolve` – the tier list. Per kind:
-  - **intercept**: `request` ("METHOD url-pattern"); `detect` runs over
-    `{status, url, body}`; `items`/`map` over the body. `reloadOnMiss` and
-    `waitMs` control capture. Alternatively, named `sources` capture several
-    responses at once, each body bound as a `$name` variable so `map` can
-    join across them: `"stars_per_day": "$repo.stars / $release.age_days"`.
-  - **dom**: `item` (repeating element selector) plus `fields` of
-    `{ selector, attr?, sibling? }`; `post` reshapes the extraction.
-  - **llm**: `prompt`.
-
-`pok lens validate` checks every spec in `lenses/` against the engine's validator.
+Run `pok lens validate` to validate every document under `lenses/`.
 
 ## Packages
 
-| path | what |
-|---|---|
-| `packages/lens` | `@djgrant/lens` – spec types, URL patterns, JSONata eval, resolver engine |
-| `packages/host` | `@djgrant/lens-host` – `lens-host` binary: MCP server (stdio) + extension bridge (WS :4319) |
-| `extensions/chrome` | MV3 extension: interception, DOM extraction, engine host |
-| `lenses/` | seed lens specs |
+| path | package | responsibility |
+|---|---|---|
+| `packages/lens` | `@djgrant/lens` | Specs, validation, JSONata, resolver engine |
+| `packages/client` | `@djgrant/lens-client` | Lens orchestration and extension bridge |
+| `packages/cli` | `@djgrant/lens-cli` | JSON command-line adapter |
+| `packages/mcp` | `@djgrant/lens-mcp` | stdio MCP adapter |
+| `extensions/chrome` | private | Browser interception and extraction |
+| `lenses` | — | Bundled lens documents |
 
 Planned work lives in [ROADMAP.md](./ROADMAP.md).

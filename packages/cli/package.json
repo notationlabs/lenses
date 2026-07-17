@@ -1,0 +1,19 @@
+{
+  "name": "@djgrant/lens-cli",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "lens": "dist/index.js"
+  },
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@djgrant/lens-client": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  }
+}

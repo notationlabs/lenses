@@ -126,3 +126,22 @@ export interface EngineIO {
   snapshot(maxChars: number): Promise<{ url: string; title: string; text: string }>;
   sleep(ms: number): Promise<void>;
 }
+
+/** Messages exchanged between a Lens client and the browser extension. */
+export type LensBridgeRequest =
+  | {
+      type: "call";
+      id: string;
+      spec: LensSpec;
+      target: string;
+      args: Record<string, unknown>;
+      timeoutMs: number;
+    }
+  | { type: "observe"; id: string; target: string; waitMs: number };
+
+export type LensBridgeServerMessage = LensBridgeRequest | { type: "ping" };
+
+export type LensBridgeExtensionMessage =
+  | { type: "result"; id: string; result: LensResult }
+  | { type: "hello"; ua?: string }
+  | { type: "pong" };

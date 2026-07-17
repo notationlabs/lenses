@@ -6,25 +6,24 @@ import { validateSpec, type LensSpec } from "@djgrant/lens";
 export class LensStore {
   private byName = new Map<string, LensSpec>();
 
-  constructor(private dir: string) {}
+  constructor(private readonly directory: string) {}
 
   async loadLocal(): Promise<LensSpec[]> {
     const loaded = new Map<string, LensSpec>();
     let entries: string[] = [];
     try {
-      entries = await readdir(this.dir);
-    } catch (err) {
-      // A missing lens directory is valid; surface other errors.
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      entries = await readdir(this.directory);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
         this.byName = loaded;
         return [];
       }
-      throw err;
+      throw error;
     }
-    for (const file of entries.filter((e) => e.endsWith(".json"))) {
-      const spec = validateSpec(JSON.parse(await readFile(join(this.dir, file), "utf8")));
+
+    for (const file of entries.filter((entry) => entry.endsWith(".json"))) {
+      const spec = validateSpec(JSON.parse(await readFile(join(this.directory, file), "utf8")));
       loaded.set(`${spec.lens}@v${spec.version}`, spec);
-      // Point unversioned names at the latest version.
       const existing = loaded.get(spec.lens);
       if (!existing || existing.version < spec.version) loaded.set(spec.lens, spec);
     }
@@ -34,32 +33,30 @@ export class LensStore {
 
   list(): LensSpec[] {
     const seen = new Set<string>();
-    const out: LensSpec[] = [];
+    const specs: LensSpec[] = [];
     for (const spec of this.byName.values()) {
       const key = `${spec.lens}@v${spec.version}`;
       if (!seen.has(key)) {
         seen.add(key);
-        out.push(spec);
+        specs.push(spec);
       }
     }
-    return out;
+    return specs;
   }
 
-  async resolveRef(ref: string): Promise<LensSpec> {
+  async resolve(ref: string): Promise<LensSpec> {
     if (ref.startsWith("http://") || ref.startsWith("https://")) {
-      const res = await fetch(ref);
-      if (!res.ok) throw new Error(`fetching lens ${ref}: HTTP ${res.status}`);
-      return validateSpec(await res.json());
+      const response = await fetch(ref);
+      if (!response.ok) throw new Error(`fetching lens ${ref}: HTTP ${response.status}`);
+      return validateSpec(await response.json());
     }
     if (ref.endsWith(".json")) {
       return validateSpec(JSON.parse(await readFile(resolve(ref), "utf8")));
     }
-    // Pick up new local lenses without restarting the host.
+
     await this.loadLocal();
-    const local = this.byName.get(ref);
-    if (local) return local;
-    throw new Error(
-      `unknown lens "${ref}" — use lens_list to see available lenses, or pass a path/URL to a lens JSON spec`
-    );
+    const spec = this.byName.get(ref);
+    if (spec) return spec;
+    throw new Error(`unknown lens "${ref}"`);
   }
 }

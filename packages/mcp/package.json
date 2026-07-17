@@ -1,24 +1,25 @@
 {
-  "name": "@djgrant/lens-host",
+  "name": "@djgrant/lens-mcp",
   "version": "0.1.0",
   "type": "module",
   "bin": {
-    "lens-host": "dist/index.js"
+    "lens-mcp": "dist/index.js"
   },
-  "main": "dist/index.js",
+  "main": "./dist/server.js",
+  "types": "./dist/server.d.ts",
+  "exports": {
+    ".": "./dist/server.js"
+  },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "start": "node dist/index.js"
+    "build": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@djgrant/lens": "workspace:*",
+    "@djgrant/lens-client": "workspace:*",
     "@modelcontextprotocol/server": "2.0.0-beta.2",
-    "ws": "^8.18.0",
     "zod": "^4.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "@types/ws": "^8.5.0",
     "typescript": "^5.6.0"
   }
 }
