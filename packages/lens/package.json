@@ -19,7 +19,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "jsonata": "^2.1.0"
+    "jsonata": "^2.1.0",
+    "zod": "^4.0.0"
   },
   "devDependencies": {
     "typescript": "^5.6.0",

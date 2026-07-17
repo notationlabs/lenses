@@ -1,43 +1,74 @@
+import * as z from "zod/v4";
 import type { LensSpec } from "./types.js";
 
+const expression = z.string();
+const detect = z.record(z.string(), expression);
+
+const sourceSchema = z.strictObject({
+  request: z.string(),
+  items: expression.optional(),
+});
+
+const interceptSchema = z
+  .strictObject({
+    kind: z.literal("intercept"),
+    request: z.string().optional(),
+    sources: z.record(z.string(), sourceSchema).optional(),
+    items: expression.optional(),
+    map: z.union([expression, z.record(z.string(), expression)]).optional(),
+    detect: detect.optional(),
+    reloadOnMiss: z.boolean().optional(),
+    waitMs: z.number().int().nonnegative().optional(),
+  })
+  .refine((resolver) => Boolean(resolver.request) !== Boolean(resolver.sources), {
+    message: 'intercept resolver needs either "request" or "sources", but not both',
+  })
+  .refine((resolver) => !resolver.sources || Object.keys(resolver.sources).length > 0, {
+    message: 'intercept resolver "sources" must not be empty',
+  });
+
+const domFieldSchema = z.strictObject({
+  selector: z.string(),
+  attr: z.string().optional(),
+  sibling: z.boolean().optional(),
+});
+
+const domSchema = z.strictObject({
+  kind: z.literal("dom"),
+  detect: detect.optional(),
+  item: z.string().optional(),
+  fields: z.record(z.string(), domFieldSchema).optional(),
+  post: expression.optional(),
+});
+
+const llmSchema = z.strictObject({
+  kind: z.literal("llm"),
+  prompt: z.string(),
+  maxSnapshotChars: z.number().int().positive().optional(),
+});
+
+const lensSpecSchema = z.strictObject({
+  lens: z.string().regex(/^[a-z0-9_-]+\/[a-z0-9_-]+$/, {
+    message: 'must be a namespaced name like "hn/top"',
+  }),
+  version: z.number().int().positive(),
+  description: z.string().optional(),
+  accepts: z.array(z.string()).min(1),
+  returns: z.unknown().optional(),
+  outcomes: z.record(z.string(), z.unknown()).optional(),
+  effects: z.strictObject({
+    reads: z.array(z.string()),
+    writes: z.array(z.string()),
+    idempotent: z.boolean().optional(),
+    cache: z.number().nonnegative().optional(),
+  }),
+  resolve: z.array(z.discriminatedUnion("kind", [interceptSchema, domSchema, llmSchema])).min(1),
+});
+
 export function validateSpec(raw: unknown): LensSpec {
-  if (typeof raw !== "object" || raw === null) throw new Error("lens spec must be an object");
-  const s = raw as Record<string, unknown>;
-  const problems: string[] = [];
-
-  if (typeof s.lens !== "string" || !/^[a-z0-9_-]+\/[a-z0-9_-]+$/.test(s.lens))
-    problems.push(`"lens" must be a namespaced name like "hn/top"`);
-  if (typeof s.version !== "number") problems.push(`"version" must be a number`);
-  if (!Array.isArray(s.accepts) || s.accepts.length === 0 || !s.accepts.every((a) => typeof a === "string"))
-    problems.push(`"accepts" must be a non-empty array of URL patterns`);
-
-  const effects = s.effects as Record<string, unknown> | undefined;
-  if (!effects || !Array.isArray(effects.reads) || !Array.isArray(effects.writes))
-    problems.push(`"effects" must declare "reads" and "writes" arrays`);
-
-  if (!Array.isArray(s.resolve) || s.resolve.length === 0) {
-    problems.push(`"resolve" must be a non-empty array`);
-  } else {
-    s.resolve.forEach((r, i) => {
-      const kind = (r as Record<string, unknown>)?.kind;
-      if (kind !== "intercept" && kind !== "dom" && kind !== "llm")
-        problems.push(`resolve[${i}].kind must be intercept | dom | llm`);
-      if (kind === "intercept") {
-        const { request, sources } = r as { request?: unknown; sources?: Record<string, unknown> };
-        if (sources && Object.keys(sources).length === 0)
-          problems.push(`resolve[${i}].sources must be a non-empty object of named sources`);
-        else if ((typeof request === "string") === Boolean(sources))
-          problems.push(`resolve[${i}] intercept needs a "request" pattern or a "sources" map (not both)`);
-        for (const [name, src] of Object.entries(sources ?? {})) {
-          if (typeof (src as Record<string, unknown>)?.request !== "string")
-            problems.push(`resolve[${i}].sources.${name} needs a "request" pattern`);
-        }
-      }
-      if (kind === "llm" && typeof (r as Record<string, unknown>).prompt !== "string")
-        problems.push(`resolve[${i}] llm needs a "prompt"`);
-    });
+  const result = lensSpecSchema.safeParse(raw);
+  if (!result.success) {
+    throw new Error(`invalid lens spec:\n${z.prettifyError(result.error)}`);
   }
-
-  if (problems.length) throw new Error(`invalid lens spec:\n- ${problems.join("\n- ")}`);
-  return raw as LensSpec;
+  return result.data;
 }

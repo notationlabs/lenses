@@ -5,6 +5,7 @@ import { runIntercept } from "./resolvers/intercept.js";
 import { runDom } from "./resolvers/dom.js";
 import { runLlm } from "./resolvers/llm.js";
 import { isPlainObject } from "./util.js";
+import { fillAbsent, satisfiesReturns } from "./reconcile.js";
 
 /**
  * Execute a lens against a target URL. Runs the resolver list in order,
@@ -34,54 +35,50 @@ export async function executeLens(
   let acc: Record<string, unknown> | undefined;
   const contributors: Resolver["kind"][] = [];
   for (const resolver of spec.resolve) {
-    try {
-      let result: LensResult | null;
-      switch (resolver.kind) {
-        case "intercept":
-          result = await runIntercept(resolver, params, io, spec.outcomes);
-          break;
-        case "dom":
-          result = await runDom(resolver, params, io, spec.outcomes);
-          break;
-        case "llm":
-          result = await runLlm(resolver, io);
-          break;
-      }
-      if (!result) {
-        lastMiss = `${resolver.kind} resolver missed`;
-        continue;
-      }
-      // Outcomes / errors are terminal — never reconciled. agent_extract
-      // additionally carries whatever fields cheaper tiers already gathered.
-      if (result.kind !== "value") {
-        if (result.kind === "outcome" && result.name === "agent_extract" && acc && Object.keys(acc).length) {
-          return {
-            ...result,
-            value: {
-              ...(result.value as Record<string, unknown>),
-              gathered: await materialiseLenses(acc, spec.returns),
-            },
-          };
-        }
-        return result;
-      }
-      if (!isPlainObject(result.value)) {
-        if (acc === undefined) {
-          return { ...result, value: await materialiseLenses(result.value, spec.returns) };
-        }
-        continue;
-      }
-      acc = fillAbsent(acc ?? {}, result.value);
-      contributors.push(resolver.kind);
-      if (isComplete(acc, spec.returns)) {
+    let result: LensResult | null;
+    switch (resolver.kind) {
+      case "intercept":
+        result = await runIntercept(resolver, params, io, spec.outcomes);
+        break;
+      case "dom":
+        result = await runDom(resolver, params, io, spec.outcomes);
+        break;
+      case "llm":
+        result = await runLlm(resolver, io);
+        break;
+    }
+    if (!result) {
+      lastMiss = `${resolver.kind} resolver missed`;
+      continue;
+    }
+    // Outcomes / errors are terminal — never reconciled. agent_extract
+    // additionally carries whatever fields cheaper tiers already gathered.
+    if (result.kind !== "value") {
+      if (result.kind === "outcome" && result.name === "agent_extract" && acc && Object.keys(acc).length) {
         return {
-          kind: "value",
-          value: await materialiseLenses(acc, spec.returns),
-          resolver: settledResolver(contributors),
+          ...result,
+          value: {
+            ...(result.value as Record<string, unknown>),
+            gathered: await materialiseLenses(acc, spec.returns),
+          },
         };
       }
-    } catch (err) {
-      lastMiss = `${resolver.kind} resolver failed: ${err instanceof Error ? err.message : String(err)}`;
+      return result;
+    }
+    if (!isPlainObject(result.value)) {
+      if (acc === undefined) {
+        return { ...result, value: await materialiseLenses(result.value, spec.returns) };
+      }
+      continue;
+    }
+    acc = fillAbsent(acc ?? {}, result.value) as Record<string, unknown>;
+    contributors.push(resolver.kind);
+    if (satisfiesReturns(acc, spec.returns)) {
+      return {
+        kind: "value",
+        value: await materialiseLenses(acc, spec.returns),
+        resolver: settledResolver(contributors),
+      };
     }
   }
   // Out of tiers without completing `returns`: return what we gathered, but
@@ -95,26 +92,6 @@ export async function executeLens(
     };
   }
   return { kind: "error", message: `all resolvers exhausted (${lastMiss})` };
-}
-
-/** Copy `incoming` fields into `acc`, but only where `acc` lacks them. */
-function fillAbsent(
-  acc: Record<string, unknown>,
-  incoming: Record<string, unknown>
-): Record<string, unknown> {
-  const out = { ...acc };
-  for (const [k, v] of Object.entries(incoming)) {
-    if (!(k in out) || out[k] === undefined) out[k] = v;
-  }
-  return out;
-}
-
-// Complete once every top-level field declared in `returns` is present.
-// Absent `returns` means the first contribution suffices (single-tier lenses).
-function isComplete(acc: Record<string, unknown>, returns: unknown): boolean {
-  const fields = (returns as { fields?: unknown } | undefined)?.fields;
-  if (!isPlainObject(fields)) return true;
-  return Object.keys(fields).every((k) => k in acc && acc[k] !== undefined);
 }
 
 function settledResolver(contributors: Resolver["kind"][]): Resolver["kind"] | "reconciled" {
