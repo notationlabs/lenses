@@ -32,14 +32,6 @@ export interface LensEffects {
 
 export type Resolver = InterceptResolver | DomResolver | LlmResolver;
 
-/** One named network response to capture within an intercept tier. */
-export interface InterceptSource {
-  /** "METHOD urlglob", e.g. "GET https://x.com/i/api/graphql/*\/TweetDetail*" */
-  request: string;
-  /** JSONata over the parsed response body producing this source's bound value */
-  items?: ExprString;
-}
-
 /**
  * A map projection: either a single JSONata expression producing the whole
  * result, or an object whose values are per-field JSONata expressions. The
@@ -49,17 +41,11 @@ export type MapSpec = ExprString | Record<string, ExprString>;
 
 export interface InterceptResolver {
   kind: "intercept";
-  /** Single-source shorthand: "METHOD urlglob". Omit when using `sources`. */
-  request?: string;
-  /**
-   * Compose several captured responses. Each key binds that source's body as a
-   * JSONata variable ($name) available to `map` and `detect`. Only the intercept
-   * tier fans out like this — a page fires many responses; dom/llm have one input.
-   */
-  sources?: Record<string, InterceptSource>;
-  /** JSONata over the parsed response body producing the working value (single-source) */
+  /** "METHOD urlglob", e.g. "GET https://claude.ai/api/organizations/*\/usage*" */
+  request: string;
+  /** JSONata over the parsed response body producing the working value */
   items?: ExprString;
-  /** JSONata (or per-field object) over the working value / source bindings */
+  /** JSONata (or per-field object) over the working value */
   map?: MapSpec;
   /** outcome name -> JSONata over {status, url, body}; truthy triggers the outcome */
   detect?: Record<string, ExprString>;
@@ -67,8 +53,6 @@ export interface InterceptResolver {
   reloadOnMiss?: boolean;
   /** how long to wait for a matching response after (re)load, ms */
   waitMs?: number;
-  /** for write lenses: fire this request instead of observing. body is JSONata over args. */
-  fire?: { request: string; body?: ExprString };
 }
 
 export interface DomFieldSpec {
@@ -88,13 +72,7 @@ export interface DomResolver {
   fields?: Record<string, DomFieldSpec>;
   /** JSONata applied to the extracted value */
   post?: ExprString;
-  /** for write lenses: perform these actions in order */
-  actions?: DomAction[];
 }
-
-export type DomAction =
-  | { click: string }
-  | { type: { selector: string; text: ExprString } };
 
 export interface LlmResolver {
   kind: "llm";
@@ -125,10 +103,8 @@ export interface EngineIO {
   getIntercepted(): Promise<InterceptedResponse[]>;
   /** reload the bound tab (used by reloadOnMiss); resolves when load committed */
   reload?(): Promise<void>;
-  /** run a DOM extraction/action spec in the bound tab's content script */
+  /** run a DOM extraction spec in the bound tab's content script */
   domExtract(spec: DomResolver): Promise<{ url: string; title: string; value: unknown }>;
-  /** fire a network request from the page context (write lenses) */
-  fireRequest?(method: string, url: string, body: unknown): Promise<InterceptedResponse>;
   /** plain-text snapshot of the page for the LLM tier */
   snapshot(maxChars: number): Promise<{ url: string; title: string; text: string }>;
   sleep(ms: number): Promise<void>;

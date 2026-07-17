@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { executeLens } from "../src/engine.js";
-import { defineLens } from "../src/index.js";
+import { validateSpec } from "../src/validate.js";
 import type { DomResolver, EngineIO, InterceptedResponse } from "../src/types.js";
 
 function io(overrides: Partial<EngineIO> = {}): EngineIO {
@@ -22,7 +22,7 @@ const captured = (over: Partial<InterceptedResponse>): InterceptedResponse => ({
   ...over,
 });
 
-const spec = defineLens({
+const spec = validateSpec({
   lens: "example/things",
   version: 1,
   accepts: ["https://example.com/{page}"],
@@ -96,7 +96,7 @@ describe("executeLens", () => {
   });
 
   it("binds URL holes as JSONata params", async () => {
-    const s = defineLens({
+    const s = validateSpec({
       lens: "example/echo",
       version: 1,
       accepts: ["https://example.com/{page}"],
@@ -113,32 +113,6 @@ describe("executeLens", () => {
       getIntercepted: async () => [captured({ body: "{}" })],
     }));
     expect(r).toMatchObject({ kind: "value", value: { page: "hello" } });
-  });
-
-  it("supports write lenses via fire", async () => {
-    const s = defineLens({
-      lens: "example/like",
-      version: 1,
-      accepts: ["https://example.com/post/{id}"],
-      effects: { reads: [], writes: ["example.com/like"] },
-      resolve: [
-        {
-          kind: "intercept",
-          request: "POST https://api.example.com/like",
-          fire: { request: "POST https://api.example.com/like", body: "{ 'post_id': $id }" },
-          map: "{ 'liked': true }",
-        },
-      ],
-    });
-    let sent: unknown;
-    const r = await executeLens(s, "https://example.com/post/42", {}, io({
-      fireRequest: async (_m, _u, body) => {
-        sent = body;
-        return captured({ method: "POST", url: "https://api.example.com/like", body: "{}" });
-      },
-    }));
-    expect(sent).toEqual({ post_id: "42" });
-    expect(r).toMatchObject({ kind: "value", value: { liked: true } });
   });
 
   it("reloads on miss and picks up a late capture", async () => {
@@ -170,7 +144,7 @@ describe("executeLens", () => {
 
 describe("results are lenses too", () => {
   it("materialises a declared $lens outcome with its target bound", async () => {
-    const s = defineLens({
+    const s = validateSpec({
       lens: "claude/usage",
       version: 1,
       accepts: ["https://claude.ai/settings/{page}"],
@@ -202,7 +176,7 @@ describe("results are lenses too", () => {
   });
 
   it("keeps the raw detect ctx when the outcome is declared null", async () => {
-    const s = defineLens({
+    const s = validateSpec({
       lens: "example/maybe",
       version: 1,
       accepts: ["https://example.com/{page}"],
@@ -227,7 +201,7 @@ describe("results are lenses too", () => {
   });
 
   it("binds $lens result fields on every row of an array return", async () => {
-    const s = defineLens({
+    const s = validateSpec({
       lens: "hn/top",
       version: 1,
       accepts: ["https://news.ycombinator.com/{page}"],
@@ -264,87 +238,9 @@ describe("results are lenses too", () => {
   });
 });
 
-describe("intercept sources composition", () => {
-  const composed = defineLens({
-    lens: "example/usage",
-    version: 1,
-    accepts: ["https://example.com/{page}"],
-    effects: { reads: ["example.com"], writes: [] },
-    resolve: [
-      {
-        kind: "intercept",
-        sources: {
-          usage: { request: "GET https://api.example.com/usage*" },
-          sub: { request: "GET https://api.example.com/subscription*" },
-        },
-        detect: { needs_auth: "$usage.status = 401 or $sub.status = 401" },
-        map: {
-          plan: "$sub.plan_label",
-          limits: "$usage.limits.{ 'name': kind, 'percent': $string(percent) & '%' }",
-        },
-      },
-      { kind: "llm", prompt: "Read the whole page." },
-    ],
-  });
-
-  const usageResp = (over: Partial<InterceptedResponse> = {}): InterceptedResponse => ({
-    url: "https://api.example.com/usage",
-    method: "GET",
-    status: 200,
-    body: JSON.stringify({ limits: [{ kind: "session", percent: 1 }, { kind: "weekly", percent: 65 }] }),
-    timestamp: Date.now(),
-    ...over,
-  });
-  const subResp = (over: Partial<InterceptedResponse> = {}): InterceptedResponse => ({
-    url: "https://api.example.com/subscription_details",
-    method: "GET",
-    status: 200,
-    body: JSON.stringify({ plan_label: "Max (20x)" }),
-    timestamp: Date.now(),
-    ...over,
-  });
-
-  it("composes two responses via $-bound source names and an object map", async () => {
-    const r = await executeLens(composed, "https://example.com/usage", {}, io({
-      getIntercepted: async () => [usageResp(), subResp()],
-    }));
-    expect(r).toEqual({
-      kind: "value",
-      resolver: "intercept",
-      value: {
-        plan: "Max (20x)",
-        limits: [
-          { name: "session", percent: "1%" },
-          { name: "weekly", percent: "65%" },
-        ],
-      },
-    });
-  });
-
-  it("falls through to llm when one source is missing", async () => {
-    const r = await executeLens(composed, "https://example.com/usage", {}, io({
-      getIntercepted: async () => [usageResp()], // no subscription response
-    }));
-    expect(r).toMatchObject({
-      kind: "outcome",
-      name: "agent_extract",
-      resolver: "llm",
-      value: { prompt: "Read the whole page." },
-    });
-  });
-
-  it("detects an outcome across source metas", async () => {
-    const r = await executeLens(composed, "https://example.com/usage", {}, io({
-      getIntercepted: async () => [usageResp({ status: 401, body: "{}" }), subResp()],
-    }));
-    expect(r.kind).toBe("outcome");
-    if (r.kind === "outcome") expect(r.name).toBe("needs_auth");
-  });
-});
-
 describe("cross-tier reconciliation", () => {
   // intercept supplies {limits, renews_at} but omits plan; a cheap dom tier fills plan.
-  const reconciled = defineLens({
+  const reconciled = validateSpec({
     lens: "example/reconcile",
     version: 1,
     accepts: ["https://example.com/{page}"],
@@ -353,8 +249,8 @@ describe("cross-tier reconciliation", () => {
     resolve: [
       {
         kind: "intercept",
-        sources: { usage: { request: "GET https://api.example.com/usage*" } },
-        map: { renews_at: "'2026-08-06'", limits: "$usage.limits" },
+        request: "GET https://api.example.com/usage*",
+        map: { renews_at: "'2026-08-06'", limits: "limits" },
       },
       { kind: "dom", fields: { plan: { selector: ".plan" } }, post: "{ 'plan': plan }" },
       { kind: "llm", prompt: "Read the whole page." },
