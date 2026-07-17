@@ -137,6 +137,8 @@ call it by URL.
 
 - `effects` – `{ "reads": [...], "writes": [...], "idempotent": true, "cache": 60 }`.
   `cache` is a TTL in seconds; partial results are never cached.
+- `loadTimeoutMs` – optional page-load ceiling in milliseconds for slow applications;
+  the default is 30000.
 - `resolve` – the tier list. Per kind:
   - **intercept**: `request` ("METHOD url-pattern"); `detect` runs over
     `{status, url, body}`; `items`/`map` over the body. `reloadOnMiss` and

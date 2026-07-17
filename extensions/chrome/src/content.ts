@@ -1,5 +1,7 @@
 /** Relay page intercepts and serve service-worker extraction requests. */
 
+import { formatError } from "./errors.js";
+
 export {};
 
 const MARK = "__lens_host__";
@@ -43,7 +45,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === "dom_extract") {
     runDomExtract(msg as DomExtractRequest)
       .then(sendResponse)
-      .catch((err) => sendResponse({ error: String(err) }));
+      .catch((error) => sendResponse({ error: formatError(error) }));
     return true;
   }
   if (msg.type === "snapshot") {

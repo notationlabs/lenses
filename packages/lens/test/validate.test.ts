@@ -14,6 +14,15 @@ describe("validateSpec", () => {
     expect(validateSpec(validSpec)).toEqual(validSpec);
   });
 
+  it("accepts a positive page load timeout", () => {
+    const spec = { ...validSpec, loadTimeoutMs: 45_000 };
+    expect(validateSpec(spec)).toEqual(spec);
+  });
+
+  it("rejects a non-positive page load timeout", () => {
+    expect(() => validateSpec({ ...validSpec, loadTimeoutMs: 0 })).toThrow(/loadTimeoutMs/);
+  });
+
   it("rejects malformed nested resolver fields before execution", () => {
     expect(() =>
       validateSpec({

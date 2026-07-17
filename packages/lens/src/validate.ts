@@ -72,6 +72,7 @@ const lensSpecSchema = z.strictObject({
   version: z.number().int().positive(),
   description: z.string().optional(),
   accepts: z.array(z.string()).min(1),
+  loadTimeoutMs: z.number().int().positive().optional(),
   returns: returnSchema.optional(),
   outcomes: z.record(z.string(), z.unknown()).optional(),
   effects: z.strictObject({

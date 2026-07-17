@@ -1,9 +1,10 @@
 import type { LensResult, LensSpec } from "@djgrant/lens";
 import { callLens, observePage } from "./operations.js";
+import { formatError } from "../errors.js";
 
 const PORT_RANGE_START = 4319;
 const PORT_RANGE_END = 4329;
-const KNOWN_PORTS_KEY = "livePorts";
+const KNOWN_PORTS_KEY = "knownPorts";
 const DISCOVER_COOLDOWN_MS = 10_000;
 
 const sockets = new Map<number, WebSocket>();
@@ -11,8 +12,10 @@ let lastDiscover = 0;
 let portUpdate = Promise.resolve();
 
 export function startBridgeConnections(): void {
-  chrome.alarms.create("lens-keepalive", { periodInMinutes: 0.4 });
-  chrome.alarms.onAlarm.addListener(() => void reconnectKnown());
+  chrome.alarms.create("lens-bridge-reconnect", { periodInMinutes: 0.5 });
+  chrome.alarms.onAlarm.addListener((alarm) => {
+    if (alarm.name === "lens-bridge-reconnect") void reconnectKnown();
+  });
   chrome.tabs.onUpdated.addListener((_id, info, tab) => {
     if (info.status === "complete" && tab.url?.startsWith("http")) discover();
   });
@@ -27,11 +30,10 @@ async function loadKnownPorts(): Promise<number[]> {
   return Array.isArray(ports) ? (ports as number[]) : [];
 }
 
-async function rememberPort(port: number, live: boolean): Promise<void> {
+async function rememberPort(port: number): Promise<void> {
   const update = portUpdate.then(async () => {
     const ports = new Set(await loadKnownPorts());
-    if (live) ports.add(port);
-    else ports.delete(port);
+    ports.add(port);
     await chrome.storage.session.set({ [KNOWN_PORTS_KEY]: [...ports] });
   });
   portUpdate = update;
@@ -47,15 +49,17 @@ function connectPort(port: number): void {
   ) return;
 
   const socket = new WebSocket(`ws://127.0.0.1:${port}`);
+  let connected = false;
   sockets.set(port, socket);
   socket.onopen = () => {
-    void rememberPort(port, true);
+    connected = true;
+    void rememberPort(port);
     socket.send(JSON.stringify({ type: "hello", ua: navigator.userAgent }));
   };
   socket.onmessage = (event) => void onBridgeMessage(socket, String(event.data));
   socket.onclose = () => {
     if (sockets.get(port) === socket) sockets.delete(port);
-    void rememberPort(port, false);
+    if (connected) setTimeout(() => connectPort(port), 1000);
   };
   socket.onerror = () => socket.close();
 }
@@ -73,6 +77,10 @@ async function reconnectKnown(): Promise<void> {
 
 async function onBridgeMessage(socket: WebSocket, raw: string): Promise<void> {
   const message = JSON.parse(raw) as { type: string; id: string; [key: string]: unknown };
+  if (message.type === "ping") {
+    socket.send(JSON.stringify({ type: "pong" }));
+    return;
+  }
   let result: LensResult | Awaited<ReturnType<typeof observePage>>;
 
   try {
@@ -88,7 +96,7 @@ async function onBridgeMessage(socket: WebSocket, raw: string): Promise<void> {
       throw new Error(`unknown bridge message type: ${message.type}`);
     }
   } catch (error) {
-    result = { kind: "error", message: error instanceof Error ? error.message : String(error) };
+    result = { kind: "error", message: formatError(error) };
   }
 
   socket.send(JSON.stringify({ type: "result", id: message.id, result }));

@@ -3,6 +3,7 @@
   "version": 1,
   "description": "The logged-in user's Claude.ai usage settings page: current plan plus session and weekly usage limits with reset times.",
   "accepts": ["https://claude.ai/settings/usage*"],
+  "loadTimeoutMs": 45000,
   "returns": {
     "type": "object",
     "fields": {

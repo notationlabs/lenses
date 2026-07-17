@@ -13,6 +13,8 @@ export interface LensSpec {
   description?: string;
   /** URL patterns with named holes, e.g. "https://x.com/{handle}/status/{id}" */
   accepts: string[];
+  /** Maximum time to wait for the target page to finish loading, in milliseconds. */
+  loadTimeoutMs?: number;
   /** JSON-schema-ish shape of the return value. Fields whose value is
    *  {"$lens": "<lens-url>", "target": "<jsonata expr>"} are lens references. */
   returns?: unknown;
