@@ -10,7 +10,7 @@ export interface UrlMatch {
 
 const HOLE = /\{([a-zA-Z_][a-zA-Z0-9_]*)\}/g;
 
-export function compilePattern(pattern: string): RegExp {
+function compilePattern(pattern: string): RegExp {
   let out = "";
   let last = 0;
   for (const m of pattern.matchAll(HOLE)) {
