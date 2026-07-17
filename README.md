@@ -132,7 +132,9 @@ call it by URL.
 - `resolve` – the tier list. Per kind:
   - **intercept**: `request` ("METHOD url-pattern"); `detect` runs over
     `{status, url, body}`; `items`/`map` over the body. `reloadOnMiss` and
-    `waitMs` control capture.
+    `waitMs` control capture. Alternatively, named `sources` capture several
+    responses at once, each body bound as a `$name` variable so `map` can
+    join across them: `"stars_per_day": "$repo.stars / $release.age_days"`.
   - **dom**: `item` (repeating element selector) plus `fields` of
     `{ selector, attr?, sibling? }`; `post` reshapes the extraction.
   - **llm**: `prompt`.

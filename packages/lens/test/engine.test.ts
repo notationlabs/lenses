@@ -238,6 +238,104 @@ describe("results are lenses too", () => {
   });
 });
 
+describe("intercept sources composition", () => {
+  const composed = validateSpec({
+    lens: "example/usage",
+    version: 1,
+    accepts: ["https://example.com/{page}"],
+    effects: { reads: ["example.com"], writes: [] },
+    resolve: [
+      {
+        kind: "intercept",
+        sources: {
+          usage: { request: "GET https://api.example.com/usage*" },
+          sub: { request: "GET https://api.example.com/subscription*" },
+        },
+        detect: { needs_auth: "$usage.status = 401 or $sub.status = 401" },
+        map: {
+          plan: "$sub.plan_label",
+          limits: "$usage.limits.{ 'name': kind, 'percent': $string(percent) & '%' }",
+        },
+      },
+      { kind: "llm", prompt: "Read the whole page." },
+    ],
+  });
+
+  const usageResp = (over: Partial<InterceptedResponse> = {}): InterceptedResponse => ({
+    url: "https://api.example.com/usage",
+    method: "GET",
+    status: 200,
+    body: JSON.stringify({ limits: [{ kind: "session", percent: 1 }, { kind: "weekly", percent: 65 }] }),
+    timestamp: Date.now(),
+    ...over,
+  });
+  const subResp = (over: Partial<InterceptedResponse> = {}): InterceptedResponse => ({
+    url: "https://api.example.com/subscription_details",
+    method: "GET",
+    status: 200,
+    body: JSON.stringify({ plan_label: "Max (20x)", quota: 200 }),
+    timestamp: Date.now(),
+    ...over,
+  });
+
+  it("composes two responses via $-bound source names and an object map", async () => {
+    const r = await executeLens(composed, "https://example.com/usage", {}, io({
+      getIntercepted: async () => [usageResp(), subResp()],
+    }));
+    expect(r).toEqual({
+      kind: "value",
+      resolver: "intercept",
+      value: {
+        plan: "Max (20x)",
+        limits: [
+          { name: "session", percent: "1%" },
+          { name: "weekly", percent: "65%" },
+        ],
+      },
+    });
+  });
+
+  it("joins across bodies in a single expression", async () => {
+    const joined = validateSpec({
+      ...composed,
+      resolve: [
+        {
+          kind: "intercept",
+          sources: {
+            usage: { request: "GET https://api.example.com/usage*", items: "limits[kind='weekly']" },
+            sub: { request: "GET https://api.example.com/subscription*" },
+          },
+          map: { weekly_used: "$usage.percent * $sub.quota / 100" },
+        },
+      ],
+    });
+    const r = await executeLens(joined, "https://example.com/usage", {}, io({
+      getIntercepted: async () => [usageResp(), subResp()],
+    }));
+    expect(r).toMatchObject({ kind: "value", value: { weekly_used: 130 } });
+  });
+
+  it("falls through to llm when one source is missing", async () => {
+    const r = await executeLens(composed, "https://example.com/usage", {}, io({
+      getIntercepted: async () => [usageResp()], // no subscription response
+    }));
+    expect(r).toMatchObject({
+      kind: "outcome",
+      name: "agent_extract",
+      resolver: "llm",
+      value: { prompt: "Read the whole page." },
+    });
+  });
+
+  it("detects an outcome across source metas", async () => {
+    const r = await executeLens(composed, "https://example.com/usage", {}, io({
+      getIntercepted: async () => [usageResp({ status: 401, body: "{}" }), subResp()],
+    }));
+    expect(r.kind).toBe("outcome");
+    if (r.kind === "outcome") expect(r.name).toBe("needs_auth");
+  });
+});
+
 describe("cross-tier reconciliation", () => {
   // intercept supplies {limits, renews_at} but omits plan; a cheap dom tier fills plan.
   const reconciled = validateSpec({

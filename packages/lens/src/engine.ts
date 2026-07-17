@@ -2,6 +2,7 @@ import type {
   DomResolver,
   EngineIO,
   InterceptResolver,
+  InterceptSource,
   InterceptedResponse,
   LensResult,
   LensSpec,
@@ -140,32 +141,69 @@ function settledResolver(contributors: Resolver["kind"][]): Resolver["kind"] | "
   return contributors.length > 1 ? "reconciled" : contributors[0];
 }
 
+/**
+ * Intercept tier. Two forms share one path: a single `request` is normalised
+ * into one anonymous source, then capture-matching, the reload-and-wait loop,
+ * `detect`, and the 2xx check are common. They part only at projection —
+ * multi-source binds each body as a JSONata variable ($name) so `map` can
+ * join across responses; single-source maps over the body itself.
+ */
 async function runIntercept(
   r: InterceptResolver,
   params: Record<string, unknown>,
   io: EngineIO,
   outcomes: LensSpec["outcomes"]
 ): Promise<LensResult | null> {
-  // Look for a captured response, optionally reloading to trigger one.
-  let captured = await findMatch(r, io);
-  if (!captured && r.reloadOnMiss && io.reload) {
+  const sources = r.sources ?? { body: { request: r.request!, items: r.items } };
+  const names = Object.keys(sources);
+
+  // Look for the captured responses, optionally reloading to trigger them.
+  // Every source must be captured, or the tier misses as a whole.
+  let found = await findMatches(sources, io);
+  if (found.size < names.length && r.reloadOnMiss && io.reload) {
     await io.reload();
     const deadline = Date.now() + (r.waitMs ?? 8000);
-    while (!captured && Date.now() < deadline) {
+    while (found.size < names.length && Date.now() < deadline) {
       await io.sleep(250);
-      captured = await findMatch(r, io);
+      found = await findMatches(sources, io);
     }
   }
-  if (!captured) return null;
+  if (found.size < names.length) return null;
 
-  const outcome = await detectOutcome(r.detect, responseContext(captured), params, outcomes);
+  // detect: single-source sees {status, url, body} bare; multi-source sees
+  // each response bound as $name (`$usage.status = 401`).
+  const metas: Record<string, unknown> = {};
+  for (const n of names) metas[n] = responseContext(found.get(n)!);
+  const outcome = r.sources
+    ? await detectOutcome(r.detect, { ...params, ...metas }, { ...params, ...metas }, outcomes)
+    : await detectOutcome(r.detect, metas[names[0]], params, outcomes);
   if (outcome) return outcome;
-  if (captured.status < 200 || captured.status >= 300) return null;
 
-  let working: unknown = tryParse(captured.body);
-  if (r.items) working = await evaluate(r.items, working, params);
+  // any non-2xx response is a tier miss
+  for (const n of names) {
+    const status = found.get(n)!.status;
+    if (status < 200 || status >= 300) return null;
+  }
+
+  // parse each body and apply its `items` narrowing
+  const bodies: Record<string, unknown> = {};
+  for (const n of names) {
+    const parsed = tryParse(found.get(n)!.body);
+    const items = sources[n].items;
+    bodies[n] = items ? await evaluate(items, parsed, params) : parsed;
+  }
+
+  // multi-source: bodies become $name variables; `map` draws from any of them
+  if (r.sources) {
+    const vars = { ...params, ...bodies };
+    const value = r.map ? await project(r.map, vars, vars) : bodies;
+    if (value === undefined || value === null) return null;
+    return { kind: "value", value, resolver: "intercept" };
+  }
+
+  // single-source: the body is the working value; `map` runs per item on arrays
+  const working = bodies[names[0]];
   if (working === undefined || working === null) return null;
-
   let value: unknown;
   if (r.map && Array.isArray(working)) {
     value = [];
@@ -205,12 +243,22 @@ function plain<T>(value: T): T {
   return value;
 }
 
-async function findMatch(r: InterceptResolver, io: EngineIO): Promise<InterceptedResponse | null> {
+/** Newest captured response per source, keyed by source name. */
+async function findMatches(
+  sources: Record<string, InterceptSource>,
+  io: EngineIO
+): Promise<Map<string, InterceptedResponse>> {
   const all = await io.getIntercepted();
-  for (let i = all.length - 1; i >= 0; i--) {
-    if (matchRequestPattern(r.request, all[i].method, all[i].url)) return all[i];
+  const out = new Map<string, InterceptedResponse>();
+  for (const [name, src] of Object.entries(sources)) {
+    for (let i = all.length - 1; i >= 0; i--) {
+      if (matchRequestPattern(src.request, all[i].method, all[i].url)) {
+        out.set(name, all[i]);
+        break;
+      }
+    }
   }
-  return null;
+  return out;
 }
 
 async function runDom(

@@ -22,8 +22,17 @@ export function validateSpec(raw: unknown): LensSpec {
       const kind = (r as Record<string, unknown>)?.kind;
       if (kind !== "intercept" && kind !== "dom" && kind !== "llm")
         problems.push(`resolve[${i}].kind must be intercept | dom | llm`);
-      if (kind === "intercept" && typeof (r as Record<string, unknown>).request !== "string")
-        problems.push(`resolve[${i}] intercept needs a "request" pattern`);
+      if (kind === "intercept") {
+        const { request, sources } = r as { request?: unknown; sources?: Record<string, unknown> };
+        if (sources && Object.keys(sources).length === 0)
+          problems.push(`resolve[${i}].sources must be a non-empty object of named sources`);
+        else if ((typeof request === "string") === Boolean(sources))
+          problems.push(`resolve[${i}] intercept needs a "request" pattern or a "sources" map (not both)`);
+        for (const [name, src] of Object.entries(sources ?? {})) {
+          if (typeof (src as Record<string, unknown>)?.request !== "string")
+            problems.push(`resolve[${i}].sources.${name} needs a "request" pattern`);
+        }
+      }
       if (kind === "llm" && typeof (r as Record<string, unknown>).prompt !== "string")
         problems.push(`resolve[${i}] llm needs a "prompt"`);
     });

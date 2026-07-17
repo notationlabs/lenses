@@ -32,6 +32,14 @@ export interface LensEffects {
 
 export type Resolver = InterceptResolver | DomResolver | LlmResolver;
 
+/** One named network response to capture within an intercept tier. */
+export interface InterceptSource {
+  /** "METHOD urlglob", e.g. "GET https://api.github.com/repos/*\/releases/latest" */
+  request: string;
+  /** JSONata over the parsed response body producing this source's bound value */
+  items?: ExprString;
+}
+
 /**
  * A map projection: either a single JSONata expression producing the whole
  * result, or an object whose values are per-field JSONata expressions. The
@@ -41,11 +49,18 @@ export type MapSpec = ExprString | Record<string, ExprString>;
 
 export interface InterceptResolver {
   kind: "intercept";
-  /** "METHOD urlglob", e.g. "GET https://claude.ai/api/organizations/*\/usage*" */
-  request: string;
-  /** JSONata over the parsed response body producing the working value */
+  /** Single-source shorthand: "METHOD urlglob". Omit when using `sources`. */
+  request?: string;
+  /**
+   * Compose several captured responses. Each key binds that source's body as a
+   * JSONata variable ($name), so `map` can join across responses:
+   * `"stars_per_day": "$repo.stars / $release.age_days"`. All sources must be
+   * captured, or the tier misses as a whole.
+   */
+  sources?: Record<string, InterceptSource>;
+  /** JSONata over the parsed response body producing the working value (single-source) */
   items?: ExprString;
-  /** JSONata (or per-field object) over the working value */
+  /** JSONata (or per-field object) over the working value / source bindings */
   map?: MapSpec;
   /** outcome name -> JSONata over {status, url, body}; truthy triggers the outcome */
   detect?: Record<string, ExprString>;
