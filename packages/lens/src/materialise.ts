@@ -1,15 +1,12 @@
 import { evaluate } from "./expr.js";
+import { isPlainObject } from "./util.js";
 
 /**
  * "Results are lenses too": walk a produced value against its `returns` schema
- * and turn every field declared as a lens reference (`{"$lens": "...", "target"?:
- * "<jsonata>"}`) into a *callable ref* `{$lens, target}` an agent can feed
- * straight back into `lens_call`. Fields that already hold a ref are left as-is
- * (no double-wrapping); fields with no resolvable target are left untouched.
- *
- * Pure data-to-data. `target` is resolved by evaluating the declared JSONata
- * (against the containing row/object) when present, else by reusing the field's
- * own string value (e.g. a URL the resolver already produced).
+ * and turn every field declared as a lens reference into a callable ref
+ * `{$lens, target}` an agent can feed straight back into `lens_call`.
+ * `target` comes from the declared JSONata (against the containing row) when
+ * present, else the field's own string value.
  */
 export async function materialiseLenses(value: unknown, returns: unknown): Promise<unknown> {
   if (!isPlainObject(returns)) return value;
@@ -78,8 +75,4 @@ async function materialiseRef(
 
 function isLensRefSchema(s: unknown): s is { $lens: string; target?: string } {
   return isPlainObject(s) && typeof s.$lens === "string";
-}
-
-function isPlainObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
 }
