@@ -88,10 +88,7 @@ server.registerTool(
     }
 
     const result = await bridge.call(spec, target, callArgs);
-    // Only cache a value that fully satisfied the declared `returns` shape — a
-    // `partial` reconciliation (e.g. intercept flaked, only the dom tier's
-    // `plan` came back) must not be replayed for the whole TTL and mask the
-    // recovered cheaper tier on the next call.
+    // Do not let partial results mask a recovered resolver until the TTL expires.
     if (result.kind === "value" && !result.partial && ttl > 0) {
       cache.set(key, { result, expiresAt: Date.now() + ttl });
     }

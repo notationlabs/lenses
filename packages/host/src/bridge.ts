@@ -1,11 +1,7 @@
 import { WebSocketServer, WebSocket } from "ws";
 import type { LensResult, LensSpec } from "@djgrant/lens";
 
-/**
- * The bridge between the lens-host process and the browser extension.
- * The extension's service worker dials out to ws://127.0.0.1:<port>;
- * the host pushes lens calls in and gets results back.
- */
+/** WebSocket bridge from the host process to the browser extension. */
 
 interface CallMessage {
   type: "call";
@@ -43,7 +39,7 @@ export class Bridge {
     this.wss = wss;
     this.port = port;
     this.wss.on("connection", (ws) => {
-      // Latest extension connection wins; an old SW instance may linger briefly.
+      // Replace service workers left alive during an extension restart.
       if (this.ext) {
         this.resolvePending({ kind: "error", message: "browser extension connection replaced" });
       }

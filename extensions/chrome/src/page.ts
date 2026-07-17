@@ -1,9 +1,4 @@
-/**
- * MAIN-world script. Chrome MV3's webRequest API cannot read response
- * bodies, so the intercept tier is implemented by patching fetch/XHR in
- * the page's own JS world and relaying JSON responses to the content
- * script via postMessage.
- */
+/** Capture JSON response bodies by patching page-world fetch and XHR. */
 
 export {};
 
@@ -23,7 +18,6 @@ function relay(method: string, url: string, status: number, body: string) {
   );
 }
 
-// --- fetch ---
 const origFetch = window.fetch.bind(window);
 window.fetch = async (...fetchArgs: Parameters<typeof fetch>) => {
   const res = await origFetch(...fetchArgs);
@@ -45,7 +39,6 @@ window.fetch = async (...fetchArgs: Parameters<typeof fetch>) => {
   return res;
 };
 
-// --- XHR ---
 const origOpen = XMLHttpRequest.prototype.open;
 const origSend = XMLHttpRequest.prototype.send as (
   this: XMLHttpRequest,

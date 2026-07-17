@@ -11,10 +11,7 @@ import { evaluate } from "../expr.js";
 import { matchRequestPattern } from "../url-pattern.js";
 import { detectOutcome } from "./outcome.js";
 
-// Single-request and multi-source forms share one path: a bare `request` is
-// normalised into one anonymous source. They differ only at projection —
-// multi-source binds each body as a JSONata variable ($name) so `map` can join
-// across responses; single-source maps over the body itself.
+// Normalise a single request as one source; named sources become JSONata variables.
 export async function runIntercept(
   r: InterceptResolver,
   params: Record<string, unknown>,
@@ -24,7 +21,6 @@ export async function runIntercept(
   const sources = r.sources ?? { body: { request: r.request!, items: r.items } };
   const names = Object.keys(sources);
 
-  // Every source must be captured, or the tier misses as a whole.
   let found = await findMatches(sources, io);
   if (found.size < names.length && r.reloadOnMiss && io.reload) {
     await io.reload();
@@ -36,8 +32,7 @@ export async function runIntercept(
   }
   if (found.size < names.length) return null;
 
-  // detect: single-source sees {status, url, body} bare; multi-source sees
-  // each response bound as $name (`$usage.status = 401`).
+  // Detection sees one response directly or named responses as `$name`.
   const metas: Record<string, unknown> = {};
   for (const n of names) metas[n] = responseContext(found.get(n)!);
   const outcome = r.sources
@@ -45,7 +40,6 @@ export async function runIntercept(
     : await detectOutcome(r.detect, metas[names[0]], params, outcomes, "intercept");
   if (outcome) return outcome;
 
-  // any non-2xx response is a tier miss
   for (const n of names) {
     const status = found.get(n)!.status;
     if (status < 200 || status >= 300) return null;
@@ -65,7 +59,7 @@ export async function runIntercept(
     return { kind: "value", value, resolver: "intercept" };
   }
 
-  // single-source: `map` runs per item on arrays
+  // Map array items individually for a single source.
   const working = bodies[names[0]];
   if (working === undefined || working === null) return null;
   let value: unknown;
@@ -80,7 +74,7 @@ export async function runIntercept(
   return { kind: "value", value, resolver: "intercept" };
 }
 
-/** Evaluate a map projection — a single expression, or per-field object. */
+/** Evaluate a whole-value or per-field projection. */
 async function project(
   map: MapSpec,
   data: unknown,
@@ -92,7 +86,7 @@ async function project(
   return out;
 }
 
-/** Strip JSONata's internal array markers so results are plain data. */
+/** Convert JSONata results to plain data. */
 function plain<T>(value: T): T {
   if (Array.isArray(value)) return value.map(plain) as unknown as T;
   if (value && typeof value === "object") {
@@ -103,7 +97,7 @@ function plain<T>(value: T): T {
   return value;
 }
 
-/** Newest captured response per source, keyed by source name. */
+/** Find the newest response for each source. */
 async function findMatches(
   sources: Record<string, InterceptSource>,
   io: EngineIO

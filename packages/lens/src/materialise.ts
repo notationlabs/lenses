@@ -1,19 +1,13 @@
 import { evaluate } from "./expr.js";
 import { isPlainObject } from "./util.js";
 
-/**
- * "Results are lenses too": walk a produced value against its `returns` schema
- * and turn every field declared as a lens reference into a callable ref
- * `{$lens, target}` an agent can feed straight back into `lens_call`.
- * `target` comes from the declared JSONata (against the containing row) when
- * present, else the field's own string value.
- */
+/** Materialise declared lens fields as callable `{$lens, target}` references. */
 export async function materialiseLenses(value: unknown, returns: unknown): Promise<unknown> {
   if (!isPlainObject(returns)) return value;
   return materialiseField(value, returns, {});
 }
 
-/** Apply a field map (fieldName -> field schema) to a single object. */
+/** Apply field schemas to one object. */
 async function applyFieldMap(
   obj: unknown,
   fieldMap: Record<string, unknown>
@@ -21,8 +15,7 @@ async function applyFieldMap(
   if (!isPlainObject(obj)) return obj;
   const out: Record<string, unknown> = { ...obj };
   for (const [field, fieldSchema] of Object.entries(fieldMap)) {
-    // Absent field: only worth touching if it's a lens ref whose target is a
-    // JSONata expression we can synthesise from the row (else leave it absent).
+    // A target expression can materialise an absent field from its row.
     if (!(field in out) && !(isLensRefSchema(fieldSchema) && typeof fieldSchema.target === "string")) {
       continue;
     }
@@ -51,13 +44,13 @@ async function materialiseField(
   return value;
 }
 
-/** Bind a lens-reference field into a callable `{$lens, target}` ref. */
+/** Bind a lens field to its target. */
 async function materialiseRef(
   value: unknown,
   schema: { $lens: string; target?: string },
   contextObj: Record<string, unknown>
 ): Promise<unknown> {
-  // Already a ref (e.g. the resolver emitted one): don't double-wrap.
+  // Preserve references emitted by the resolver.
   if (isPlainObject(value) && typeof value.$lens === "string") return value;
 
   let target: unknown;
@@ -66,7 +59,6 @@ async function materialiseRef(
   } else if (typeof value === "string") {
     target = value;
   } else {
-    // No target JSONata and the field isn't a URL string — nothing to bind.
     return value;
   }
   if (target === undefined || target === null) return value;
