@@ -98,6 +98,13 @@ Each command starts a client for the duration of that invocation and then closes
 extension bridge. A cold call may wait for the Chrome extension's discovery alarm;
 verbose output distinguishes that wait from page loading and resolver execution.
 
+For repository development, Bun resolves the workspace packages directly to their
+TypeScript source, so the CLI does not need a build first:
+
+```sh
+bun packages/cli/src/index.ts call hn/top
+```
+
 ## MCP
 
 `@djgrant/lens-mcp` is a thin stdio adapter over `@djgrant/lens-client`. Configure it
