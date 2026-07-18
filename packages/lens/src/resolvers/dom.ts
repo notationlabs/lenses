@@ -16,5 +16,6 @@ export async function runDom(
   if (value === undefined || value === null) return null;
   if (Array.isArray(value) && value.length === 0) return null;
   if (r.post) value = await evaluate(r.post, value, params);
+  if (value === undefined || value === null) return null;
   return { kind: "value", value, resolver: "dom" };
 }

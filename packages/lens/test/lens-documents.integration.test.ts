@@ -26,7 +26,7 @@ describe("shipped lens documents", () => {
     const files = (await readdir(lensDirectory)).filter((file) => file.endsWith(".json"));
     const specs = await Promise.all(files.map(loadLens));
     expect(specs.map((spec) => `${spec.lens}@v${spec.version}`).sort()).toEqual([
-      "claude/usage@v1",
+      "claude/usage@v2",
       "github/notifications@v1",
       "hn/item@v1",
       "hn/top@v1",
@@ -95,7 +95,8 @@ describe("shipped lens documents", () => {
       url: "https://claude.ai/api/organizations/acme/usage",
       status: 200,
       body: JSON.stringify({
-        limits: [{ kind: "session", used_dollars: "1", limit_dollars: "5", percent: 20, resets_at: "13:00" }],
+        limits: [{ kind: "session", percent: 20, resets_at: "13:00" }],
+        spend: { enabled: false },
       }),
       timestamp: Date.now(),
     };
@@ -114,7 +115,8 @@ describe("shipped lens documents", () => {
       resolver: "reconciled",
       value: {
         plan: "Max (20x)",
-        limits: [{ name: "Current session", used: "1", limit: "5", percent: "20%", resets_at: "13:00" }],
+        limits: [{ name: "Current session", percent: "20%", resets_at: "13:00" }],
+        usage_credits: { enabled: false },
       },
     });
   });
@@ -122,10 +124,12 @@ describe("shipped lens documents", () => {
   it("asks the agent to complete GitHub notifications when DOM fields cannot satisfy the contract", async () => {
     const spec = await loadLens("github.notifications.json");
     const result = await executeLens(spec, "https://github.com/notifications", {}, io({
-      domExtract: async () => ({
+      domExtract: async (resolver) => ({
         url: "https://github.com/notifications",
         title: "Notifications",
-        value: [{ title: "Review requested", url: "https://github.com/acme/widgets/pull/1" }],
+        value: resolver.item
+          ? [{ title: "Review requested", url: "https://github.com/acme/widgets/pull/1" }]
+          : { page: "Notifications" },
       }),
       snapshot: async () => ({
         url: "https://github.com/notifications",
@@ -141,6 +145,19 @@ describe("shipped lens documents", () => {
         gathered: [{ title: "Review requested", url: "https://github.com/acme/widgets/pull/1" }],
       },
     });
+  });
+
+  it("returns an empty GitHub inbox without escalating to the agent", async () => {
+    const spec = await loadLens("github.notifications.json");
+    const result = await executeLens(spec, "https://github.com/notifications", {}, io({
+      domExtract: async () => ({
+        url: "https://github.com/notifications?query=is%3Aunread",
+        title: "Notifications",
+        value: { page: "Notifications by date\nAll caught up!" },
+      }),
+    }));
+
+    expect(result).toEqual({ kind: "value", value: [], resolver: "dom" });
   });
 
   it("extracts a Hacker News story, windows its comments, and materialises the next page", async () => {

@@ -8,11 +8,7 @@ export function createLensMcpServer(client: LensClient): McpServer {
   server.registerTool(
     "lens_list",
     { description: "List the lenses available to call in the user's browser." },
-    async () =>
-      ok({
-        status: client.status(),
-        lenses: await client.list(),
-      })
+    async () => ok({ lenses: await client.list() })
   );
 
   server.registerTool(

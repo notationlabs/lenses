@@ -22,6 +22,13 @@
       "detect": {
         "needs_auth": "$contains(url, '/login') or $contains(title, 'Sign in')"
       },
+      "fields": {
+        "page": { "selector": "body" }
+      },
+      "post": "$contains(page, 'All caught up!') ? [] : $lookup({}, 'missing')"
+    },
+    {
+      "kind": "dom",
       "item": ".notifications-list-item",
       "fields": {
         "title": { "selector": ".markdown-title" },
