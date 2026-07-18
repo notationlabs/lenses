@@ -1,6 +1,11 @@
 import { resolve } from "node:path";
 import { matchUrl, type LensResult, type LensSpec } from "@djgrant/lens";
-import { BrowserBridge, type LensLogger, type LensTransport } from "./bridge.js";
+import {
+  BrowserBridge,
+  type LensLogger,
+  type LensTransport,
+  type LensTransportResult,
+} from "./bridge.js";
 import { LensStore } from "./lens-store.js";
 
 const DEFAULT_PORT_START = 4319;
@@ -96,7 +101,7 @@ export class LensClient {
 
     this.log(`calling ${spec.lens}@v${spec.version}; args: ${Object.keys(args).join(", ") || "none"}`);
     const result = await this.transport.call(spec, target, args, input.timeoutMs);
-    if (result.kind === "value" && !result.partial && ttl > 0) {
+    if (result.kind === "value" && !result.partial && !result.cached && ttl > 0) {
       this.cache.set(key, { result, expiresAt: Date.now() + ttl });
     }
     return result;
@@ -152,4 +157,4 @@ function validatePort(port: number): void {
 }
 
 export { BrowserBridge, LensStore };
-export type { LensLogger, LensTransport };
+export type { LensLogger, LensTransport, LensTransportResult };

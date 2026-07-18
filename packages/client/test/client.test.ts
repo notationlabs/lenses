@@ -3,7 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { LensResult, LensSpec } from "@djgrant/lens";
-import { LensClient, LensStore, type LensTransport } from "../src/index.js";
+import {
+  LensClient,
+  LensStore,
+  type LensTransport,
+  type LensTransportResult,
+} from "../src/index.js";
 
 class FakeTransport implements LensTransport {
   connected = true;
@@ -11,7 +16,7 @@ class FakeTransport implements LensTransport {
   port = 4319;
   calls = 0;
   lastTarget: string | undefined;
-  result: LensResult = { kind: "value", value: { ok: true }, resolver: "dom" };
+  result: LensTransportResult = { kind: "value", value: { ok: true }, resolver: "dom" };
 
   async call(_spec: LensSpec, target: string): Promise<LensResult> {
     this.calls++;
@@ -104,6 +109,22 @@ describe("LensClient", () => {
       value: { incomplete: true },
       resolver: "dom",
       partial: true,
+    };
+    const client = new LensClient(new LensStore(await fixtureDirectory()), transport);
+    const input = { lens: "example/page", target: "https://example.com/home" };
+
+    await client.call(input);
+    await client.call(input);
+    expect(transport.calls).toBe(2);
+  });
+
+  it("does not extend the lifetime of a result cached by the broker", async () => {
+    const transport = new FakeTransport();
+    transport.result = {
+      kind: "value",
+      value: { cached: true },
+      resolver: "dom",
+      cached: true,
     };
     const client = new LensClient(new LensStore(await fixtureDirectory()), transport);
     const input = { lens: "example/page", target: "https://example.com/home" };
