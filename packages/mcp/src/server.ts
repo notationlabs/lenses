@@ -51,7 +51,7 @@ export function createLensMcpServer(client: LensClient): McpServer {
   );
 
   server.registerTool(
-    "bridge_status",
+    "broker_status",
     { description: "Report whether the browser extension is connected." },
     async () => ok(client.status())
   );
