@@ -3,6 +3,7 @@
   "version": 1,
   "description": "The logged-in user's GitHub notifications inbox. Demonstrates the needs_auth outcome: if the user is logged out, the call returns needs_auth and the user should sign in in the open tab, then the agent retries.",
   "accepts": ["https://github.com/notifications*"],
+  "defaultTarget": "https://github.com/notifications",
   "returns": {
     "type": "array",
     "items": { "repo": "string", "title": "string", "reason": "string", "url": "string" }

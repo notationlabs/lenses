@@ -16,7 +16,7 @@ export interface LensClientOptions {
 
 export interface LensCall {
   lens: string;
-  target: string;
+  target?: string;
   args?: Record<string, unknown>;
   timeoutMs?: number;
 }
@@ -31,6 +31,7 @@ export interface LensSummary {
   lens: string;
   description?: string;
   accepts: string[];
+  defaultTarget?: string;
   effects: LensSpec["effects"];
   outcomes: string[];
 }
@@ -59,6 +60,7 @@ export class LensClient {
       lens: `${spec.lens}@v${spec.version}`,
       description: spec.description,
       accepts: spec.accepts,
+      defaultTarget: spec.defaultTarget,
       effects: spec.effects,
       outcomes: spec.outcomes ? Object.keys(spec.outcomes) : [],
     }));
@@ -67,16 +69,25 @@ export class LensClient {
   async call(input: LensCall): Promise<LensCallResult> {
     this.log(`resolving lens ${input.lens}`);
     const spec = await this.store.resolve(input.lens);
-    this.log(`resolved ${spec.lens}@v${spec.version} for ${input.target}`);
-    if (!matchUrl(spec.accepts, input.target)) {
+    const target = input.target ?? spec.defaultTarget;
+    if (!target) {
       return {
         kind: "error",
-        message: `target ${input.target} does not match ${spec.lens}@v${spec.version} accepts patterns: ${spec.accepts.join(", ")}`,
+        message: `${spec.lens}@v${spec.version} requires a target URL`,
+      };
+    }
+    this.log(
+      `resolved ${spec.lens}@v${spec.version} for ${target}${input.target ? "" : " (default target)"}`
+    );
+    if (!matchUrl(spec.accepts, target)) {
+      return {
+        kind: "error",
+        message: `target ${target} does not match ${spec.lens}@v${spec.version} accepts patterns: ${spec.accepts.join(", ")}`,
       };
     }
 
     const args = input.args ?? {};
-    const key = `${spec.lens}@v${spec.version}|${input.target}|${JSON.stringify(args)}`;
+    const key = `${spec.lens}@v${spec.version}|${target}|${JSON.stringify(args)}`;
     const ttl = (spec.effects.cache ?? 0) * 1000;
     const hit = this.cache.get(key);
     if (hit && hit.expiresAt <= Date.now()) this.cache.delete(key);
@@ -86,7 +97,7 @@ export class LensClient {
     }
 
     this.log(`calling ${spec.lens}@v${spec.version}; args: ${Object.keys(args).join(", ") || "none"}`);
-    const result = await this.transport.call(spec, input.target, args, input.timeoutMs);
+    const result = await this.transport.call(spec, target, args, input.timeoutMs);
     if (result.kind === "value" && !result.partial && ttl > 0) {
       this.cache.set(key, { result, expiresAt: Date.now() + ttl });
     }

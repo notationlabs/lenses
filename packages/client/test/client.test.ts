@@ -10,10 +10,12 @@ class FakeTransport implements LensTransport {
   info = "connected (test)";
   port = 4319;
   calls = 0;
+  lastTarget: string | undefined;
   result: LensResult = { kind: "value", value: { ok: true }, resolver: "dom" };
 
-  async call(_spec: LensSpec): Promise<LensResult> {
+  async call(_spec: LensSpec, target: string): Promise<LensResult> {
     this.calls++;
+    this.lastTarget = target;
     return this.result;
   }
 
@@ -28,7 +30,7 @@ class FakeTransport implements LensTransport {
   async close(): Promise<void> {}
 }
 
-async function fixtureDirectory(): Promise<string> {
+async function fixtureDirectory(defaultTarget: string | null = "https://example.com/home"): Promise<string> {
   const directory = await mkdtemp(join(tmpdir(), "lens-client-"));
   await writeFile(
     join(directory, "example.json"),
@@ -36,6 +38,7 @@ async function fixtureDirectory(): Promise<string> {
       lens: "example/page",
       version: 1,
       accepts: ["https://example.com/*"],
+      ...(defaultTarget ? { defaultTarget } : {}),
       effects: { reads: ["example.com"], writes: [], cache: 60 },
       resolve: [{ kind: "dom", fields: { title: { selector: "title" } } }],
     })
@@ -50,6 +53,7 @@ describe("LensClient", () => {
       expect.objectContaining({
         lens: "example/page@v1",
         accepts: ["https://example.com/*"],
+        defaultTarget: "https://example.com/home",
       }),
     ]);
   });
@@ -62,6 +66,25 @@ describe("LensClient", () => {
     expect(await client.call(input)).toMatchObject({ kind: "value" });
     expect(await client.call(input)).toMatchObject({ kind: "value", cached: true });
     expect(transport.calls).toBe(1);
+  });
+
+  it("uses a declared default target when the caller omits one", async () => {
+    const transport = new FakeTransport();
+    const client = new LensClient(new LensStore(await fixtureDirectory()), transport);
+
+    expect(await client.call({ lens: "example/page" })).toMatchObject({ kind: "value" });
+    expect(transport.lastTarget).toBe("https://example.com/home");
+  });
+
+  it("requires a target when the lens has no default", async () => {
+    const transport = new FakeTransport();
+    const client = new LensClient(new LensStore(await fixtureDirectory(null)), transport);
+
+    expect(await client.call({ lens: "example/page" })).toEqual({
+      kind: "error",
+      message: "example/page@v1 requires a target URL",
+    });
+    expect(transport.calls).toBe(0);
   });
 
   it("rejects targets before asking the browser transport", async () => {
