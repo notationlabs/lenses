@@ -125,6 +125,8 @@ export interface EngineIO {
   /** plain-text snapshot of the page for the LLM tier */
   snapshot(maxChars: number): Promise<{ url: string; title: string; text: string }>;
   sleep(ms: number): Promise<void>;
+  /** Optional progress diagnostics for interactive hosts. */
+  log?(message: string): void;
 }
 
 /** Messages exchanged between a Lens client and the browser extension. */
@@ -143,5 +145,6 @@ export type LensBridgeServerMessage = LensBridgeRequest | { type: "ping" };
 
 export type LensBridgeExtensionMessage =
   | { type: "result"; id: string; result: LensResult }
+  | { type: "progress"; id: string; message: string }
   | { type: "hello"; ua?: string }
   | { type: "pong" };

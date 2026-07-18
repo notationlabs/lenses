@@ -40,8 +40,9 @@ async function rememberPort(port: number): Promise<void> {
   await update;
 }
 
-// Limit noisy refused-connection probes; reconnect known ports directly.
-function connectPort(port: number): void {
+// Discovery probes once. A port that has connected before keeps retrying so
+// short-lived CLI clients do not wait for the next 30-second discovery alarm.
+function connectPort(port: number, persistent = false): void {
   const existing = sockets.get(port);
   if (
     existing &&
@@ -59,7 +60,7 @@ function connectPort(port: number): void {
   socket.onmessage = (event) => void onBridgeMessage(socket, String(event.data));
   socket.onclose = () => {
     if (sockets.get(port) === socket) sockets.delete(port);
-    if (connected) setTimeout(() => connectPort(port), 1000);
+    if (connected || persistent) setTimeout(() => connectPort(port, true), 1000);
   };
   socket.onerror = () => socket.close();
 }
@@ -72,7 +73,7 @@ function discover(force = false): void {
 }
 
 async function reconnectKnown(): Promise<void> {
-  for (const port of await loadKnownPorts()) connectPort(port);
+  for (const port of await loadKnownPorts()) connectPort(port, true);
 }
 
 async function onBridgeMessage(socket: WebSocket, raw: string): Promise<void> {
@@ -82,12 +83,15 @@ async function onBridgeMessage(socket: WebSocket, raw: string): Promise<void> {
     return;
   }
   let result: LensResult | Awaited<ReturnType<typeof observePage>>;
+  const progress = (text: string) => {
+    socket.send(JSON.stringify({ type: "progress", id: message.id, message: text }));
+  };
 
   try {
     if (message.type === "observe") {
-      result = await observePage(message.target, message.waitMs);
+      result = await observePage(message.target, message.waitMs, progress);
     } else {
-      result = await callLens(message.spec, message.target, message.args);
+      result = await callLens(message.spec, message.target, message.args, progress);
     }
   } catch (error) {
     result = { kind: "error", message: formatError(error) };

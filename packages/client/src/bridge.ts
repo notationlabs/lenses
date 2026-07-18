@@ -10,6 +10,8 @@ const INITIAL_CONNECT_WAIT_MS = 35_000;
 const RECONNECT_WAIT_MS = 35_000;
 const KEEPALIVE_MS = 20_000;
 
+export type LensLogger = (message: string) => void;
+
 export interface LensTransport {
   readonly connected: boolean;
   readonly info: string;
@@ -40,7 +42,8 @@ export class BrowserBridge implements LensTransport {
 
   private constructor(
     private readonly server: WebSocketServer,
-    readonly port: number
+    readonly port: number,
+    private readonly log: LensLogger
   ) {
     server.on("connection", (socket) => {
       if (this.extension) {
@@ -50,12 +53,14 @@ export class BrowserBridge implements LensTransport {
       this.extension = socket;
       this.extensionInfo = "";
       this.hasConnected = true;
+      this.log(`browser extension connected on port ${this.port}`);
       for (const resolve of this.connectionWaiters) resolve();
       this.connectionWaiters.clear();
       socket.on("message", (data) => this.onMessage(socket, data.toString()));
       socket.on("close", () => {
         if (this.extension === socket) {
           this.extension = null;
+          this.log("browser extension disconnected");
           this.resolvePending({ kind: "error", message: "browser extension disconnected" });
         }
       });
@@ -71,7 +76,11 @@ export class BrowserBridge implements LensTransport {
     this.keepalive.unref();
   }
 
-  static bind(port: number, host = "127.0.0.1"): Promise<BrowserBridge> {
+  static bind(
+    port: number,
+    host = "127.0.0.1",
+    log: LensLogger = () => {}
+  ): Promise<BrowserBridge> {
     return new Promise((resolve, reject) => {
       const server = new WebSocketServer({ port, host });
       const onError = (error: Error) => reject(error);
@@ -80,17 +89,26 @@ export class BrowserBridge implements LensTransport {
         server.off("error", onError);
         const address = server.address();
         const boundPort = typeof address === "object" && address ? address.port : port;
-        resolve(new BrowserBridge(server, boundPort));
+        log(`extension bridge listening on ws://${host}:${boundPort}`);
+        resolve(new BrowserBridge(server, boundPort, log));
       });
     });
   }
 
-  static async bindRange(start: number, end: number, host = "127.0.0.1"): Promise<BrowserBridge> {
+  static async bindRange(
+    start: number,
+    end: number,
+    host = "127.0.0.1",
+    log: LensLogger = () => {}
+  ): Promise<BrowserBridge> {
     for (let port = start; port <= end; port++) {
       try {
-        return await BrowserBridge.bind(port, host);
+        return await BrowserBridge.bind(port, host, log);
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "EADDRINUSE") continue;
+        if ((error as NodeJS.ErrnoException).code === "EADDRINUSE") {
+          log(`extension bridge port ${port} is already in use`);
+          continue;
+        }
         throw error;
       }
     }
@@ -159,7 +177,11 @@ export class BrowserBridge implements LensTransport {
     timeoutMs: number
   ): Promise<LensResult> {
     const connectionWaitMs = this.hasConnected ? RECONNECT_WAIT_MS : INITIAL_CONNECT_WAIT_MS;
+    if (!this.connected) {
+      this.log(`waiting up to ${connectionWaitMs}ms for the browser extension`);
+    }
     if (!this.connected && !(await this.waitForConnection(connectionWaitMs))) {
+      this.log(`browser extension connection timed out after ${connectionWaitMs}ms`);
       return {
         kind: "error",
         message: `browser extension did not connect within ${connectionWaitMs}ms`,
@@ -167,7 +189,9 @@ export class BrowserBridge implements LensTransport {
     }
     const id = `call_${++this.sequence}`;
     const message = make(id);
-    return new Promise((resolve) => {
+    const startedAt = Date.now();
+    this.log(`sending ${message.type} ${id} to the browser extension`);
+    return new Promise<LensResult>((resolve) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         resolve({ kind: "error", message: `${message.type} timed out after ${timeoutMs}ms` });
@@ -181,6 +205,9 @@ export class BrowserBridge implements LensTransport {
         this.pending.delete(id);
         pending.resolve({ kind: "error", message: `sending ${message.type}: ${error.message}` });
       });
+    }).then((result) => {
+      this.log(`${message.type} ${id} completed in ${Date.now() - startedAt}ms (${result.kind})`);
+      return result;
     });
   }
 
@@ -196,6 +223,10 @@ export class BrowserBridge implements LensTransport {
       return;
     }
     if (message.type === "pong") return;
+    if (message.type === "progress") {
+      this.log(`browser ${message.id}: ${message.message}`);
+      return;
+    }
     const pending = this.pending.get(message.id);
     if (!pending) return;
     clearTimeout(pending.timer);

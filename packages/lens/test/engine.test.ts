@@ -45,6 +45,20 @@ const spec = validateSpec({
 });
 
 describe("executeLens", () => {
+  it("reports resolver progress when the host supplies a logger", async () => {
+    const messages: string[] = [];
+    await executeLens(spec, "https://example.com/home", {}, io({
+      getIntercepted: async () => [captured({})],
+      log: (message) => messages.push(message),
+    }));
+
+    expect(messages).toEqual([
+      "trying intercept resolver",
+      "intercept resolver contributed a value",
+      "return contract satisfied",
+    ]);
+  });
+
   it("rejects targets outside accepts", async () => {
     const r = await executeLens(spec, "https://other.com/x", {}, io());
     expect(r.kind).toBe("error");

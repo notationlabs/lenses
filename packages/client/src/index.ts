@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { matchUrl, type LensResult, type LensSpec } from "@djgrant/lens";
-import { BrowserBridge, type LensTransport } from "./bridge.js";
+import { BrowserBridge, type LensLogger, type LensTransport } from "./bridge.js";
 import { LensStore } from "./lens-store.js";
 
 const DEFAULT_PORT_START = 4319;
@@ -11,6 +11,7 @@ export interface LensClientOptions {
   port?: number;
   portRange?: readonly [start: number, end: number];
   transport?: LensTransport;
+  log?: LensLogger;
 }
 
 export interface LensCall {
@@ -46,11 +47,14 @@ export class LensClient {
 
   constructor(
     private readonly store: LensStore,
-    private readonly transport: LensTransport
+    private readonly transport: LensTransport,
+    private readonly log: LensLogger = () => {}
   ) {}
 
   async list(): Promise<LensSummary[]> {
+    this.log("loading local lens listing");
     const specs = await this.store.loadLocal();
+    this.log(`loaded ${specs.length} lenses`);
     return specs.map((spec) => ({
       lens: `${spec.lens}@v${spec.version}`,
       description: spec.description,
@@ -61,7 +65,9 @@ export class LensClient {
   }
 
   async call(input: LensCall): Promise<LensCallResult> {
+    this.log(`resolving lens ${input.lens}`);
     const spec = await this.store.resolve(input.lens);
+    this.log(`resolved ${spec.lens}@v${spec.version} for ${input.target}`);
     if (!matchUrl(spec.accepts, input.target)) {
       return {
         kind: "error",
@@ -74,8 +80,12 @@ export class LensClient {
     const ttl = (spec.effects.cache ?? 0) * 1000;
     const hit = this.cache.get(key);
     if (hit && hit.expiresAt <= Date.now()) this.cache.delete(key);
-    if (ttl > 0 && hit && hit.expiresAt > Date.now()) return { ...hit.result, cached: true };
+    if (ttl > 0 && hit && hit.expiresAt > Date.now()) {
+      this.log(`returning cached result for ${spec.lens}@v${spec.version}`);
+      return { ...hit.result, cached: true };
+    }
 
+    this.log(`calling ${spec.lens}@v${spec.version}; args: ${Object.keys(args).join(", ") || "none"}`);
     const result = await this.transport.call(spec, input.target, args, input.timeoutMs);
     if (result.kind === "value" && !result.partial && ttl > 0) {
       this.cache.set(key, { result, expiresAt: Date.now() + ttl });
@@ -84,6 +94,7 @@ export class LensClient {
   }
 
   observe(input: LensObservation): Promise<LensResult> {
+    this.log(`observing ${input.target}`);
     return this.transport.observe(input.target, input.waitMs, input.timeoutMs);
   }
 
@@ -124,15 +135,18 @@ export async function createLensClient(options: LensClientOptions = {}): Promise
     }
   }
   const directory = resolve(options.directory ?? "lenses");
+  const log = options.log ?? (() => {});
+  log(`using lens directory ${directory}`);
   const store = new LensStore(directory);
-  await store.loadLocal();
+  const loaded = await store.loadLocal();
+  log(`validated ${loaded.length} local lenses`);
   const range = options.portRange ?? [DEFAULT_PORT_START, DEFAULT_PORT_END];
   const transport =
     options.transport ??
     (options.port !== undefined
-      ? await BrowserBridge.bind(options.port)
-      : await BrowserBridge.bindRange(range[0], range[1]));
-  return new LensClient(store, transport);
+      ? await BrowserBridge.bind(options.port, "127.0.0.1", log)
+      : await BrowserBridge.bindRange(range[0], range[1], "127.0.0.1", log));
+  return new LensClient(store, transport, log);
 }
 
 function validatePort(port: number): void {
@@ -142,4 +156,4 @@ function validatePort(port: number): void {
 }
 
 export { BrowserBridge, LensStore };
-export type { LensTransport };
+export type { LensLogger, LensTransport };

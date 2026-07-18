@@ -2,9 +2,15 @@ import { executeLens, type DomResolver, type EngineIO, type LensSpec } from "@dj
 import { interceptedResponses } from "./intercepts.js";
 import { bindObservedTab, bindTab, closeIfCreated, reloadTab, tabMessage } from "./tabs.js";
 
-export async function observePage(target: string, waitMs: number) {
+export async function observePage(
+  target: string,
+  waitMs: number,
+  progress: (message: string) => void = () => {}
+) {
+  progress(`binding browser tab for ${target}`);
   const bound = await bindObservedTab(target);
   try {
+    progress(`collecting page activity for ${waitMs}ms`);
     await new Promise((resolve) => setTimeout(resolve, waitMs));
 
     const requests = interceptedResponses(bound.tabId).slice(-40).map((capture) => ({
@@ -17,6 +23,7 @@ export async function observePage(target: string, waitMs: number) {
       type: "snapshot",
       maxChars: 6000,
     });
+    progress(`collected ${requests.length} captured requests`);
     return { kind: "value" as const, value: { snapshot, requests } };
   } finally {
     await closeIfCreated(bound, { kind: "value" });
@@ -26,9 +33,12 @@ export async function observePage(target: string, waitMs: number) {
 export async function callLens(
   spec: LensSpec,
   target: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  progress: (message: string) => void = () => {}
 ) {
+  progress(`binding browser tab for ${target}`);
   const bound = await bindTab(spec, target);
+  progress(`bound tab ${bound.tabId}${bound.created ? " (created)" : " (existing)"}`);
   const io: EngineIO = {
     getIntercepted: async () => interceptedResponses(bound.tabId),
     reload: () => reloadTab(bound.tabId, spec.loadTimeoutMs),
@@ -36,6 +46,7 @@ export async function callLens(
       tabMessage(bound.tabId, { type: "dom_extract", spec: resolver }),
     snapshot: (maxChars: number) => tabMessage(bound.tabId, { type: "snapshot", maxChars }),
     sleep: (ms: number) => new Promise((resolve) => setTimeout(resolve, ms)),
+    log: progress,
   };
 
   let result;
