@@ -1,14 +1,10 @@
-import { WebSocket, WebSocketServer } from "ws";
-import type {
-  LensBridgeExtensionMessage,
-  LensBridgeRequest,
-  LensResult,
-  LensSpec,
-} from "@djgrant/lens";
+import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { WebSocket } from "ws";
+import type { LensBridgeRequest, LensResult, LensSpec } from "@djgrant/lens";
 
 const INITIAL_CONNECT_WAIT_MS = 35_000;
-const RECONNECT_WAIT_MS = 35_000;
-const KEEPALIVE_MS = 20_000;
+const BROKER_START_WAIT_MS = 3_000;
 
 export type LensLogger = (message: string) => void;
 
@@ -27,96 +23,53 @@ export interface LensTransport {
   close(): Promise<void>;
 }
 
+type BrokerMessage =
+  | { type: "status"; connected: boolean; ua?: string }
+  | { type: "result"; id: string; result: LensResult }
+  | { type: "progress"; id: string; message: string };
+
 export class BrowserBridge implements LensTransport {
-  private extension: WebSocket | null = null;
+  private extensionConnected = false;
   private extensionInfo = "";
   private readonly pending = new Map<
     string,
     { resolve: (result: LensResult) => void; timer: NodeJS.Timeout }
   >();
   private readonly connectionWaiters = new Set<() => void>();
-  private hasConnected = false;
   private sequence = 0;
-  private readonly keepalive: NodeJS.Timeout;
   private closed = false;
 
   private constructor(
-    private readonly server: WebSocketServer,
+    private readonly socket: WebSocket,
     readonly port: number,
-    private readonly log: LensLogger
+    private readonly log: LensLogger,
+    status: Extract<BrokerMessage, { type: "status" }>
   ) {
-    server.on("connection", (socket) => {
-      if (this.extension) {
-        this.resolvePending({ kind: "error", message: "browser extension connection replaced" });
-      }
-      this.extension?.close();
-      this.extension = socket;
-      this.extensionInfo = "";
-      this.hasConnected = true;
-      this.log(`browser extension connected on port ${this.port}`);
-      for (const resolve of this.connectionWaiters) resolve();
-      this.connectionWaiters.clear();
-      socket.on("message", (data) => this.onMessage(socket, data.toString()));
-      socket.on("close", () => {
-        if (this.extension === socket) {
-          this.extension = null;
-          this.log("browser extension disconnected");
-          this.resolvePending({ kind: "error", message: "browser extension disconnected" });
-        }
-      });
+    this.extensionConnected = status.connected;
+    this.extensionInfo = status.ua ?? "";
+    socket.on("message", (data) => this.onMessage(data.toString()));
+    socket.on("close", () => {
+      this.extensionConnected = false;
+      this.resolvePending({ kind: "error", message: "lens broker disconnected" });
     });
-    this.keepalive = setInterval(() => {
-      if (!this.connected) return;
-      try {
-        this.extension!.send(JSON.stringify({ type: "ping" }));
-      } catch {
-        // The close event resolves pending calls.
-      }
-    }, KEEPALIVE_MS);
-    this.keepalive.unref();
   }
 
-  static bind(
+  static async bind(
     port: number,
     host = "127.0.0.1",
     log: LensLogger = () => {}
   ): Promise<BrowserBridge> {
-    return new Promise((resolve, reject) => {
-      const server = new WebSocketServer({ port, host });
-      const onError = (error: Error) => reject(error);
-      server.once("error", onError);
-      server.once("listening", () => {
-        server.off("error", onError);
-        const address = server.address();
-        const boundPort = typeof address === "object" && address ? address.port : port;
-        log(`extension bridge listening on ws://${host}:${boundPort}`);
-        resolve(new BrowserBridge(server, boundPort, log));
-      });
-    });
-  }
-
-  static async bindRange(
-    start: number,
-    end: number,
-    host = "127.0.0.1",
-    log: LensLogger = () => {}
-  ): Promise<BrowserBridge> {
-    for (let port = start; port <= end; port++) {
-      try {
-        return await BrowserBridge.bind(port, host, log);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "EADDRINUSE") {
-          log(`extension bridge port ${port} is already in use`);
-          continue;
-        }
-        throw error;
-      }
+    if (host !== "127.0.0.1") throw new Error("the lens broker only listens on 127.0.0.1");
+    const connection = (await connectBroker(port, 150)) ?? (await startBroker(port, log));
+    log(`connected to lens broker on ws://${host}:${port}`);
+    if (connection.status.connected) {
+      log(`browser extension connected through broker port ${port}`);
     }
-    throw new Error(`no free port in range ${start}-${end} for the extension bridge`);
+    return new BrowserBridge(connection.socket, port, log, connection.status);
   }
 
   get connected(): boolean {
-    return this.extension !== null && this.extension.readyState === WebSocket.OPEN;
+    return this.extensionConnected;
   }
 
   get info(): string {
@@ -164,40 +117,35 @@ export class BrowserBridge implements LensTransport {
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
-    clearInterval(this.keepalive);
-    this.resolvePending({ kind: "error", message: "extension bridge closed" });
-    this.extension?.terminate();
-    await new Promise<void>((resolve, reject) => {
-      this.server.close((error) => (error ? reject(error) : resolve()));
-    });
+    this.resolvePending({ kind: "error", message: "lens client closed" });
+    this.socket.close();
   }
 
   private async request(
     make: (id: string) => LensBridgeRequest,
     timeoutMs: number
   ): Promise<LensResult> {
-    const connectionWaitMs = this.hasConnected ? RECONNECT_WAIT_MS : INITIAL_CONNECT_WAIT_MS;
     if (!this.connected) {
-      this.log(`waiting up to ${connectionWaitMs}ms for the browser extension`);
+      this.log(`waiting up to ${INITIAL_CONNECT_WAIT_MS}ms for the browser extension`);
     }
-    if (!this.connected && !(await this.waitForConnection(connectionWaitMs))) {
-      this.log(`browser extension connection timed out after ${connectionWaitMs}ms`);
+    if (!this.connected && !(await this.waitForConnection(INITIAL_CONNECT_WAIT_MS))) {
+      this.log(`browser extension connection timed out after ${INITIAL_CONNECT_WAIT_MS}ms`);
       return {
         kind: "error",
-        message: `browser extension did not connect within ${connectionWaitMs}ms`,
+        message: `browser extension did not connect within ${INITIAL_CONNECT_WAIT_MS}ms`,
       };
     }
     const id = `call_${++this.sequence}`;
     const message = make(id);
     const startedAt = Date.now();
-    this.log(`sending ${message.type} ${id} to the browser extension`);
+    this.log(`sending ${message.type} ${id} through the lens broker`);
     return new Promise<LensResult>((resolve) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         resolve({ kind: "error", message: `${message.type} timed out after ${timeoutMs}ms` });
       }, timeoutMs);
       this.pending.set(id, { resolve, timer });
-      this.extension!.send(JSON.stringify(message), (error) => {
+      this.socket.send(JSON.stringify(message), (error) => {
         if (!error) return;
         const pending = this.pending.get(id);
         if (!pending) return;
@@ -211,18 +159,27 @@ export class BrowserBridge implements LensTransport {
     });
   }
 
-  private onMessage(_socket: WebSocket, raw: string): void {
-    let message: LensBridgeExtensionMessage;
+  private onMessage(raw: string): void {
+    let message: BrokerMessage;
     try {
-      message = JSON.parse(raw) as LensBridgeExtensionMessage;
+      message = JSON.parse(raw) as BrokerMessage;
     } catch {
       return;
     }
-    if (message.type === "hello") {
+    if (message.type === "status") {
+      const wasConnected = this.extensionConnected;
+      this.extensionConnected = message.connected;
       this.extensionInfo = message.ua ?? "";
+      if (message.connected && !wasConnected) {
+        this.log(`browser extension connected through broker port ${this.port}`);
+        for (const resolve of this.connectionWaiters) resolve();
+        this.connectionWaiters.clear();
+      } else if (!message.connected && wasConnected) {
+        this.log("browser extension disconnected from lens broker");
+        this.resolvePending({ kind: "error", message: "browser extension disconnected" });
+      }
       return;
     }
-    if (message.type === "pong") return;
     if (message.type === "progress") {
       this.log(`browser ${message.id}: ${message.message}`);
       return;
@@ -241,4 +198,64 @@ export class BrowserBridge implements LensTransport {
     }
     this.pending.clear();
   }
+}
+
+interface BrokerConnection {
+  socket: WebSocket;
+  status: Extract<BrokerMessage, { type: "status" }>;
+}
+
+async function startBroker(port: number, log: LensLogger): Promise<BrokerConnection> {
+  const source = import.meta.url.endsWith(".ts") ? "broker-daemon.ts" : "broker-daemon.js";
+  const entry = fileURLToPath(new URL(source, import.meta.url));
+  const child = spawn(process.execPath, [entry, String(port)], {
+    detached: true,
+    stdio: "ignore",
+  });
+  child.unref();
+  log(`started persistent lens broker on port ${port}`);
+
+  const deadline = Date.now() + BROKER_START_WAIT_MS;
+  while (Date.now() < deadline) {
+    const socket = await connectBroker(port, 150);
+    if (socket) return socket;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`lens broker did not start on port ${port}`);
+}
+
+function connectBroker(port: number, timeoutMs: number): Promise<BrokerConnection | null> {
+  return new Promise((resolve) => {
+    const socket = new WebSocket(`ws://127.0.0.1:${port}`);
+    let settled = false;
+    const onError = () => finish(null);
+    const onOpen = () => {
+      socket.send(JSON.stringify({ type: "client" }));
+    };
+    const onMessage = (data: WebSocket.RawData) => {
+      try {
+        const status = JSON.parse(data.toString()) as BrokerMessage;
+        if (status.type === "status") finish({ socket, status });
+      } catch {
+        // A service on this port is not a lens broker.
+      }
+    };
+    const finish = (value: BrokerConnection | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket.off("open", onOpen);
+      socket.off("error", onError);
+      socket.off("message", onMessage);
+      if (!value) {
+        socket.on("error", () => {});
+        socket.close();
+      }
+      resolve(value);
+    };
+    const timer = setTimeout(() => finish(null), timeoutMs);
+    socket.once("open", onOpen);
+    socket.once("error", onError);
+    socket.on("message", onMessage);
+  });
 }

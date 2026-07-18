@@ -39,7 +39,9 @@ pnpm build
 Load the browser extension by opening `chrome://extensions`, enabling **Developer
 mode**, choosing **Load unpacked**, and selecting `extensions/chrome/dist`.
 
-The extension discovers clients by probing local ports 4319–4329.
+The extension connects to the persistent local broker on port 4319. The first client
+starts the broker automatically; CLI, MCP, and library clients then share the same
+extension connection.
 
 ## TypeScript client
 
@@ -58,7 +60,7 @@ const result = await lenses.call({
 ```
 
 The client owns lens discovery, reference resolution, URL checks, TTL caching, and the
-local extension bridge. `call` returns a `value`, a structured `outcome`, or an `error`.
+local broker connection. `call` returns a `value`, a structured `outcome`, or an `error`.
 An `agent_extract` outcome contains the page snapshot and lens prompt for the consumer's
 own model; the client does not select or call an LLM provider.
 
@@ -75,7 +77,7 @@ const observation = await lenses.observe({
 
 `@djgrant/lens-cli` installs the `lens` command. It prints JSON to stdout and uses a
 non-zero exit status for command and lens errors. Pass `--verbose` to write timestamped
-bridge and call diagnostics to stderr without contaminating the JSON output. Every
+broker and call diagnostics to stderr without contaminating the JSON output. Every
 command has focused help, for example `lens call --help`.
 
 ```sh
@@ -94,9 +96,11 @@ with the same name take precedence.
 A lens may declare a `defaultTarget`. Callers can omit the target for those lenses;
 parameterized lenses such as `hn/item` still require a concrete URL.
 
-Each command starts a client for the duration of that invocation and then closes its
-extension bridge. A cold call may wait for the Chrome extension's discovery alarm;
-verbose output distinguishes that wait from page loading and resolver execution.
+Each command connects to the persistent broker and disconnects when it finishes. The
+broker stays connected to Chrome between commands and shares successful cached results
+for each lens's declared TTL. Only the first call after starting the broker may wait for
+the extension's discovery alarm; verbose output distinguishes that cold wait from page
+loading and resolver execution.
 
 For repository development, Bun resolves the workspace packages directly to their
 TypeScript source, so the CLI does not need a build first:
@@ -122,7 +126,7 @@ with the lens directory and built entry point:
 }
 ```
 
-It exposes `lens_list`, `lens_call`, `lens_observe`, and `bridge_status`. The adapter
+It exposes `lens_list`, `lens_call`, `lens_observe`, and `broker_status`. The adapter
 only validates tool inputs and formats tool results; all behavior lives in the client.
 
 ## Resolution
@@ -186,7 +190,7 @@ Run `pok lens validate` to validate every document under `lenses/`.
 | path | package | responsibility |
 |---|---|---|
 | `packages/lens` | `@djgrant/lens` | Specs, validation, JSONata, resolver engine |
-| `packages/client` | `@djgrant/lens-client` | Lens orchestration and extension bridge |
+| `packages/client` | `@djgrant/lens-client` | Lens orchestration and persistent browser broker |
 | `packages/cli` | `@djgrant/lens-cli` | JSON command-line adapter |
 | `packages/mcp` | `@djgrant/lens-mcp` | stdio MCP adapter |
 | `extensions/chrome` | private | Browser interception and extraction |

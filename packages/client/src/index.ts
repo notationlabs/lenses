@@ -4,12 +4,10 @@ import { BrowserBridge, type LensLogger, type LensTransport } from "./bridge.js"
 import { LensStore } from "./lens-store.js";
 
 const DEFAULT_PORT_START = 4319;
-const DEFAULT_PORT_END = 4329;
 
 export interface LensClientOptions {
   directory?: string;
   port?: number;
-  portRange?: readonly [start: number, end: number];
   transport?: LensTransport;
   log?: LensLogger;
 }
@@ -112,7 +110,7 @@ export class LensClient {
   status() {
     return {
       connected: this.transport.connected,
-      bridge: this.transport.info,
+      broker: this.transport.info,
       port: this.transport.port,
     };
   }
@@ -131,38 +129,25 @@ export class LensClient {
 }
 
 export async function createLensClient(options: LensClientOptions = {}): Promise<LensClient> {
-  if (options.port !== undefined && options.portRange !== undefined) {
-    throw new Error("choose either port or portRange, not both");
-  }
-  if (options.transport && (options.port !== undefined || options.portRange !== undefined)) {
-    throw new Error("bridge port options cannot be combined with a custom transport");
+  if (options.transport && options.port !== undefined) {
+    throw new Error("broker port cannot be combined with a custom transport");
   }
   if (options.port !== undefined) validatePort(options.port);
-  if (options.portRange !== undefined) {
-    validatePort(options.portRange[0]);
-    validatePort(options.portRange[1]);
-    if (options.portRange[0] > options.portRange[1]) {
-      throw new Error("portRange start must not exceed its end");
-    }
-  }
   const directory = resolve(options.directory ?? "lenses");
   const log = options.log ?? (() => {});
   log(`using lens directory ${directory}`);
   const store = new LensStore(directory);
   const loaded = await store.loadLocal();
   log(`validated ${loaded.length} local lenses`);
-  const range = options.portRange ?? [DEFAULT_PORT_START, DEFAULT_PORT_END];
   const transport =
     options.transport ??
-    (options.port !== undefined
-      ? await BrowserBridge.bind(options.port, "127.0.0.1", log)
-      : await BrowserBridge.bindRange(range[0], range[1], "127.0.0.1", log));
+    (await BrowserBridge.bind(options.port ?? DEFAULT_PORT_START, "127.0.0.1", log));
   return new LensClient(store, transport, log);
 }
 
 function validatePort(port: number): void {
   if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
-    throw new Error("bridge ports must be integers between 1 and 65535");
+    throw new Error("broker port must be an integer between 1 and 65535");
   }
 }
 

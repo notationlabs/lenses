@@ -12,7 +12,7 @@ Run lens <command> --help for command-specific help.
 
 Global options:
   --directory, -d  Lens document directory (default: ./lenses)
-  --port, -p       Extension bridge port (default: first free port from 4319–4329)
+  --port, -p       Persistent browser broker port (default: 4319)
   --verbose, -v    Write timestamped diagnostics to stderr
   --help, -h       Show this help
 `;
@@ -24,7 +24,7 @@ List validated lenses from the configured directory.
 
 Options:
   --directory, -d <path>  Lens directory (default: ./lenses)
-  --port, -p <number>     Extension bridge port
+  --port, -p <number>     Persistent browser broker port
   --verbose, -v           Write timestamped diagnostics to stderr
   --help, -h              Show this help
 `,
@@ -43,7 +43,7 @@ Options:
                           args override variables captured from target URL holes.
   --timeout-ms <number>   Whole browser-call timeout (default: 90000)
   --directory, -d <path>  Lens directory (default: ./lenses)
-  --port, -p <number>     Extension bridge port
+  --port, -p <number>     Persistent browser broker port
   --verbose, -v           Write timestamped diagnostics to stderr
   --help, -h              Show this help
 
@@ -65,18 +65,18 @@ Options:
   --wait-ms <number>      Time to collect requests after loading (default: 4000)
   --timeout-ms <number>   Whole observation timeout (default: 60000)
   --directory, -d <path>  Lens directory (default: ./lenses)
-  --port, -p <number>     Extension bridge port
+  --port, -p <number>     Persistent browser broker port
   --verbose, -v           Write timestamped diagnostics to stderr
   --help, -h              Show this help
 `,
   status: `Usage: lens status [options]
 
-Report the local bridge port and browser-extension connection state.
+Report the local broker port and browser-extension connection state.
 
 Options:
   --wait-ms <number>      Wait this long for the extension before reporting
   --directory, -d <path>  Lens directory (default: ./lenses)
-  --port, -p <number>     Extension bridge port
+  --port, -p <number>     Persistent browser broker port
   --verbose, -v           Write timestamped diagnostics to stderr
   --help, -h              Show this help
 `,
