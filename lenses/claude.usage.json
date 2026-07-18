@@ -1,6 +1,6 @@
 {
   "lens": "claude/usage",
-  "version": 2,
+  "version": 3,
   "description": "The logged-in user's Claude.ai usage settings page: current plan, session and weekly usage limits, and whether usage credits are enabled.",
   "accepts": ["https://claude.ai/settings/usage*"],
   "loadTimeoutMs": 45000,
@@ -19,7 +19,14 @@
       "usage_credits": {
         "type": "object",
         "fields": {
-          "enabled": "boolean"
+          "enabled": "boolean",
+          "spent_minor": "integer",
+          "monthly_limit_minor": "integer",
+          "balance_minor": "integer",
+          "currency": "string",
+          "percent": "string",
+          "resets_at": "string",
+          "auto_reload": "boolean"
         }
       }
     }
@@ -36,15 +43,28 @@
   "resolve": [
     {
       "kind": "intercept",
-      "request": "GET https://claude.ai/api/organizations/*/usage*",
+      "sources": {
+        "usage": {
+          "request": "GET https://claude.ai/api/organizations/*/usage*"
+        },
+        "credits": {
+          "request": "GET https://claude.ai/api/organizations/*/overage_spend_limit*"
+        },
+        "balance": {
+          "request": "GET https://claude.ai/api/organizations/*/prepaid/credits*"
+        },
+        "bundles": {
+          "request": "GET https://claude.ai/api/organizations/*/prepaid/bundles*"
+        }
+      },
       "reloadOnMiss": true,
       "waitMs": 8000,
       "detect": {
-        "needs_auth": "status = 401 or status = 403"
+        "needs_auth": "$usage.status = 401 or $usage.status = 403 or $credits.status = 401 or $credits.status = 403"
       },
       "map": {
-        "limits": "[limits.{ 'name': kind = 'session' ? 'Current session' : kind = 'weekly_all' ? 'Weekly limit' : kind = 'weekly_scoped' ? ((scope.model.display_name ? scope.model.display_name & ' ' : '') & 'weekly limit') : kind, 'percent': $string(percent) & '%', 'resets_at': resets_at }]",
-        "usage_credits": "{ 'enabled': spend.enabled = true }"
+        "limits": "[$usage.limits.{ 'name': kind = 'session' ? 'Current session' : kind = 'weekly_all' ? 'Weekly limit' : kind = 'weekly_scoped' ? ((scope.model.display_name ? scope.model.display_name & ' ' : '') & 'weekly limit') : kind, 'percent': $string(percent) & '%', 'resets_at': resets_at }]",
+        "usage_credits": "{ 'enabled': $credits.is_enabled = true, 'spent_minor': $credits.used_credits, 'monthly_limit_minor': $credits.monthly_credit_limit, 'balance_minor': $balance.amount, 'currency': $credits.currency, 'percent': $credits.monthly_credit_limit > 0 ? $string($round($credits.used_credits * 100 / $credits.monthly_credit_limit)) & '%' : '', 'resets_at': $bundles.purchases_reset_at, 'auto_reload': $balance.auto_reload_settings ? true : false }"
       }
     },
     {
@@ -56,7 +76,7 @@
     },
     {
       "kind": "llm",
-      "prompt": "This is the Claude.ai usage settings page. Return a single object {plan, limits, usage_credits}. plan is the current subscription plan name (e.g. 'Pro', 'Max 5x', 'Max (20x)', 'Team') shown under the 'Plan usage limits' heading. limits is an array of usage meters: for each return {name, percent, resets_at} where name is the meter label (e.g. 'Current session', 'Weekly limit', 'Fable weekly limit'), percent is the fill percentage if displayed (else ''), and resets_at is the reset time/date text if shown (else ''). usage_credits is {enabled} where enabled reports whether the usage credits toggle is on. If the page is a login/sign-in page, return the JSON string \"needs_auth\"."
+      "prompt": "This is the Claude.ai usage settings page. Return a single object {plan, limits, usage_credits}. plan is the current subscription plan name shown under the 'Plan usage limits' heading. limits is an array of {name, percent, resets_at}. usage_credits is {enabled, spent_minor, monthly_limit_minor, balance_minor, currency, percent, resets_at, auto_reload}; monetary values are integer minor currency units, so 4000 GBP means £40.00. If the page is a login/sign-in page, return the JSON string \"needs_auth\"."
     }
   ]
 }
