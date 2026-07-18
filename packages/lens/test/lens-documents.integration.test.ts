@@ -26,7 +26,7 @@ describe("shipped lens documents", () => {
     const files = (await readdir(lensDirectory)).filter((file) => file.endsWith(".json"));
     const specs = await Promise.all(files.map(loadLens));
     expect(specs.map((spec) => `${spec.lens}@v${spec.version}`).sort()).toEqual([
-      "claude/usage@v2",
+      "claude/usage@v3",
       "github/notifications@v1",
       "hn/item@v1",
       "hn/top@v1",
@@ -94,15 +94,40 @@ describe("shipped lens documents", () => {
       method: "GET",
       url: "https://claude.ai/api/organizations/acme/usage",
       status: 200,
-      body: JSON.stringify({
-        limits: [{ kind: "session", percent: 20, resets_at: "13:00" }],
-        spend: { enabled: false },
-      }),
+      body: JSON.stringify({ limits: [{ kind: "session", percent: 20, resets_at: "13:00" }] }),
       timestamp: Date.now(),
     };
 
     const result = await executeLens(spec, "https://claude.ai/settings/usage", {}, io({
-      getIntercepted: async () => [capture],
+      getIntercepted: async () => [
+        capture,
+        {
+          method: "GET",
+          url: "https://claude.ai/api/organizations/acme/overage_spend_limit",
+          status: 200,
+          body: JSON.stringify({
+            is_enabled: true,
+            used_credits: 125,
+            monthly_credit_limit: 4000,
+            currency: "GBP",
+          }),
+          timestamp: Date.now(),
+        },
+        {
+          method: "GET",
+          url: "https://claude.ai/api/organizations/acme/prepaid/credits",
+          status: 200,
+          body: JSON.stringify({ amount: 750, auto_reload_settings: null }),
+          timestamp: Date.now(),
+        },
+        {
+          method: "GET",
+          url: "https://claude.ai/api/organizations/acme/prepaid/bundles",
+          status: 200,
+          body: JSON.stringify({ purchases_reset_at: "2026-08-01T00:00:00Z" }),
+          timestamp: Date.now(),
+        },
+      ],
       domExtract: async () => ({
         url: "https://claude.ai/settings/usage",
         title: "Usage",
@@ -116,7 +141,16 @@ describe("shipped lens documents", () => {
       value: {
         plan: "Max (20x)",
         limits: [{ name: "Current session", percent: "20%", resets_at: "13:00" }],
-        usage_credits: { enabled: false },
+        usage_credits: {
+          enabled: true,
+          spent_minor: 125,
+          monthly_limit_minor: 4000,
+          balance_minor: 750,
+          currency: "GBP",
+          percent: "3%",
+          resets_at: "2026-08-01T00:00:00Z",
+          auto_reload: false,
+        },
       },
     });
   });
