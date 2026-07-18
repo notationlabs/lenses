@@ -7,6 +7,7 @@ const INITIAL_CONNECT_WAIT_MS = 35_000;
 const BROKER_START_WAIT_MS = 3_000;
 
 export type LensLogger = (message: string) => void;
+export type LensTransportResult = LensResult & { cached?: boolean };
 
 export interface LensTransport {
   readonly connected: boolean;
@@ -17,15 +18,15 @@ export interface LensTransport {
     target: string,
     args: Record<string, unknown>,
     timeoutMs?: number
-  ): Promise<LensResult>;
-  observe(target: string, waitMs?: number, timeoutMs?: number): Promise<LensResult>;
+  ): Promise<LensTransportResult>;
+  observe(target: string, waitMs?: number, timeoutMs?: number): Promise<LensTransportResult>;
   waitForConnection(timeoutMs: number): Promise<boolean>;
   close(): Promise<void>;
 }
 
 type BrokerMessage =
   | { type: "status"; connected: boolean; ua?: string }
-  | { type: "result"; id: string; result: LensResult }
+  | { type: "result"; id: string; result: LensTransportResult }
   | { type: "progress"; id: string; message: string };
 
 export class BrowserBridge implements LensTransport {
@@ -83,14 +84,14 @@ export class BrowserBridge implements LensTransport {
     target: string,
     args: Record<string, unknown>,
     timeoutMs = 90_000
-  ): Promise<LensResult> {
+  ): Promise<LensTransportResult> {
     return this.request(
       (id) => ({ type: "call", id, spec, target, args, timeoutMs }),
       timeoutMs
     );
   }
 
-  observe(target: string, waitMs = 4_000, timeoutMs = 60_000): Promise<LensResult> {
+  observe(target: string, waitMs = 4_000, timeoutMs = 60_000): Promise<LensTransportResult> {
     return this.request((id) => ({ type: "observe", id, target, waitMs }), timeoutMs);
   }
 
@@ -124,7 +125,7 @@ export class BrowserBridge implements LensTransport {
   private async request(
     make: (id: string) => LensBridgeRequest,
     timeoutMs: number
-  ): Promise<LensResult> {
+  ): Promise<LensTransportResult> {
     if (!this.connected) {
       this.log(`waiting up to ${INITIAL_CONNECT_WAIT_MS}ms for the browser extension`);
     }
@@ -139,7 +140,7 @@ export class BrowserBridge implements LensTransport {
     const message = make(id);
     const startedAt = Date.now();
     this.log(`sending ${message.type} ${id} through the lens broker`);
-    return new Promise<LensResult>((resolve) => {
+    return new Promise<LensTransportResult>((resolve) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         resolve({ kind: "error", message: `${message.type} timed out after ${timeoutMs}ms` });
