@@ -14,7 +14,7 @@ let portUpdate = Promise.resolve();
 export function startBridgeConnections(): void {
   chrome.alarms.create("lens-bridge-reconnect", { periodInMinutes: 0.5 });
   chrome.alarms.onAlarm.addListener((alarm) => {
-    if (alarm.name === "lens-bridge-reconnect") void reconnectKnown();
+    if (alarm.name === "lens-bridge-reconnect") discover(true);
   });
   chrome.tabs.onUpdated.addListener((_id, info, tab) => {
     if (info.status === "complete" && tab.url?.startsWith("http")) discover();

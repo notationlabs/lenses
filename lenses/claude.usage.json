@@ -1,7 +1,7 @@
 {
   "lens": "claude/usage",
-  "version": 1,
-  "description": "The logged-in user's Claude.ai usage settings page: current plan plus session and weekly usage limits with reset times.",
+  "version": 2,
+  "description": "The logged-in user's Claude.ai usage settings page: current plan, session and weekly usage limits, and whether usage credits are enabled.",
   "accepts": ["https://claude.ai/settings/usage*"],
   "loadTimeoutMs": 45000,
   "returns": {
@@ -12,10 +12,14 @@
         "type": "array",
         "items": {
           "name": "string",
-          "used": "string",
-          "limit": "string",
           "percent": "string",
           "resets_at": "string"
+        }
+      },
+      "usage_credits": {
+        "type": "object",
+        "fields": {
+          "enabled": "boolean"
         }
       }
     }
@@ -39,7 +43,8 @@
         "needs_auth": "status = 401 or status = 403"
       },
       "map": {
-        "limits": "[limits.{ 'name': kind = 'session' ? 'Current session' : kind = 'weekly_all' ? 'Weekly limit' : kind = 'weekly_scoped' ? ((scope.model.display_name ? scope.model.display_name & ' ' : '') & 'weekly limit') : kind, 'used': used_dollars ? $string(used_dollars) : '', 'limit': limit_dollars ? $string(limit_dollars) : '', 'percent': $string(percent) & '%', 'resets_at': resets_at }]"
+        "limits": "[limits.{ 'name': kind = 'session' ? 'Current session' : kind = 'weekly_all' ? 'Weekly limit' : kind = 'weekly_scoped' ? ((scope.model.display_name ? scope.model.display_name & ' ' : '') & 'weekly limit') : kind, 'percent': $string(percent) & '%', 'resets_at': resets_at }]",
+        "usage_credits": "{ 'enabled': spend.enabled = true }"
       }
     },
     {
@@ -51,7 +56,7 @@
     },
     {
       "kind": "llm",
-      "prompt": "This is the Claude.ai usage settings page. Return a single object {plan, limits}. plan is the current subscription plan name (e.g. 'Pro', 'Max 5x', 'Max (20x)', 'Team') shown under the 'Plan usage limits' heading. limits is an array of usage meters: for each return {name, used, limit, percent, resets_at} where name is the meter label (e.g. 'Current session', 'Weekly limit', 'Fable weekly limit'), used and limit are the raw values shown (else ''), percent is the fill percentage if displayed (else ''), and resets_at is the reset time/date text if shown (else ''). If the page is a login/sign-in page, return the JSON string \"needs_auth\"."
+      "prompt": "This is the Claude.ai usage settings page. Return a single object {plan, limits, usage_credits}. plan is the current subscription plan name (e.g. 'Pro', 'Max 5x', 'Max (20x)', 'Team') shown under the 'Plan usage limits' heading. limits is an array of usage meters: for each return {name, percent, resets_at} where name is the meter label (e.g. 'Current session', 'Weekly limit', 'Fable weekly limit'), percent is the fill percentage if displayed (else ''), and resets_at is the reset time/date text if shown (else ''). usage_credits is {enabled} where enabled reports whether the usage credits toggle is on. If the page is a login/sign-in page, return the JSON string \"needs_auth\"."
     }
   ]
 }

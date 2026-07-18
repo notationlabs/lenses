@@ -6,7 +6,7 @@ import type {
   LensSpec,
 } from "@djgrant/lens";
 
-const INITIAL_CONNECT_WAIT_MS = 5_000;
+const INITIAL_CONNECT_WAIT_MS = 35_000;
 const RECONNECT_WAIT_MS = 35_000;
 const KEEPALIVE_MS = 20_000;
 
