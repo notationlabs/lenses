@@ -39,9 +39,17 @@ export async function callLens(
   progress(`binding browser tab for ${target}`);
   const bound = await bindTab(spec, target);
   progress(`bound tab ${bound.tabId}${bound.created ? " (created)" : " (existing)"}`);
+  let navigationIsFresh = bound.navigated;
   const io: EngineIO = {
     getIntercepted: async () => interceptedResponses(bound.tabId),
-    reload: () => reloadTab(bound.tabId, spec.loadTimeoutMs),
+    reload: async () => {
+      if (navigationIsFresh) {
+        navigationIsFresh = false;
+        progress("using the tab's fresh navigation for intercept capture");
+        return;
+      }
+      await reloadTab(bound.tabId, spec.loadTimeoutMs);
+    },
     domExtract: (resolver: DomResolver) =>
       tabMessage(bound.tabId, { type: "dom_extract", spec: resolver }),
     snapshot: (maxChars: number) => tabMessage(bound.tabId, { type: "snapshot", maxChars }),
