@@ -1,5 +1,6 @@
 import * as z from "zod/v4";
 import type { LensSpec } from "./types.js";
+import { matchUrl } from "./url-pattern.js";
 
 const expression = z.string();
 const detect = z.record(z.string(), expression);
@@ -72,6 +73,7 @@ const lensSpecSchema = z.strictObject({
   version: z.number().int().positive(),
   description: z.string().optional(),
   accepts: z.array(z.string()).min(1),
+  defaultTarget: z.string().url().optional(),
   loadTimeoutMs: z.number().int().positive().optional(),
   returns: returnSchema.optional(),
   outcomes: z.record(z.string(), z.unknown()).optional(),
@@ -88,6 +90,9 @@ export function validateSpec(raw: unknown): LensSpec {
   const result = lensSpecSchema.safeParse(raw);
   if (!result.success) {
     throw new Error(`invalid lens spec:\n${z.prettifyError(result.error)}`);
+  }
+  if (result.data.defaultTarget && !matchUrl(result.data.accepts, result.data.defaultTarget)) {
+    throw new Error("invalid lens spec:\n  defaultTarget must match one of the accepts patterns");
   }
   return result.data;
 }

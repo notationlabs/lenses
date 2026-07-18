@@ -4,7 +4,7 @@ import { createLensClient } from "@djgrant/lens-client";
 
 const globalHelp = `Usage:
   lens list [--directory <path>] [--port <number>]
-  lens call <lens> <target> [--args <json>] [--timeout-ms <number>]
+  lens call <lens> [target] [--args <json>] [--timeout-ms <number>]
   lens observe <target> [--wait-ms <number>] [--timeout-ms <number>]
   lens status [--wait-ms <number>]
 
@@ -28,14 +28,15 @@ Options:
   --verbose, -v           Write timestamped diagnostics to stderr
   --help, -h              Show this help
 `,
-  call: `Usage: lens call <lens> <target> [options]
+  call: `Usage: lens call <lens> [target] [options]
 
 Call a lens against a concrete webpage URL.
 
 Arguments:
   lens                    Name such as hn/item, exact version such as hn/item@v1,
                           JSON file path, or HTTP URL to a lens document
-  target                  Webpage URL matched against the lens's accepts patterns
+  target                  Webpage URL matched against the lens's accepts patterns.
+                          Optional when the lens declares a default target.
 
 Options:
   --args <json>           JSON object exposed to expressions as $<key>. Explicit
@@ -51,6 +52,8 @@ Bundled lens arguments:
                           (default 30)
 
 Example:
+  lens call claude/usage
+
   lens call hn/item 'https://news.ycombinator.com/item?id=42' \\
     --args '{"p":2,"limit":10}'
 `,
@@ -113,7 +116,7 @@ async function main(): Promise<void> {
 
   if (!(command in commandHelp)) throw new Error(`unknown command "${command}"`);
 
-  if (command === "call" && operands.length < 2) throw new Error("call requires <lens> and <target>");
+  if (command === "call" && operands.length < 1) throw new Error("call requires <lens>");
   if (command === "observe" && operands.length < 1) throw new Error("observe requires <target>");
 
   const port = numberOption(values.port, "port");

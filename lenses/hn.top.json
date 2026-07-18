@@ -6,6 +6,7 @@
     "https://news.ycombinator.com/",
     "https://news.ycombinator.com/news*"
   ],
+  "defaultTarget": "https://news.ycombinator.com/",
   "returns": {
     "type": "object",
     "fields": {

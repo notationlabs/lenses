@@ -21,7 +21,11 @@ export function createLensMcpServer(client: LensClient): McpServer {
       ].join(" "),
       inputSchema: z.object({
         lens: z.string().describe("Lens name, file path, or URL"),
-        target: z.string().url().describe("Page URL"),
+        target: z
+          .string()
+          .url()
+          .optional()
+          .describe("Page URL; omit when the lens declares a default target"),
         args: z.record(z.string(), z.unknown()).optional(),
       }),
     },

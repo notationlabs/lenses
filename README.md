@@ -80,7 +80,8 @@ command has focused help, for example `lens call --help`.
 
 ```sh
 lens list --directory ./lenses
-lens call hn/top https://news.ycombinator.com/
+lens call hn/top
+lens call claude/usage
 lens call hn/item 'https://news.ycombinator.com/item?id=42' --args '{"p":2,"limit":10}' --verbose
 lens observe https://github.com/notifications --wait-ms 4000
 lens status --wait-ms 5000
@@ -89,6 +90,9 @@ lens status --wait-ms 5000
 Call args are a JSON object whose keys become JSONata variables such as `$limit`.
 Variables captured from target URL holes are supplied automatically, and explicit args
 with the same name take precedence.
+
+A lens may declare a `defaultTarget`. Callers can omit the target for those lenses;
+parameterized lenses such as `hn/item` still require a concrete URL.
 
 Each command starts a client for the duration of that invocation and then closes its
 extension bridge. A cold call may wait for the Chrome extension's discovery alarm;

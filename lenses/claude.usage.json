@@ -3,6 +3,7 @@
   "version": 3,
   "description": "The logged-in user's Claude.ai usage settings page: current plan, session and weekly usage limits, and whether usage credits are enabled.",
   "accepts": ["https://claude.ai/settings/usage*"],
+  "defaultTarget": "https://claude.ai/settings/usage",
   "loadTimeoutMs": 45000,
   "returns": {
     "type": "object",

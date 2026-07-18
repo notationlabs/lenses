@@ -19,6 +19,17 @@ describe("validateSpec", () => {
     expect(validateSpec(spec)).toEqual(spec);
   });
 
+  it("accepts a default target covered by accepts", () => {
+    const spec = { ...validSpec, defaultTarget: "https://example.com/home" };
+    expect(validateSpec(spec)).toEqual(spec);
+  });
+
+  it("rejects a default target outside accepts", () => {
+    expect(() =>
+      validateSpec({ ...validSpec, defaultTarget: "https://other.example/home" })
+    ).toThrow(/defaultTarget/);
+  });
+
   it("rejects a non-positive page load timeout", () => {
     expect(() => validateSpec({ ...validSpec, loadTimeoutMs: 0 })).toThrow(/loadTimeoutMs/);
   });

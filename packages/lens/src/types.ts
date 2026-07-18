@@ -13,6 +13,8 @@ export interface LensSpec {
   description?: string;
   /** URL patterns with named holes, e.g. "https://x.com/{handle}/status/{id}" */
   accepts: string[];
+  /** Canonical target used when a caller omits the target URL. */
+  defaultTarget?: string;
   /** Maximum time to wait for the target page to finish loading, in milliseconds. */
   loadTimeoutMs?: number;
   /** JSON-schema-ish shape of the return value. Fields whose value is
