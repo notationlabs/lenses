@@ -30,6 +30,7 @@ export async function executeLens(
   let gathered: unknown;
   const contributors: Resolver["kind"][] = [];
   for (const resolver of spec.resolve) {
+    io.log?.(`trying ${resolver.kind} resolver`);
     let result: LensResult | null;
     switch (resolver.kind) {
       case "intercept":
@@ -43,11 +44,17 @@ export async function executeLens(
         break;
     }
     if (!result) {
+      io.log?.(`${resolver.kind} resolver missed`);
       lastMiss = `${resolver.kind} resolver missed`;
       continue;
     }
     // Outcomes and errors are terminal; agent extraction includes gathered fields.
     if (result.kind !== "value") {
+      io.log?.(
+        result.kind === "outcome"
+          ? `${resolver.kind} resolver returned ${result.name} outcome`
+          : `${resolver.kind} resolver returned an error`
+      );
       if (result.kind === "outcome" && result.name === "agent_extract" && gathered !== undefined) {
         return {
           ...result,
@@ -65,7 +72,9 @@ export async function executeLens(
         ? fillAbsent(gathered, result.value)
         : result.value;
     contributors.push(resolver.kind);
+    io.log?.(`${resolver.kind} resolver contributed a value`);
     if (satisfiesReturns(gathered, spec.returns)) {
+      io.log?.("return contract satisfied");
       return {
         kind: "value",
         value: await materialiseLenses(gathered, spec.returns),
@@ -75,6 +84,7 @@ export async function executeLens(
   }
   // Mark incomplete results so the host will not cache them.
   if (gathered !== undefined) {
+    io.log?.("resolvers exhausted with a partial value");
     return {
       kind: "value",
       value: await materialiseLenses(gathered, spec.returns),
@@ -82,6 +92,7 @@ export async function executeLens(
       partial: true,
     };
   }
+  io.log?.("all resolvers exhausted without a value");
   return { kind: "error", message: `all resolvers exhausted (${lastMiss})` };
 }
 

@@ -89,4 +89,25 @@ describe("LensClient", () => {
     await client.call(input);
     expect(transport.calls).toBe(2);
   });
+
+  it("reports lens resolution and call arguments", async () => {
+    const messages: string[] = [];
+    const client = new LensClient(
+      new LensStore(await fixtureDirectory()),
+      new FakeTransport(),
+      (message) => messages.push(message)
+    );
+
+    await client.call({
+      lens: "example/page",
+      target: "https://example.com/home",
+      args: { limit: 10 },
+    });
+
+    expect(messages).toEqual([
+      "resolving lens example/page",
+      "resolved example/page@v1 for https://example.com/home",
+      "calling example/page@v1; args: limit",
+    ]);
+  });
 });
