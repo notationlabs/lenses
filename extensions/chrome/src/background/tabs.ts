@@ -5,6 +5,7 @@ import { formatError } from "../errors.js";
 export interface BoundTab {
   tabId: number;
   created: boolean;
+  navigated: boolean;
 }
 
 export async function bindTab(spec: LensSpec, target: string): Promise<BoundTab> {
@@ -13,7 +14,7 @@ export async function bindTab(spec: LensSpec, target: string): Promise<BoundTab>
   const exact = tabs.find((tab) => tab.url && sameTarget(tab.url, target));
   if (exact?.id !== undefined) {
     await ensureContentScript(exact.id, loadTimeoutMs);
-    return { tabId: exact.id, created: false };
+    return { tabId: exact.id, created: false, navigated: false };
   }
 
   const accepted = tabs.find((tab) => tab.url && matchUrl(spec.accepts, tab.url));
@@ -21,13 +22,13 @@ export async function bindTab(spec: LensSpec, target: string): Promise<BoundTab>
     resetIntercepts(accepted.id);
     await chrome.tabs.update(accepted.id, { url: target });
     await waitForLoad(accepted.id, loadTimeoutMs);
-    return { tabId: accepted.id, created: false };
+    return { tabId: accepted.id, created: false, navigated: true };
   }
 
   const created = await chrome.tabs.create({ url: target, active: false });
   if (created.id === undefined) throw new Error("could not create tab");
   await waitForLoad(created.id, loadTimeoutMs);
-  return { tabId: created.id, created: true };
+  return { tabId: created.id, created: true, navigated: true };
 }
 
 export async function bindObservedTab(target: string): Promise<BoundTab> {
@@ -37,13 +38,13 @@ export async function bindObservedTab(target: string): Promise<BoundTab> {
     resetIntercepts(exact.id);
     await chrome.tabs.reload(exact.id, { bypassCache: false });
     await waitForLoad(exact.id);
-    return { tabId: exact.id, created: false };
+    return { tabId: exact.id, created: false, navigated: true };
   }
 
   const created = await chrome.tabs.create({ url: target, active: false });
   if (created.id === undefined) throw new Error("could not create tab");
   await waitForLoad(created.id);
-  return { tabId: created.id, created: true };
+  return { tabId: created.id, created: true, navigated: true };
 }
 
 export async function reloadTab(tabId: number, loadTimeoutMs?: number): Promise<void> {
