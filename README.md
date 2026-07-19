@@ -94,9 +94,8 @@ parameter set.
 
 Each command connects to the persistent broker and disconnects when it finishes. The
 broker stays connected to Chrome between commands and shares successful cached results
-for each lens's declared TTL. Only the first call after starting the broker may wait for
-the extension's discovery alarm; verbose output distinguishes that cold wait from page
-loading and resolver execution.
+for each lens's declared TTL. Calls fail immediately when the browser extension is not
+connected. Use `lens status --wait-ms <number>` when a script should wait for it.
 
 For repository development, Bun resolves the workspace packages directly to their
 TypeScript source, so the CLI does not need a build first:
