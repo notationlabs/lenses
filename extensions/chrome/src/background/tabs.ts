@@ -1,4 +1,4 @@
-import { matchUrl, type LensSpec } from "@djgrant/lens";
+import type { LensSpec } from "@djgrant/lens";
 import { resetIntercepts } from "./intercepts.js";
 import { formatError } from "../errors.js";
 
@@ -15,14 +15,6 @@ export async function bindTab(spec: LensSpec, target: string): Promise<BoundTab>
   if (exact?.id !== undefined) {
     await ensureContentScript(exact.id, loadTimeoutMs);
     return { tabId: exact.id, created: false, navigated: false };
-  }
-
-  const accepted = tabs.find((tab) => tab.url && matchUrl(spec.accepts, tab.url));
-  if (accepted?.id !== undefined) {
-    resetIntercepts(accepted.id);
-    await chrome.tabs.update(accepted.id, { url: target });
-    await waitForLoad(accepted.id, loadTimeoutMs);
-    return { tabId: accepted.id, created: false, navigated: true };
   }
 
   const created = await chrome.tabs.create({ url: target, active: false });

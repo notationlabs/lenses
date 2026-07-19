@@ -1,4 +1,4 @@
-import { executeLens, type DomResolver, type EngineIO, type LensSpec } from "@djgrant/lens";
+import { executeLens, expandUrl, type DomResolver, type EngineIO, type LensSpec } from "@djgrant/lens";
 import { interceptedResponses } from "./intercepts.js";
 import { bindObservedTab, bindTab, closeIfCreated, reloadTab, tabMessage } from "./tabs.js";
 
@@ -32,10 +32,10 @@ export async function observePage(
 
 export async function callLens(
   spec: LensSpec,
-  target: string,
-  args: Record<string, unknown>,
+  params: Record<string, unknown>,
   progress: (message: string) => void = () => {}
 ) {
+  const target = expandUrl(spec.url, params);
   progress(`binding browser tab for ${target}`);
   const bound = await bindTab(spec, target);
   progress(`bound tab ${bound.tabId}${bound.created ? " (created)" : " (existing)"}`);
@@ -59,7 +59,7 @@ export async function callLens(
 
   let result;
   try {
-    result = await executeLens(spec, target, args, io);
+    result = await executeLens(spec, params, io);
     return result;
   } finally {
     await closeIfCreated(bound, result ?? { kind: "error" });

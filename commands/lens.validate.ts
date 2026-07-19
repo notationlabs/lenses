@@ -10,7 +10,7 @@ export const command = defineCommand({
     for (const f of files) {
       try {
         const spec = validateSpec(JSON.parse(await readFile(`lenses/${f}`, "utf8")));
-        r.reporter.success(`${f} → ${spec.lens}@v${spec.version} ok`);
+        r.reporter.success(`${f} → ${spec.name} ok`);
       } catch (err) {
         failed++;
         r.reporter.error(`${f}: ${err instanceof Error ? err.message : String(err)}`);

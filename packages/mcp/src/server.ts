@@ -15,18 +15,13 @@ export function createLensMcpServer(client: LensClient): McpServer {
     "lens_call",
     {
       description: [
-        "Call a lens against a URL in the user's browser.",
+        "Call a lens in the user's browser.",
         "Returns a value, a structured outcome, or an error.",
         "For agent_extract, use the returned prompt and page text to complete the extraction.",
       ].join(" "),
       inputSchema: z.object({
         lens: z.string().describe("Lens name, file path, or URL"),
-        target: z
-          .string()
-          .url()
-          .optional()
-          .describe("Page URL; omit when the lens declares a default target"),
-        args: z.record(z.string(), z.unknown()).optional(),
+        params: z.record(z.string(), z.unknown()).optional(),
       }),
     },
     async (input) => {

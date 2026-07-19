@@ -1,9 +1,7 @@
 {
-  "lens": "claude/usage",
-  "version": 3,
+  "name": "@djgrant/claude/usage",
   "description": "The logged-in user's Claude.ai usage settings page: current plan, session and weekly usage limits, and whether usage credits are enabled.",
-  "accepts": ["https://claude.ai/settings/usage*"],
-  "defaultTarget": "https://claude.ai/settings/usage",
+  "url": "https://claude.ai/settings/usage",
   "loadTimeoutMs": 45000,
   "returns": {
     "type": "object",
@@ -33,7 +31,7 @@
     }
   },
   "outcomes": {
-    "needs_auth": { "$lens": "claude/login@v1", "hint": "Ask the user to sign in to claude.ai in the open tab, then retry this call." }
+    "needs_auth": { "$lens": "@djgrant/claude/login", "hint": "Ask the user to sign in to claude.ai in the open tab, then retry this call." }
   },
   "effects": {
     "reads": ["claude.ai/settings/usage"],

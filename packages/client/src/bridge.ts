@@ -15,8 +15,7 @@ export interface LensTransport {
   readonly port: number;
   call(
     spec: LensSpec,
-    target: string,
-    args: Record<string, unknown>,
+    params: Record<string, unknown>,
     timeoutMs?: number
   ): Promise<LensTransportResult>;
   observe(target: string, waitMs?: number, timeoutMs?: number): Promise<LensTransportResult>;
@@ -81,12 +80,11 @@ export class BrowserBridge implements LensTransport {
 
   call(
     spec: LensSpec,
-    target: string,
-    args: Record<string, unknown>,
+    params: Record<string, unknown>,
     timeoutMs = 90_000
   ): Promise<LensTransportResult> {
     return this.request(
-      (id) => ({ type: "call", id, spec, target, args, timeoutMs }),
+      (id) => ({ type: "call", id, spec, params, timeoutMs }),
       timeoutMs
     );
   }

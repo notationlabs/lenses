@@ -1,30 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { matchRequestPattern, matchUrl } from "../src/url-pattern.js";
+import { expandUrl, matchRequestPattern } from "../src/url-pattern.js";
 
-describe("matchUrl", () => {
-  it("extracts named holes", () => {
-    const m = matchUrl(["https://x.com/{handle}/status/{id}"], "https://x.com/alice/status/123");
-    expect(m?.params).toEqual({ handle: "alice", id: "123" });
+describe("expandUrl", () => {
+  it("expands and encodes named parameters", () => {
+    expect(
+      expandUrl("https://x.com/{handle}/status/{id}", { handle: "alice smith", id: 123 })
+    ).toBe("https://x.com/alice%20smith/status/123");
   });
 
-  it("holes do not cross segment boundaries", () => {
-    expect(matchUrl(["https://x.com/{handle}"], "https://x.com/a/b")).toBeNull();
-  });
-
-  it("supports trailing wildcard", () => {
-    expect(matchUrl(["https://news.ycombinator.com/*"], "https://news.ycombinator.com/news?p=2")).toBeTruthy();
-  });
-
-  it("matches query-string holes", () => {
-    const m = matchUrl(
-      ["https://news.ycombinator.com/item?id={id}"],
-      "https://news.ycombinator.com/item?id=999"
-    );
-    expect(m?.params.id).toBe("999");
-  });
-
-  it("returns null on no match", () => {
-    expect(matchUrl(["https://x.com/{h}"], "https://example.com/")).toBeNull();
+  it("rejects a missing URL parameter", () => {
+    expect(() => expandUrl("https://x.com/{handle}", {})).toThrow(/missing URL parameter/);
   });
 });
 

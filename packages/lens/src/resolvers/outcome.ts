@@ -28,10 +28,16 @@ async function outcomeValue(
 ): Promise<unknown> {
   const declared = outcomes?.[name];
   if (isPlainObject(declared) && typeof declared.$lens === "string") {
-    const { $lens, target: targetExpr, ...rest } = declared;
-    const target =
-      typeof targetExpr === "string" ? await evaluate(targetExpr, ctx, params) : params.target;
-    return { $lens, target, ...rest };
+    const { $lens, params: paramExpressions, ...rest } = declared;
+    const bound: Record<string, unknown> = {};
+    if (isPlainObject(paramExpressions)) {
+      for (const [key, expression] of Object.entries(paramExpressions)) {
+        if (typeof expression === "string") bound[key] = await evaluate(expression, ctx, params);
+      }
+    }
+    return Object.keys(bound).length > 0
+      ? { $lens, params: bound, ...rest }
+      : { $lens, ...rest };
   }
   return ctx;
 }

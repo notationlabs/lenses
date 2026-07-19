@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import { validateSpec } from "../src/validate.js";
 
 const validSpec = {
-  lens: "example/page",
-  version: 1,
-  accepts: ["https://example.com/*"],
+  name: "@example/web/page",
+  url: "https://example.com/{page}",
+  params: { page: "string" },
   effects: { reads: ["example.com"], writes: [] },
   resolve: [{ kind: "dom", fields: { title: { selector: "h1" } } }],
 };
@@ -19,15 +19,21 @@ describe("validateSpec", () => {
     expect(validateSpec(spec)).toEqual(spec);
   });
 
-  it("accepts a default target covered by accepts", () => {
-    const spec = { ...validSpec, defaultTarget: "https://example.com/home" };
-    expect(validateSpec(spec)).toEqual(spec);
+  it("rejects undeclared URL parameters", () => {
+    expect(() => validateSpec({ ...validSpec, params: undefined })).toThrow(/not declared/);
   });
 
-  it("rejects a default target outside accepts", () => {
+  it("rejects an invalid canonical URL", () => {
+    expect(() => validateSpec({ ...validSpec, url: "example/{page}" })).toThrow(/absolute URL/);
+  });
+
+  it("rejects a parameter default with the wrong type", () => {
     expect(() =>
-      validateSpec({ ...validSpec, defaultTarget: "https://other.example/home" })
-    ).toThrow(/defaultTarget/);
+      validateSpec({
+        ...validSpec,
+        params: { page: { type: "integer", default: "one" } },
+      })
+    ).toThrow(/default.*page.*integer/);
   });
 
   it("rejects a non-positive page load timeout", () => {

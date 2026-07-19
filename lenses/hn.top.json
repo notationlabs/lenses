@@ -1,12 +1,8 @@
 {
-  "lens": "hn/top",
-  "version": 1,
+  "name": "@djgrant/hn/top",
   "description": "Front-page stories on Hacker News. Each story links onward to hn/item via item_url. Paginated: next_page is the following page of stories (null on the last page).",
-  "accepts": [
-    "https://news.ycombinator.com/",
-    "https://news.ycombinator.com/news*"
-  ],
-  "defaultTarget": "https://news.ycombinator.com/",
+  "url": "https://news.ycombinator.com/news?p={p}",
+  "params": { "p": { "type": "integer", "default": 1 } },
   "returns": {
     "type": "object",
     "fields": {
@@ -19,12 +15,14 @@
           "score": "string",
           "comments": "string",
           "item_url": {
-            "$lens": "hn/item@v1"
+            "$lens": "@djgrant/hn/item",
+            "params": { "id": "id" }
           }
         }
       },
       "next_page": {
-        "$lens": "hn/top@v1"
+        "$lens": "@djgrant/hn/top",
+        "params": { "p": "$number($substringAfter(next_page, 'p='))" }
       }
     }
   },
@@ -64,7 +62,7 @@
           "sibling": true
         }
       },
-      "post": "{ \"stories\": $map($, function($v) { $merge([$v, {\"item_url\": \"https://news.ycombinator.com/item?id=\" & $v.id}]) }) }"
+      "post": "{ \"stories\": $map($, function($v) { $merge([$v, {\"item_url\": $v.id}]) }) }"
     },
     {
       "kind": "dom",

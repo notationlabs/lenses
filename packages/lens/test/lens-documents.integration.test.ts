@@ -25,11 +25,11 @@ describe("shipped lens documents", () => {
   it("all pass the same nested validation used by the host", async () => {
     const files = (await readdir(lensDirectory)).filter((file) => file.endsWith(".json"));
     const specs = await Promise.all(files.map(loadLens));
-    expect(specs.map((spec) => `${spec.lens}@v${spec.version}`).sort()).toEqual([
-      "claude/usage@v3",
-      "github/notifications@v1",
-      "hn/item@v1",
-      "hn/top@v1",
+    expect(specs.map((spec) => spec.name).sort()).toEqual([
+      "@djgrant/claude/usage",
+      "@djgrant/github/notifications",
+      "@djgrant/hn/item",
+      "@djgrant/hn/top",
     ]);
   });
 
@@ -70,20 +70,20 @@ describe("shipped lens documents", () => {
       sleep: async () => {},
     };
 
-    const result = await executeLens(spec, "https://news.ycombinator.com/", {}, io);
+    const result = await executeLens(spec, { p: 1 }, io);
     expect(result).toMatchObject({
       kind: "value",
       resolver: "reconciled",
       value: {
         stories: [
           {
-            item_url: { $lens: "hn/item@v1", target: "https://news.ycombinator.com/item?id=42" },
+            item_url: { $lens: "@djgrant/hn/item", params: { id: "42" } },
           },
           {
-            item_url: { $lens: "hn/item@v1", target: "https://news.ycombinator.com/item?id=43" },
+            item_url: { $lens: "@djgrant/hn/item", params: { id: "43" } },
           },
         ],
-        next_page: { $lens: "hn/top@v1", target: "https://news.ycombinator.com/news?p=2" },
+        next_page: { $lens: "@djgrant/hn/top", params: { p: 2 } },
       },
     });
   });
@@ -98,7 +98,7 @@ describe("shipped lens documents", () => {
       timestamp: Date.now(),
     };
 
-    const result = await executeLens(spec, "https://claude.ai/settings/usage", {}, io({
+    const result = await executeLens(spec, {}, io({
       getIntercepted: async () => [
         capture,
         {
@@ -157,7 +157,7 @@ describe("shipped lens documents", () => {
 
   it("asks the agent to complete GitHub notifications when DOM fields cannot satisfy the contract", async () => {
     const spec = await loadLens("github.notifications.json");
-    const result = await executeLens(spec, "https://github.com/notifications", {}, io({
+    const result = await executeLens(spec, {}, io({
       domExtract: async (resolver) => ({
         url: "https://github.com/notifications",
         title: "Notifications",
@@ -183,7 +183,7 @@ describe("shipped lens documents", () => {
 
   it("returns an empty GitHub inbox without escalating to the agent", async () => {
     const spec = await loadLens("github.notifications.json");
-    const result = await executeLens(spec, "https://github.com/notifications", {}, io({
+    const result = await executeLens(spec, {}, io({
       domExtract: async () => ({
         url: "https://github.com/notifications?query=is%3Aunread",
         title: "Notifications",
@@ -202,7 +202,7 @@ describe("shipped lens documents", () => {
       text: `Comment ${index + 1}`,
       indent: "0",
     }));
-    const result = await executeLens(spec, "https://news.ycombinator.com/item?id=42", {}, io({
+    const result = await executeLens(spec, { id: "42" }, io({
       domExtract: async (resolver) => ({
         url: "https://news.ycombinator.com/item?id=42",
         title: "A story",
@@ -221,8 +221,8 @@ describe("shipped lens documents", () => {
       value: {
         story: { title: "A story", url: "https://example.com/story", score: "10 points" },
         next_page: {
-          $lens: "hn/item@v1",
-          target: "https://news.ycombinator.com/item?id=42&p=2",
+          $lens: "@djgrant/hn/item",
+          params: { id: "42", p: 2, limit: 30 },
         },
       },
     });

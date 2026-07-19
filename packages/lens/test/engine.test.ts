@@ -23,9 +23,8 @@ const captured = (over: Partial<InterceptedResponse>): InterceptedResponse => ({
 });
 
 const spec = validateSpec({
-  lens: "example/things",
-  version: 1,
-  accepts: ["https://example.com/{page}"],
+  name: "@example/web/things",
+  url: "https://example.com/things",
   effects: { reads: ["example.com"], writes: [] },
   resolve: [
     {
@@ -47,7 +46,7 @@ const spec = validateSpec({
 describe("executeLens", () => {
   it("reports resolver progress when the host supplies a logger", async () => {
     const messages: string[] = [];
-    await executeLens(spec, "https://example.com/home", {}, io({
+    await executeLens(spec, {}, io({
       getIntercepted: async () => [captured({})],
       log: (message) => messages.push(message),
     }));
@@ -59,13 +58,16 @@ describe("executeLens", () => {
     ]);
   });
 
-  it("rejects targets outside accepts", async () => {
-    const r = await executeLens(spec, "https://other.com/x", {}, io());
-    expect(r.kind).toBe("error");
+  it("rejects unknown parameters", async () => {
+    const r = await executeLens(spec, { page: "other" }, io());
+    expect(r).toEqual({
+      kind: "error",
+      message: 'unknown parameter "page" for @example/web/things',
+    });
   });
 
   it("serves from the intercept tier when a capture matches", async () => {
-    const r = await executeLens(spec, "https://example.com/home", {}, io({
+    const r = await executeLens(spec, {}, io({
       getIntercepted: async () => [captured({})],
     }));
     expect(r).toEqual({
@@ -79,7 +81,7 @@ describe("executeLens", () => {
   });
 
   it("returns a detected outcome instead of a value", async () => {
-    const r = await executeLens(spec, "https://example.com/home", {}, io({
+    const r = await executeLens(spec, {}, io({
       getIntercepted: async () => [captured({ status: 401, body: "{}" })],
     }));
     expect(r.kind).toBe("outcome");
@@ -87,7 +89,7 @@ describe("executeLens", () => {
   });
 
   it("falls through to the DOM tier on intercept miss", async () => {
-    const r = await executeLens(spec, "https://example.com/home", {}, io({
+    const r = await executeLens(spec, {}, io({
       domExtract: async () => ({
         url: "https://example.com/home",
         title: "t",
@@ -98,7 +100,7 @@ describe("executeLens", () => {
   });
 
   it("falls through to the LLM tier when DOM is empty", async () => {
-    const r = await executeLens(spec, "https://example.com/home", {}, io({
+    const r = await executeLens(spec, {}, io({
       snapshot: async () => ({ url: "https://example.com/home", title: "Things", text: "thing a" }),
     }));
     expect(r).toMatchObject({
@@ -109,11 +111,11 @@ describe("executeLens", () => {
     });
   });
 
-  it("binds URL holes as JSONata params", async () => {
+  it("binds declared parameters in JSONata", async () => {
     const s = validateSpec({
-      lens: "example/echo",
-      version: 1,
-      accepts: ["https://example.com/{page}"],
+      name: "@example/web/echo",
+      url: "https://example.com/{page}",
+      params: { page: "string" },
       effects: { reads: [], writes: [] },
       resolve: [
         {
@@ -123,7 +125,7 @@ describe("executeLens", () => {
         },
       ],
     });
-    const r = await executeLens(s, "https://example.com/hello", {}, io({
+    const r = await executeLens(s, { page: "hello" }, io({
       getIntercepted: async () => [captured({ body: "{}" })],
     }));
     expect(r).toMatchObject({ kind: "value", value: { page: "hello" } });
@@ -132,7 +134,7 @@ describe("executeLens", () => {
   it("reloads on miss and picks up a late capture", async () => {
     let reloaded = false;
     const buffer: InterceptedResponse[] = [];
-    const r = await executeLens(spec, "https://example.com/home", {}, io({
+    const r = await executeLens(spec, {}, io({
       getIntercepted: async () => buffer,
       reload: async () => {
         reloaded = true;
@@ -143,7 +145,7 @@ describe("executeLens", () => {
     expect(reloaded).toBe(false);
 
     const s2 = { ...spec, resolve: [{ ...spec.resolve[0], reloadOnMiss: true, waitMs: 500 } as never] };
-    const r2 = await executeLens(s2, "https://example.com/home", {}, io({
+    const r2 = await executeLens(s2, {}, io({
       getIntercepted: async () => buffer,
       reload: async () => {
         reloaded = true;
@@ -157,14 +159,13 @@ describe("executeLens", () => {
 });
 
 describe("results are lenses too", () => {
-  it("materialises a declared $lens outcome with its target bound", async () => {
+  it("materialises a declared $lens outcome", async () => {
     const s = validateSpec({
-      lens: "claude/usage",
-      version: 1,
-      accepts: ["https://claude.ai/settings/{page}"],
+      name: "@example/claude/usage",
+      url: "https://claude.ai/settings/usage",
       effects: { reads: [], writes: [] },
       outcomes: {
-        needs_auth: { $lens: "claude/login@v1", hint: "Sign in, then retry." },
+        needs_auth: { $lens: "@example/claude/login", hint: "Sign in, then retry." },
       },
       resolve: [
         {
@@ -174,7 +175,7 @@ describe("results are lenses too", () => {
         },
       ],
     });
-    const r = await executeLens(s, "https://claude.ai/settings/usage", {}, io({
+    const r = await executeLens(s, {}, io({
       getIntercepted: async () => [captured({ url: "https://claude.ai/api/x/usage", status: 401, body: "{}" })],
     }));
     expect(r).toEqual({
@@ -182,8 +183,7 @@ describe("results are lenses too", () => {
       name: "needs_auth",
       resolver: "intercept",
       value: {
-        $lens: "claude/login@v1",
-        target: "https://claude.ai/settings/usage",
+        $lens: "@example/claude/login",
         hint: "Sign in, then retry.",
       },
     });
@@ -191,9 +191,8 @@ describe("results are lenses too", () => {
 
   it("keeps the raw detect ctx when the outcome is declared null", async () => {
     const s = validateSpec({
-      lens: "example/maybe",
-      version: 1,
-      accepts: ["https://example.com/{page}"],
+      name: "@example/web/maybe",
+      url: "https://example.com/maybe",
       effects: { reads: [], writes: [] },
       outcomes: { not_found: null },
       resolve: [
@@ -204,7 +203,7 @@ describe("results are lenses too", () => {
         },
       ],
     });
-    const r = await executeLens(s, "https://example.com/home", {}, io({
+    const r = await executeLens(s, {}, io({
       getIntercepted: async () => [captured({ status: 404, body: "{}" })],
     }));
     expect(r.kind).toBe("outcome");
@@ -216,18 +215,20 @@ describe("results are lenses too", () => {
 
   it("binds $lens result fields on every row of an array return", async () => {
     const s = validateSpec({
-      lens: "hn/top",
-      version: 1,
-      accepts: ["https://news.ycombinator.com/{page}"],
+      name: "@example/hn/top",
+      url: "https://news.ycombinator.com/news",
       effects: { reads: [], writes: [] },
       returns: {
         type: "object",
         fields: {
           stories: {
             type: "array",
-            items: { id: "string", item_url: { $lens: "hn/item@v1" } },
+            items: {
+              id: "string",
+              item_url: { $lens: "@example/hn/item", params: { id: "id" } },
+            },
           },
-          next_page: { $lens: "hn/top@v1" },
+          next_page: { $lens: "@example/hn/top", params: { p: "next_page" } },
         },
       },
       resolve: [
@@ -235,28 +236,27 @@ describe("results are lenses too", () => {
           kind: "dom",
           item: ".athing",
           fields: { id: { selector: ":self", attr: "id" } },
-          post: "{ 'stories': $map($, function($v) { $merge([$v, {'item_url': 'https://news.ycombinator.com/item?id=' & $v.id}]) }), 'next_page': 'https://news.ycombinator.com/news?p=2' }",
+          post: "{ 'stories': $map($, function($v) { $merge([$v, {'item_url': $v.id}]) }), 'next_page': 2 }",
         },
       ],
     });
-    const r = await executeLens(s, "https://news.ycombinator.com/news", {}, io({
+    const r = await executeLens(s, {}, io({
       domExtract: async () => ({ url: "u", title: "t", value: [{ id: "1" }, { id: "2" }] }),
     }));
     expect(r.kind).toBe("value");
     if (r.kind === "value") {
       const v = r.value as { stories: Array<{ item_url: unknown }>; next_page: unknown };
-      expect(v.stories[0].item_url).toEqual({ $lens: "hn/item@v1", target: "https://news.ycombinator.com/item?id=1" });
-      expect(v.stories[1].item_url).toEqual({ $lens: "hn/item@v1", target: "https://news.ycombinator.com/item?id=2" });
-      expect(v.next_page).toEqual({ $lens: "hn/top@v1", target: "https://news.ycombinator.com/news?p=2" });
+      expect(v.stories[0].item_url).toEqual({ $lens: "@example/hn/item", params: { id: "1" } });
+      expect(v.stories[1].item_url).toEqual({ $lens: "@example/hn/item", params: { id: "2" } });
+      expect(v.next_page).toEqual({ $lens: "@example/hn/top", params: { p: 2 } });
     }
   });
 });
 
 describe("intercept sources composition", () => {
   const composed = validateSpec({
-    lens: "example/usage",
-    version: 1,
-    accepts: ["https://example.com/{page}"],
+    name: "@example/web/usage",
+    url: "https://example.com/usage",
     effects: { reads: ["example.com"], writes: [] },
     resolve: [
       {
@@ -293,7 +293,7 @@ describe("intercept sources composition", () => {
   });
 
   it("composes two responses via $-bound source names and an object map", async () => {
-    const r = await executeLens(composed, "https://example.com/usage", {}, io({
+    const r = await executeLens(composed, {}, io({
       getIntercepted: async () => [usageResp(), subResp()],
     }));
     expect(r).toEqual({
@@ -323,14 +323,14 @@ describe("intercept sources composition", () => {
         },
       ],
     });
-    const r = await executeLens(joined, "https://example.com/usage", {}, io({
+    const r = await executeLens(joined, {}, io({
       getIntercepted: async () => [usageResp(), subResp()],
     }));
     expect(r).toMatchObject({ kind: "value", value: { weekly_used: 130 } });
   });
 
   it("falls through to llm when one source is missing", async () => {
-    const r = await executeLens(composed, "https://example.com/usage", {}, io({
+    const r = await executeLens(composed, {}, io({
       getIntercepted: async () => [usageResp()], // no subscription response
     }));
     expect(r).toMatchObject({
@@ -342,7 +342,7 @@ describe("intercept sources composition", () => {
   });
 
   it("detects an outcome across source metas", async () => {
-    const r = await executeLens(composed, "https://example.com/usage", {}, io({
+    const r = await executeLens(composed, {}, io({
       getIntercepted: async () => [usageResp({ status: 401, body: "{}" }), subResp()],
     }));
     expect(r.kind).toBe("outcome");
@@ -353,9 +353,8 @@ describe("intercept sources composition", () => {
 describe("cross-tier reconciliation", () => {
   // intercept supplies {limits, renews_at} but omits plan; a cheap dom tier fills plan.
   const reconciled = validateSpec({
-    lens: "example/reconcile",
-    version: 1,
-    accepts: ["https://example.com/{page}"],
+    name: "@example/web/reconcile",
+    url: "https://example.com/reconcile",
     effects: { reads: [], writes: [] },
     returns: { type: "object", fields: { plan: "string", renews_at: "string", limits: { type: "array" } } },
     resolve: [
@@ -378,7 +377,7 @@ describe("cross-tier reconciliation", () => {
   });
 
   it("fills the missing field from dom and reports 'reconciled'", async () => {
-    const r = await executeLens(reconciled, "https://example.com/usage", {}, io({
+    const r = await executeLens(reconciled, {}, io({
       getIntercepted: async () => [usage()],
       domExtract: async () => ({ url: "u", title: "t", value: { plan: "Max (20x)" } }),
     }));
@@ -390,7 +389,7 @@ describe("cross-tier reconciliation", () => {
   });
 
   it("does not clobber a field an earlier tier already supplied", async () => {
-    const r = await executeLens(reconciled, "https://example.com/usage", {}, io({
+    const r = await executeLens(reconciled, {}, io({
       getIntercepted: async () => [usage()],
       // dom returns a stale/empty limits too — must not overwrite intercept's
       domExtract: async () => ({ url: "u", title: "t", value: { plan: "Pro", limits: [] } }),
@@ -399,7 +398,7 @@ describe("cross-tier reconciliation", () => {
   });
 
   it("hands agent_extract the fields gathered so far when dom also misses", async () => {
-    const r = await executeLens(reconciled, "https://example.com/usage", {}, io({
+    const r = await executeLens(reconciled, {}, io({
       getIntercepted: async () => [usage()],
       domExtract: async () => ({ url: "u", title: "t", value: null }),
     }));
@@ -418,7 +417,7 @@ describe("cross-tier reconciliation", () => {
   it("flags an incomplete reconciliation as partial (so the host won't cache it)", async () => {
     // no llm tier: intercept omits plan, dom misses → plan absent.
     const noLlm = { ...reconciled, resolve: reconciled.resolve.slice(0, 2) };
-    const r = await executeLens(noLlm, "https://example.com/usage", {}, io({
+    const r = await executeLens(noLlm, {}, io({
       getIntercepted: async () => [usage()],
       domExtract: async () => ({ url: "u", title: "t", value: null }),
     }));
@@ -427,7 +426,7 @@ describe("cross-tier reconciliation", () => {
   });
 
   it("does not flag a complete reconciliation as partial", async () => {
-    const r = await executeLens(reconciled, "https://example.com/usage", {}, io({
+    const r = await executeLens(reconciled, {}, io({
       getIntercepted: async () => [usage()],
       domExtract: async () => ({ url: "u", title: "t", value: { plan: "Max (20x)" } }),
     }));
@@ -439,7 +438,7 @@ describe("cross-tier reconciliation", () => {
 describe("dom extraction spec shape", () => {
   it("passes the resolver spec through to the content-script adapter", async () => {
     let received: DomResolver | undefined;
-    await executeLens(spec, "https://example.com/home", {}, io({
+    await executeLens(spec, {}, io({
       domExtract: async (r) => {
         received = r;
         return { url: "u", title: "t", value: [{ title: "x" }] };
@@ -453,9 +452,8 @@ describe("dom extraction spec shape", () => {
 describe("llm tier", () => {
   it("hands an incomplete array result to the agent instead of reporting success", async () => {
     const arraySpec = validateSpec({
-      lens: "example/list",
-      version: 1,
-      accepts: ["https://example.com/{page}"],
+      name: "@example/web/list",
+      url: "https://example.com/list",
       returns: { type: "array", items: { title: "string", reason: "string" } },
       effects: { reads: [], writes: [] },
       resolve: [
@@ -463,7 +461,7 @@ describe("llm tier", () => {
         { kind: "llm", prompt: "Complete the list." },
       ],
     });
-    const r = await executeLens(arraySpec, "https://example.com/list", {}, io({
+    const r = await executeLens(arraySpec, {}, io({
       domExtract: async () => ({ url: "u", title: "t", value: [{ title: "One" }] }),
     }));
     expect(r).toMatchObject({
@@ -474,7 +472,7 @@ describe("llm tier", () => {
   });
 
   it("returns an agent_extract outcome carrying the prompt and snapshot", async () => {
-    const r = await executeLens(spec, "https://example.com/home", {}, io({
+    const r = await executeLens(spec, {}, io({
       snapshot: async () => ({ url: "https://example.com/home", title: "Things", text: "thing a\nthing b" }),
     }));
     expect(r).toEqual({
@@ -491,7 +489,7 @@ describe("llm tier", () => {
   });
 
   it("propagates snapshot failures", async () => {
-    const execution = executeLens(spec, "https://example.com/home", {}, io({
+    const execution = executeLens(spec, {}, io({
       snapshot: async () => {
         throw new Error("tab closed");
       },

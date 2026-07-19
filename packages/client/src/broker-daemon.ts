@@ -72,7 +72,7 @@ function onClientMessage(client: WebSocket, raw: string): void {
   const cacheTtlMs = message.type === "call" ? (message.spec.effects.cache ?? 0) * 1000 : 0;
   const cacheKey =
     message.type === "call"
-      ? `${message.spec.lens}@v${message.spec.version}|${message.target}|${JSON.stringify(message.args)}`
+      ? `${JSON.stringify(message.spec)}|${JSON.stringify(message.params)}`
       : undefined;
   const cached = cacheKey ? cache.get(cacheKey) : undefined;
   if (cached && cached.expiresAt > Date.now()) {

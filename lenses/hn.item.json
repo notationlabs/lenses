@@ -1,11 +1,12 @@
 {
-  "lens": "hn/item",
-  "version": 1,
-  "description": "A Hacker News story page: the story plus a page of its comment thread. HN serves the whole thread in one document, so the lens windows it client-side (default 30 comments/page); next_page is the same lens at the next window (null on the last page). Pass args {p, limit} to control the window.",
-  "accepts": [
-    "https://news.ycombinator.com/item?id={id}",
-    "https://news.ycombinator.com/item?id={id}&p={p}"
-  ],
+  "name": "@djgrant/hn/item",
+  "description": "A Hacker News story page: the story plus a page of its comment thread. HN serves the whole thread in one document, so the lens windows it client-side (default 30 comments/page); next_page is the same lens at the next window (null on the last page). Pass params {p, limit} to control the window.",
+  "url": "https://news.ycombinator.com/item?id={id}",
+  "params": {
+    "id": "string",
+    "p": { "type": "integer", "default": 1 },
+    "limit": { "type": "integer", "default": 30 }
+  },
   "returns": {
     "type": "object",
     "fields": {
@@ -17,7 +18,10 @@
         "type": "array",
         "items": { "author": "string", "age": "string", "text": "string" }
       },
-      "next_page": { "$lens": "hn/item@v1" }
+      "next_page": {
+        "$lens": "@djgrant/hn/item",
+        "params": { "id": "$id", "p": "$p + 1", "limit": "$limit" }
+      }
     }
   },
   "outcomes": {
