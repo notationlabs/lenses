@@ -4,7 +4,7 @@ import { createLensClient } from "@djgrant/lens-client";
 
 const globalHelp = `Usage:
   lens list [--directory <path>] [--port <number>]
-  lens call <lens> [target] [--args <json>] [--timeout-ms <number>]
+  lens call <lens> [--params <json>] [--timeout-ms <number>]
   lens observe <target> [--wait-ms <number>] [--timeout-ms <number>]
   lens status [--wait-ms <number>]
 
@@ -28,34 +28,31 @@ Options:
   --verbose, -v           Write timestamped diagnostics to stderr
   --help, -h              Show this help
 `,
-  call: `Usage: lens call <lens> [target] [options]
+  call: `Usage: lens call <lens> [options]
 
-Call a lens against a concrete webpage URL.
+Call a lens with its declared parameters.
 
 Arguments:
-  lens                    Name such as hn/item, exact version such as hn/item@v1,
-                          JSON file path, or HTTP URL to a lens document
-  target                  Webpage URL matched against the lens's accepts patterns.
-                          Optional when the lens declares a default target.
+  lens                    Scoped name such as @djgrant/hn/item, shortname such as
+                          hn/item, JSON file path, or HTTP URL to a lens document
 
 Options:
-  --args <json>           JSON object exposed to expressions as $<key>. Explicit
-                          args override variables captured from target URL holes.
+  --params <json>         Declared lens parameters as a JSON object. Parameters
+                          are available to URL templates and resolver expressions.
   --timeout-ms <number>   Whole browser-call timeout (default: 90000)
   --directory, -d <path>  Lens directory (default: ./lenses)
   --port, -p <number>     Persistent browser broker port
   --verbose, -v           Write timestamped diagnostics to stderr
   --help, -h              Show this help
 
-Bundled lens arguments:
-  hn/item                 p: page number (default 1), limit: comments per page
-                          (default 30)
+Bundled lens parameters:
+  hn/item                 id: story id; p: comment page (default 1),
+                          limit: comments per page (default 30)
 
 Example:
   lens call claude/usage
 
-  lens call hn/item 'https://news.ycombinator.com/item?id=42' \\
-    --args '{"p":2,"limit":10}'
+  lens call hn/item --params '{"id":"42","p":2,"limit":10}'
 `,
   observe: `Usage: lens observe <target> [options]
 
@@ -98,7 +95,7 @@ async function main(): Promise<void> {
   const { values, positionals } = parseArgs({
     allowPositionals: true,
     options: {
-      args: { type: "string" },
+      params: { type: "string" },
       directory: { type: "string", short: "d" },
       help: { type: "boolean", short: "h" },
       port: { type: "string", short: "p" },
@@ -135,12 +132,13 @@ async function main(): Promise<void> {
         output = { status: client.status(), lenses: await client.list() };
         break;
       case "call": {
-        const [lens, target] = operands;
-        const args = values.args === undefined ? undefined : JSON.parse(values.args);
-        if (args !== undefined && (typeof args !== "object" || args === null || Array.isArray(args))) {
-          throw new Error("args must be a JSON object");
+        const [lens] = operands;
+        if (operands.length > 1) throw new Error("call accepts one <lens> operand");
+        const params = values.params === undefined ? undefined : JSON.parse(values.params);
+        if (params !== undefined && (typeof params !== "object" || params === null || Array.isArray(params))) {
+          throw new Error("params must be a JSON object");
         }
-        output = await client.call({ lens, target, args, timeoutMs });
+        output = await client.call({ lens, params, timeoutMs });
         break;
       }
       case "observe": {

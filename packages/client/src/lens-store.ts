@@ -23,9 +23,11 @@ export class LensStore {
 
     for (const file of entries.filter((entry) => entry.endsWith(".json"))) {
       const spec = validateSpec(JSON.parse(await readFile(join(this.directory, file), "utf8")));
-      loaded.set(`${spec.lens}@v${spec.version}`, spec);
-      const existing = loaded.get(spec.lens);
-      if (!existing || existing.version < spec.version) loaded.set(spec.lens, spec);
+      if (loaded.has(spec.name)) throw new Error(`duplicate lens name "${spec.name}"`);
+      loaded.set(spec.name, spec);
+      const short = shortName(spec.name);
+      if (loaded.has(short)) throw new Error(`duplicate lens shortname "${short}"`);
+      loaded.set(short, spec);
     }
     this.byName = loaded;
     return this.list();
@@ -35,7 +37,7 @@ export class LensStore {
     const seen = new Set<string>();
     const specs: LensSpec[] = [];
     for (const spec of this.byName.values()) {
-      const key = `${spec.lens}@v${spec.version}`;
+      const key = spec.name;
       if (!seen.has(key)) {
         seen.add(key);
         specs.push(spec);
@@ -59,4 +61,8 @@ export class LensStore {
     if (spec) return spec;
     throw new Error(`unknown lens "${ref}"`);
   }
+}
+
+function shortName(name: string): string {
+  return name.slice(name.indexOf("/") + 1);
 }

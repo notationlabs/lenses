@@ -1,6 +1,5 @@
 import type { EngineIO, LensResult, LensSpec, Resolver } from "./types.js";
 import { materialiseLenses } from "./materialise.js";
-import { matchUrl } from "./url-pattern.js";
 import { runIntercept } from "./resolvers/intercept.js";
 import { runDom } from "./resolvers/dom.js";
 import { runLlm } from "./resolvers/llm.js";
@@ -13,18 +12,15 @@ import { fillAbsent, satisfiesReturns } from "./reconcile.js";
  */
 export async function executeLens(
   spec: LensSpec,
-  targetUrl: string,
-  args: Record<string, unknown>,
+  input: Record<string, unknown>,
   io: EngineIO
 ): Promise<LensResult> {
-  const match = matchUrl(spec.accepts, targetUrl);
-  if (!match) {
-    return {
-      kind: "error",
-      message: `target ${targetUrl} does not match accepts patterns of ${spec.lens}@v${spec.version}`,
-    };
+  let params: Record<string, unknown>;
+  try {
+    params = resolveParams(spec, input);
+  } catch (error) {
+    return { kind: "error", message: (error as Error).message };
   }
-  const params = { ...match.params, ...args, target: targetUrl };
 
   let lastMiss = "no resolvers defined";
   let gathered: unknown;
@@ -60,7 +56,7 @@ export async function executeLens(
           ...result,
           value: {
             ...(result.value as Record<string, unknown>),
-            gathered: await materialiseLenses(gathered, spec.returns),
+            gathered: await materialiseLenses(gathered, spec.returns, params),
           },
         };
       }
@@ -77,7 +73,7 @@ export async function executeLens(
       io.log?.("return contract satisfied");
       return {
         kind: "value",
-        value: await materialiseLenses(gathered, spec.returns),
+        value: await materialiseLenses(gathered, spec.returns, params),
         resolver: settledResolver(contributors),
       };
     }
@@ -87,13 +83,40 @@ export async function executeLens(
     io.log?.("resolvers exhausted with a partial value");
     return {
       kind: "value",
-      value: await materialiseLenses(gathered, spec.returns),
+      value: await materialiseLenses(gathered, spec.returns, params),
       resolver: settledResolver(contributors),
       partial: true,
     };
   }
   io.log?.("all resolvers exhausted without a value");
   return { kind: "error", message: `all resolvers exhausted (${lastMiss})` };
+}
+
+export function resolveParams(
+  spec: LensSpec,
+  input: Record<string, unknown>
+): Record<string, unknown> {
+  const declarations = spec.params ?? {};
+  for (const key of Object.keys(input)) {
+    if (!(key in declarations)) throw new Error(`unknown parameter "${key}" for ${spec.name}`);
+  }
+  const params: Record<string, unknown> = {};
+  for (const [key, declaration] of Object.entries(declarations)) {
+    const type = typeof declaration === "string" ? declaration : declaration.type;
+    const fallback = typeof declaration === "string" ? undefined : declaration.default;
+    const value = Object.hasOwn(input, key) ? input[key] : fallback;
+    if (value === undefined) throw new Error(`missing parameter "${key}" for ${spec.name}`);
+    if (!matchesParamType(value, type)) {
+      throw new Error(`parameter "${key}" for ${spec.name} must be ${type}`);
+    }
+    params[key] = value;
+  }
+  return params;
+}
+
+function matchesParamType(value: unknown, type: string): boolean {
+  if (type === "integer") return Number.isInteger(value);
+  return typeof value === type;
 }
 
 function settledResolver(contributors: Resolver["kind"][]): Resolver["kind"] | "reconciled" {

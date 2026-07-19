@@ -1,6 +1,5 @@
 import * as z from "zod/v4";
 import type { LensSpec } from "./types.js";
-import { matchUrl } from "./url-pattern.js";
 
 const expression = z.string();
 const detect = z.record(z.string(), expression);
@@ -53,7 +52,7 @@ const returnSchema: z.ZodType<unknown> = z.lazy(() =>
     z.enum(["string", "number", "boolean", "integer", "null"]),
     z.strictObject({
       $lens: z.string(),
-      target: expression.optional(),
+      params: z.record(z.string(), expression).optional(),
     }),
     z.strictObject({
       type: z.literal("object"),
@@ -67,13 +66,23 @@ const returnSchema: z.ZodType<unknown> = z.lazy(() =>
 );
 
 const lensSpecSchema = z.strictObject({
-  lens: z.string().regex(/^[a-z0-9_-]+\/[a-z0-9_-]+$/, {
-    message: 'must be a namespaced name like "hn/top"',
+  name: z.string().regex(/^@[a-z0-9_-]+\/[a-z0-9_-]+\/[a-z0-9_-]+$/, {
+    message: 'must be a scoped name like "@djgrant/hn/top"',
   }),
-  version: z.number().int().positive(),
   description: z.string().optional(),
-  accepts: z.array(z.string()).min(1),
-  defaultTarget: z.string().url().optional(),
+  url: z.string(),
+  params: z
+    .record(
+      z.string(),
+      z.union([
+        z.enum(["string", "number", "integer", "boolean"]),
+        z.strictObject({
+          type: z.enum(["string", "number", "integer", "boolean"]),
+          default: z.union([z.string(), z.number(), z.boolean()]).optional(),
+        }),
+      ])
+    )
+    .optional(),
   loadTimeoutMs: z.number().int().positive().optional(),
   returns: returnSchema.optional(),
   outcomes: z.record(z.string(), z.unknown()).optional(),
@@ -91,8 +100,31 @@ export function validateSpec(raw: unknown): LensSpec {
   if (!result.success) {
     throw new Error(`invalid lens spec:\n${z.prettifyError(result.error)}`);
   }
-  if (result.data.defaultTarget && !matchUrl(result.data.accepts, result.data.defaultTarget)) {
-    throw new Error("invalid lens spec:\n  defaultTarget must match one of the accepts patterns");
+  const holes = [...result.data.url.matchAll(/\{([a-zA-Z_][a-zA-Z0-9_]*)\}/g)].map(
+    (match) => match[1]
+  );
+  for (const hole of holes) {
+    if (!result.data.params?.[hole]) {
+      throw new Error(`invalid lens spec:\n  URL parameter "${hole}" is not declared`);
+    }
+  }
+  for (const [name, declaration] of Object.entries(result.data.params ?? {})) {
+    if (typeof declaration === "string" || declaration.default === undefined) continue;
+    const valid =
+      declaration.type === "integer"
+        ? Number.isInteger(declaration.default)
+        : typeof declaration.default === declaration.type;
+    if (!valid) {
+      throw new Error(
+        `invalid lens spec:\n  default for parameter "${name}" must be ${declaration.type}`
+      );
+    }
+  }
+  const checkUrl = result.data.url.replace(/\{[a-zA-Z_][a-zA-Z0-9_]*\}/g, "value");
+  try {
+    new URL(checkUrl);
+  } catch {
+    throw new Error("invalid lens spec:\n  url must be an absolute URL template");
   }
   return result.data;
 }

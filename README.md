@@ -7,17 +7,17 @@ existing signed-in session without exporting cookies or running scraping infrast
 Applications use the TypeScript client directly. A CLI and an MCP server expose the
 same client without reimplementing lens loading, caching, validation, or browser transport.
 
-Here is `claude/usage`, trimmed:
+Here is `@djgrant/claude/usage`, trimmed:
 
 ```jsonc
 {
-  "lens": "claude/usage",
-  "accepts": ["https://claude.ai/settings/usage*"],
+  "name": "@djgrant/claude/usage",
+  "url": "https://claude.ai/settings/usage",
   "returns": {
     "type": "object",
     "fields": { "plan": "string", "limits": { "type": "array", "items": { "name": "string", "percent": "string" } } }
   },
-  "outcomes": { "needs_auth": { "$lens": "claude/login@v1" } },
+  "outcomes": { "needs_auth": { "$lens": "@djgrant/claude/login" } },
   "resolve": [
     { "kind": "intercept",
       "request": "GET https://claude.ai/api/organizations/*/usage*",
@@ -55,11 +55,10 @@ await using lenses = await createLensClient({ directory: "./lenses" });
 const available = await lenses.list();
 const result = await lenses.call({
   lens: "claude/usage",
-  target: "https://claude.ai/settings/usage",
 });
 ```
 
-The client owns lens discovery, reference resolution, URL checks, TTL caching, and the
+The client owns lens discovery, reference resolution, parameter validation, TTL caching, and the
 local broker connection. `call` returns a `value`, a structured `outcome`, or an `error`.
 An `agent_extract` outcome contains the page snapshot and lens prompt for the consumer's
 own model; the client does not select or call an LLM provider.
@@ -84,17 +83,14 @@ command has focused help, for example `lens call --help`.
 lens list --directory ./lenses
 lens call hn/top
 lens call claude/usage
-lens call hn/item 'https://news.ycombinator.com/item?id=42' --args '{"p":2,"limit":10}' --verbose
+lens call hn/item --params '{"id":"42","p":2,"limit":10}' --verbose
 lens observe https://github.com/notifications --wait-ms 4000
 lens status --wait-ms 5000
 ```
 
-Call args are a JSON object whose keys become JSONata variables such as `$limit`.
-Variables captured from target URL holes are supplied automatically, and explicit args
-with the same name take precedence.
-
-A lens may declare a `defaultTarget`. Callers can omit the target for those lenses;
-parameterized lenses such as `hn/item` still require a concrete URL.
+Call parameters are validated against the lens document. Each parameter becomes a
+JSONata variable such as `$limit`. URL templates and resolver expressions use the same
+parameter set.
 
 Each command connects to the persistent broker and disconnects when it finishes. The
 broker stays connected to Chrome between commands and shares successful cached results
@@ -160,19 +156,36 @@ state, and browser operations. The service worker only assembles those modules.
 
 A lens is a JSON file in `lenses/` or at an HTTP URL.
 
-- `lens` — namespaced name such as `site/operation`.
-- `version` — positive integer, bumped when the result contract breaks.
-- `accepts` — target URL patterns. Named holes become JSONata variables:
+- `name` — globally scoped name such as `@djgrant/hn/item`. The local catalogue also
+  resolves the shortname `hn/item`.
+- `url` — canonical page URL. Named holes are filled from declared parameters:
 
   ```jsonc
-  "accepts": ["https://x.com/{handle}/status/{id}"]
+  "url": "https://x.com/{handle}/status/{id}"
+  ```
+
+- `params` — inputs available to URL expansion and every resolver expression. A bare
+  type is required; an object may provide a default:
+
+  ```jsonc
+  "params": {
+    "handle": "string",
+    "page": { "type": "integer", "default": 1 }
+  }
   ```
 
 - `returns` — result shape. A field can contain a callable lens reference:
 
   ```jsonc
-  "next_page": { "$lens": "hn/top@v1" }
+  "next_page": {
+    "$lens": "@djgrant/hn/top",
+    "params": { "p": "$number($substringAfter(next_page, 'p='))" }
+  }
   ```
+
+  The parameter values are JSONata expressions evaluated against the containing result.
+  Materialised results carry the lens name and evaluated parameters needed for a follow-up
+  call.
 
 - `outcomes` — named non-happy paths, optionally carrying the lens that resolves them.
 - `effects` — `{ "reads": [...], "writes": [...], "idempotent": true, "cache": 60 }`.

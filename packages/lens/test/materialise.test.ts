@@ -7,10 +7,13 @@ describe("materialiseLenses", () => {
     expect(await materialiseLenses(v, undefined)).toEqual(v);
   });
 
-  it("binds a $lens field on an object return using its string URL value", async () => {
-    const returns = { type: "object", fields: { next: { $lens: "hn/top@v1" } } };
-    const r = await materialiseLenses({ next: "https://news.ycombinator.com/news?p=2" }, returns);
-    expect(r).toEqual({ next: { $lens: "hn/top@v1", target: "https://news.ycombinator.com/news?p=2" } });
+  it("binds a $lens field using declared parameter expressions", async () => {
+    const returns = {
+      type: "object",
+      fields: { next: { $lens: "@djgrant/hn/top", params: { p: "next" } } },
+    };
+    const r = await materialiseLenses({ next: 2 }, returns);
+    expect(r).toEqual({ next: { $lens: "@djgrant/hn/top", params: { p: 2 } } });
   });
 
   it("binds a $lens field on every row of an array-of-objects field", async () => {
@@ -19,40 +22,49 @@ describe("materialiseLenses", () => {
       fields: {
         stories: {
           type: "array",
-          items: { id: "string", item_url: { $lens: "hn/item@v1" } },
+          items: {
+            id: "string",
+            item_url: { $lens: "@djgrant/hn/item", params: { id: "id" } },
+          },
         },
       },
     };
     const r = (await materialiseLenses(
       {
         stories: [
-          { id: "1", item_url: "https://news.ycombinator.com/item?id=1" },
-          { id: "2", item_url: "https://news.ycombinator.com/item?id=2" },
+          { id: "1", item_url: "1" },
+          { id: "2", item_url: "2" },
         ],
       },
       returns
     )) as { stories: Array<{ item_url: unknown }> };
-    expect(r.stories[0].item_url).toEqual({ $lens: "hn/item@v1", target: "https://news.ycombinator.com/item?id=1" });
-    expect(r.stories[1].item_url).toEqual({ $lens: "hn/item@v1", target: "https://news.ycombinator.com/item?id=2" });
+    expect(r.stories[0].item_url).toEqual({ $lens: "@djgrant/hn/item", params: { id: "1" } });
+    expect(r.stories[1].item_url).toEqual({ $lens: "@djgrant/hn/item", params: { id: "2" } });
   });
 
-  it("resolves target via a JSONata expression against the row", async () => {
+  it("can resolve parameters from call parameters", async () => {
     const returns = {
       type: "array",
-      items: { id: "string", item_url: { $lens: "hn/item@v1", target: "'https://x/item?id=' & id" } },
+      items: {
+        id: "string",
+        item_url: { $lens: "@djgrant/hn/item", params: { id: "id", page: "$page" } },
+      },
     };
-    const r = (await materialiseLenses([{ id: "9" }], returns)) as Array<{ item_url: unknown }>;
-    expect(r[0].item_url).toEqual({ $lens: "hn/item@v1", target: "https://x/item?id=9" });
+    const r = (await materialiseLenses([{ id: "9", item_url: "9" }], returns, { page: 2 })) as Array<{ item_url: unknown }>;
+    expect(r[0].item_url).toEqual({
+      $lens: "@djgrant/hn/item",
+      params: { id: "9", page: 2 },
+    });
   });
 
   it("does not double-wrap a value that is already a ref", async () => {
-    const returns = { type: "object", fields: { next: { $lens: "hn/top@v1" } } };
-    const already = { next: { $lens: "hn/top@v1", target: "https://x" } };
+    const returns = { type: "object", fields: { next: { $lens: "@djgrant/hn/top" } } };
+    const already = { next: { $lens: "@djgrant/hn/top", params: { p: 2 } } };
     expect(await materialiseLenses(already, returns)).toEqual(already);
   });
 
   it("leaves a null $lens field as null (e.g. the last page)", async () => {
-    const returns = { type: "object", fields: { next_page: { $lens: "hn/top@v1" } } };
+    const returns = { type: "object", fields: { next_page: { $lens: "@djgrant/hn/top" } } };
     expect(await materialiseLenses({ next_page: null }, returns)).toEqual({ next_page: null });
   });
 

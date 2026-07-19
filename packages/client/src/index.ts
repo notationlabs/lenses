@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { matchUrl, type LensResult, type LensSpec } from "@djgrant/lens";
+import { expandUrl, resolveParams, type LensResult, type LensSpec } from "@djgrant/lens";
 import {
   BrowserBridge,
   type LensLogger,
@@ -19,8 +19,7 @@ export interface LensClientOptions {
 
 export interface LensCall {
   lens: string;
-  target?: string;
-  args?: Record<string, unknown>;
+  params?: Record<string, unknown>;
   timeoutMs?: number;
 }
 
@@ -31,10 +30,11 @@ export interface LensObservation {
 }
 
 export interface LensSummary {
-  lens: string;
+  name: string;
+  shortname: string;
+  url: string;
   description?: string;
-  accepts: string[];
-  defaultTarget?: string;
+  params: LensSpec["params"];
   effects: LensSpec["effects"];
   outcomes: string[];
 }
@@ -60,10 +60,11 @@ export class LensClient {
     const specs = await this.store.loadLocal();
     this.log(`loaded ${specs.length} lenses`);
     return specs.map((spec) => ({
-      lens: `${spec.lens}@v${spec.version}`,
+      name: spec.name,
+      shortname: spec.name.slice(spec.name.indexOf("/") + 1),
+      url: spec.url,
       description: spec.description,
-      accepts: spec.accepts,
-      defaultTarget: spec.defaultTarget,
+      params: spec.params,
       effects: spec.effects,
       outcomes: spec.outcomes ? Object.keys(spec.outcomes) : [],
     }));
@@ -72,35 +73,27 @@ export class LensClient {
   async call(input: LensCall): Promise<LensCallResult> {
     this.log(`resolving lens ${input.lens}`);
     const spec = await this.store.resolve(input.lens);
-    const target = input.target ?? spec.defaultTarget;
-    if (!target) {
-      return {
-        kind: "error",
-        message: `${spec.lens}@v${spec.version} requires a target URL`,
-      };
+    let params: Record<string, unknown>;
+    let url: string;
+    try {
+      params = resolveParams(spec, input.params ?? {});
+      url = expandUrl(spec.url, params);
+    } catch (error) {
+      return { kind: "error", message: (error as Error).message };
     }
-    this.log(
-      `resolved ${spec.lens}@v${spec.version} for ${target}${input.target ? "" : " (default target)"}`
-    );
-    if (!matchUrl(spec.accepts, target)) {
-      return {
-        kind: "error",
-        message: `target ${target} does not match ${spec.lens}@v${spec.version} accepts patterns: ${spec.accepts.join(", ")}`,
-      };
-    }
+    this.log(`resolved ${spec.name} to ${url}`);
 
-    const args = input.args ?? {};
-    const key = `${spec.lens}@v${spec.version}|${target}|${JSON.stringify(args)}`;
+    const key = `${JSON.stringify(spec)}|${JSON.stringify(params)}`;
     const ttl = (spec.effects.cache ?? 0) * 1000;
     const hit = this.cache.get(key);
     if (hit && hit.expiresAt <= Date.now()) this.cache.delete(key);
     if (ttl > 0 && hit && hit.expiresAt > Date.now()) {
-      this.log(`returning cached result for ${spec.lens}@v${spec.version}`);
+      this.log(`returning cached result for ${spec.name}`);
       return { ...hit.result, cached: true };
     }
 
-    this.log(`calling ${spec.lens}@v${spec.version}; args: ${Object.keys(args).join(", ") || "none"}`);
-    const result = await this.transport.call(spec, target, args, input.timeoutMs);
+    this.log(`calling ${spec.name}; params: ${Object.keys(params).join(", ") || "none"}`);
+    const result = await this.transport.call(spec, params, input.timeoutMs);
     if (result.kind === "value" && !result.partial && !result.cached && ttl > 0) {
       this.cache.set(key, { result, expiresAt: Date.now() + ttl });
     }

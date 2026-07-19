@@ -7,24 +7,29 @@
 export type ExprString = string; // a JSONata expression
 
 export interface LensSpec {
-  /** Namespaced name, e.g. "hn/top" */
-  lens: string;
-  version: number;
+  /** Globally scoped name, e.g. "@djgrant/hn/top". */
+  name: string;
   description?: string;
-  /** URL patterns with named holes, e.g. "https://x.com/{handle}/status/{id}" */
-  accepts: string[];
-  /** Canonical target used when a caller omits the target URL. */
-  defaultTarget?: string;
+  /** Canonical page URL. Named holes are expanded from call parameters. */
+  url: string;
+  /** Inputs available to URL expansion and every resolver expression. */
+  params?: Record<string, LensParam>;
   /** Maximum time to wait for the target page to finish loading, in milliseconds. */
   loadTimeoutMs?: number;
   /** JSON-schema-ish shape of the return value. Fields whose value is
-   *  {"$lens": "<lens-url>", "target": "<jsonata expr>"} are lens references. */
+   *  {"$lens": "<lens-name>", "params": {"key": "<jsonata expr>"}} are lens references. */
   returns?: unknown;
   /** Named failure modes. Value is either null, a plain schema, or a $lens ref. */
   outcomes?: Record<string, unknown>;
   effects: LensEffects;
   resolve: Resolver[];
 }
+
+export type LensParamType = "string" | "number" | "integer" | "boolean";
+
+export type LensParam =
+  | LensParamType
+  | { type: LensParamType; default?: string | number | boolean };
 
 export interface LensEffects {
   reads: string[];
@@ -137,8 +142,7 @@ export type LensBridgeRequest =
       type: "call";
       id: string;
       spec: LensSpec;
-      target: string;
-      args: Record<string, unknown>;
+      params: Record<string, unknown>;
       timeoutMs: number;
     }
   | { type: "observe"; id: string; target: string; waitMs: number };

@@ -60,5 +60,10 @@ function primitiveMatches(value: unknown, type: string): boolean {
 }
 
 function isLensRef(value: unknown): boolean {
-  return isPlainObject(value) && typeof value.$lens === "string" && typeof value.target === "string";
+  return (
+    isPlainObject(value) &&
+    typeof value.$lens === "string" &&
+    !("target" in value) &&
+    (value.params === undefined || isPlainObject(value.params))
+  );
 }
