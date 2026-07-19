@@ -3,7 +3,6 @@ import { fileURLToPath } from "node:url";
 import { WebSocket } from "ws";
 import type { LensBridgeRequest, LensResult, LensSpec } from "@djgrant/lens";
 
-const INITIAL_CONNECT_WAIT_MS = 35_000;
 const BROKER_START_WAIT_MS = 3_000;
 
 export type LensLogger = (message: string) => void;
@@ -125,14 +124,8 @@ export class BrowserBridge implements LensTransport {
     timeoutMs: number
   ): Promise<LensTransportResult> {
     if (!this.connected) {
-      this.log(`waiting up to ${INITIAL_CONNECT_WAIT_MS}ms for the browser extension`);
-    }
-    if (!this.connected && !(await this.waitForConnection(INITIAL_CONNECT_WAIT_MS))) {
-      this.log(`browser extension connection timed out after ${INITIAL_CONNECT_WAIT_MS}ms`);
-      return {
-        kind: "error",
-        message: `browser extension did not connect within ${INITIAL_CONNECT_WAIT_MS}ms`,
-      };
+      this.log("browser extension is not connected");
+      return { kind: "error", message: "browser extension is not connected" };
     }
     const id = `call_${++this.sequence}`;
     const message = make(id);
