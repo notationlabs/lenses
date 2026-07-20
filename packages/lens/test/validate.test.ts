@@ -70,4 +70,16 @@ describe("validateSpec", () => {
       })
     ).toThrow(/returns/);
   });
+
+  it("accepts nullable primitive return fields", () => {
+    expect(() =>
+      validateSpec({
+        ...validSpec,
+        returns: {
+          type: "object",
+          fields: { resets_at: { type: "string", nullable: true } },
+        },
+      })
+    ).not.toThrow();
+  });
 });
