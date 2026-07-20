@@ -94,7 +94,7 @@ describe("shipped lens documents", () => {
       method: "GET",
       url: "https://claude.ai/api/organizations/acme/usage",
       status: 200,
-      body: JSON.stringify({ limits: [{ kind: "session", percent: 20, resets_at: "13:00" }] }),
+      body: JSON.stringify({ limits: [{ kind: "session", percent: 20, resets_at: null }] }),
       timestamp: Date.now(),
     };
 
@@ -140,7 +140,7 @@ describe("shipped lens documents", () => {
       resolver: "reconciled",
       value: {
         plan: "Max (20x)",
-        limits: [{ name: "Current session", percent: "20%", resets_at: "13:00" }],
+        limits: [{ name: "Current session", percent: "20%", resets_at: null }],
         usage_credits: {
           enabled: true,
           spent_minor: 125,

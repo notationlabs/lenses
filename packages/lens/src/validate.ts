@@ -51,6 +51,10 @@ const returnSchema: z.ZodType<unknown> = z.lazy(() =>
   z.union([
     z.enum(["string", "number", "boolean", "integer", "null"]),
     z.strictObject({
+      type: z.enum(["string", "number", "boolean", "integer"]),
+      nullable: z.literal(true),
+    }),
+    z.strictObject({
       $lens: z.string(),
       params: z.record(z.string(), expression).optional(),
     }),

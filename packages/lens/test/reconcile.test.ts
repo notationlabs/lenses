@@ -2,6 +2,11 @@ import { describe, expect, it } from "vitest";
 import { fillAbsent, satisfiesReturns } from "../src/reconcile.js";
 
 describe("resolver result reconciliation", () => {
+  it("accepts null for a nullable primitive", () => {
+    expect(satisfiesReturns(null, { type: "string", nullable: true })).toBe(true);
+    expect(satisfiesReturns("tomorrow", { type: "string", nullable: true })).toBe(true);
+  });
+
   it("fills nested fields without replacing earlier values", () => {
     expect(fillAbsent(
       { story: { id: "1", title: "original" } },

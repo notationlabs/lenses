@@ -12,7 +12,7 @@
         "items": {
           "name": "string",
           "percent": "string",
-          "resets_at": "string"
+          "resets_at": { "type": "string", "nullable": true }
         }
       },
       "usage_credits": {

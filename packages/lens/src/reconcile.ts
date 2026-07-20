@@ -19,6 +19,7 @@ export function fillAbsent(current: unknown, incoming: unknown): unknown {
 export function satisfiesReturns(value: unknown, schema: unknown): boolean {
   if (typeof schema === "string") return primitiveMatches(value, schema);
   if (!isPlainObject(schema)) return value !== undefined;
+  if (value === null && schema.nullable === true) return true;
 
   if (typeof schema.$lens === "string") {
     return value === null || typeof value === "string" || isLensRef(value);
