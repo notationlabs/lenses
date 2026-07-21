@@ -83,8 +83,9 @@ Generate an SDK for every lens document in the given directories.
 
 Targets:
   ts-sdk                  TypeScript: a Lenses map of params and result types
-                          per lens, and a TypedLensClient whose call() is typed
-                          against it. Writes to stdout unless --out is given.
+                          per lens, and a createLensClient whose call() is
+                          typed against it. Writes to stdout unless --out is
+                          given.
 
 Arguments:
   directory               One or more lens directories (default: --directory,
