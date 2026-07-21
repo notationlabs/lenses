@@ -4,6 +4,6 @@ export const command = defineCommand({
   label: "Run lens-mcp in the foreground",
   run: async (r) => {
     r.reporter.info("MCP on stdio, persistent browser broker on ws://127.0.0.1:4319 — Ctrl-C to stop");
-    await r.exec(`LENS_DIR="$PWD/lenses" bun packages/mcp/src/index.ts`);
+    await r.exec(`LENS_CATALOG="$PWD/examples" bun packages/mcp/src/index.ts`);
   },
 });

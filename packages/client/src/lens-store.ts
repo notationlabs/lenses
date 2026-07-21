@@ -6,13 +6,13 @@ import { validateSpec, type LensSpec } from "@djgrant/lens";
 export class LensStore {
   private byName = new Map<string, LensSpec>();
 
-  constructor(private readonly directory: string) {}
+  constructor(private readonly catalog: string) {}
 
   async loadLocal(): Promise<LensSpec[]> {
     const loaded = new Map<string, LensSpec>();
     let entries: string[] = [];
     try {
-      entries = await readdir(this.directory);
+      entries = await readdir(this.catalog);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
         this.byName = loaded;
@@ -22,7 +22,7 @@ export class LensStore {
     }
 
     for (const file of entries.filter((entry) => entry.endsWith(".json"))) {
-      const spec = validateSpec(JSON.parse(await readFile(join(this.directory, file), "utf8")));
+      const spec = validateSpec(JSON.parse(await readFile(join(this.catalog, file), "utf8")));
       if (loaded.has(spec.name)) throw new Error(`duplicate lens name "${spec.name}"`);
       loaded.set(spec.name, spec);
       const short = shortName(spec.name);

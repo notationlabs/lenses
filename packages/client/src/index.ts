@@ -19,7 +19,8 @@ import { LensStore } from "./lens-store.js";
 const DEFAULT_PORT_START = 4319;
 
 export interface LensClientOptions {
-  directory?: string;
+  /** Path to the lens catalog: a directory of lens documents. Required — never assumed. */
+  catalog: string;
   port?: number;
   transport?: LensTransport;
   log?: LensLogger;
@@ -212,16 +213,17 @@ export class LensClient {
 }
 
 /** Construction is synchronous; the broker is bound lazily on first use. */
-export function createLensClient(options: LensClientOptions = {}): LensClient {
+export function createLensClient(options: LensClientOptions): LensClient {
   if (options.transport && options.port !== undefined) {
     throw new Error("broker port cannot be combined with a custom transport");
   }
   if (options.port !== undefined) validatePort(options.port);
-  const directory = resolve(options.directory ?? "lenses");
+  if (!options.catalog) throw new Error("a lens catalog directory is required");
+  const catalog = resolve(options.catalog);
   const log = options.log ?? (() => {});
-  log(`using lens directory ${directory}`);
+  log(`using lens catalog ${catalog}`);
   return new LensClient(
-    new LensStore(directory),
+    new LensStore(catalog),
     options.transport ??
       (() => BrowserBridge.bind(options.port ?? DEFAULT_PORT_START, "127.0.0.1", log)),
     log

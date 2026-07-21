@@ -50,7 +50,7 @@ extension connection.
 ```ts
 import { createLensClient } from "@djgrant/lens-client";
 
-await using lenses = await createLensClient({ directory: "./lenses" });
+await using lenses = await createLensClient({ catalog: "./examples" });
 
 const available = await lenses.list();
 const result = await lenses.call({
@@ -80,7 +80,7 @@ broker and call diagnostics to stderr without contaminating the JSON output. Eve
 command has focused help, for example `lens call --help`.
 
 ```sh
-lens list --directory ./lenses
+lens list --catalog ./examples
 lens call hn/top
 lens call claude/usage
 lens call hn/item --params '{"id":"42","p":2,"limit":10}' --verbose
@@ -94,8 +94,8 @@ lens status --wait-ms 5000
 document's `returns` declaration — the input for external codegen or validation. `$lens`
 fields reference the shared `$defs/lensRef` object schema (or null).
 
-`lens gen ts-sdk [<directory> ...]` generates a TypeScript SDK from one or more lens
-directories: a `Lenses` map of params and result types per lens (keyed by scoped
+`lens gen ts-sdk [<catalog> ...]` generates a TypeScript SDK from one or more lens
+catalogs: a `Lenses` map of params and result types per lens (keyed by scoped
 name and shortname), and a `createLensClient` whose `call()` is narrowed against it —
 typed params (defaulted parameters optional), a `value` branch matching the declared
 `returns` shape, and `$lens` fields as nullable `LensRef<"target">` references.
@@ -144,7 +144,7 @@ bun packages/cli/src/index.ts call hn/top
 ## MCP
 
 `@djgrant/lens-mcp` is a thin stdio adapter over `@djgrant/lens-client`. Configure it
-with the lens directory and built entry point:
+with the lens catalog and built entry point:
 
 ```json
 {
@@ -152,7 +152,7 @@ with the lens directory and built entry point:
     "lenses": {
       "command": "node",
       "args": ["/absolute/path/to/packages/mcp/dist/index.js"],
-      "env": { "LENS_DIR": "/absolute/path/to/lenses" }
+      "env": { "LENS_CATALOG": "/absolute/path/to/examples" }
     }
   }
 }
@@ -190,9 +190,9 @@ state, and browser operations. The service worker only assembles those modules.
 
 ## Lens spec reference
 
-A lens is a JSON file in `lenses/` or at an HTTP URL.
+A lens is a JSON file in a catalog directory (such as `examples/`) or at an HTTP URL.
 
-- `name` — globally scoped name such as `@djgrant/hn/item`. The local catalogue also
+- `name` — globally scoped name such as `@djgrant/hn/item`. The local catalog also
   resolves the shortname `hn/item`.
 - `url` — canonical page URL. Named holes are filled from declared parameters:
 
@@ -232,7 +232,7 @@ An intercept resolver can capture one request or declare named `sources` that jo
 responses. A DOM resolver declares an optional repeating `item` selector and named fields.
 An LLM resolver declares the extraction prompt and optional snapshot limit.
 
-Run `pok lens validate` to validate every document under `lenses/`.
+Run `pok lens validate` to validate every document under `examples/`.
 
 ## Packages
 
@@ -243,6 +243,6 @@ Run `pok lens validate` to validate every document under `lenses/`.
 | `packages/cli` | `@djgrant/lens-cli` | JSON command-line adapter |
 | `packages/mcp` | `@djgrant/lens-mcp` | stdio MCP adapter |
 | `extensions/chrome` | private | Browser interception and extraction |
-| `lenses` | — | Bundled lens documents |
+| `examples` | — | Example lens catalog |
 
 Planned work lives in [ROADMAP.md](./ROADMAP.md).
