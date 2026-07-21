@@ -53,11 +53,19 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       url: location.href,
       title: document.title,
       text: (document.body?.innerText ?? "").slice(0, msg.maxChars ?? 20000),
+      ...(msg.html ? { html: pageHtml(msg.maxHtmlChars ?? 80000) } : {}),
     });
     return false;
   }
   return false;
 });
+
+/** Body markup for selector authoring: no scripts, styles, or comments. */
+function pageHtml(maxChars: number): string {
+  const root = (document.body ?? document.documentElement).cloneNode(true) as Element;
+  for (const el of root.querySelectorAll("script, style, noscript, template")) el.remove();
+  return root.outerHTML.replace(/<!--[\s\S]*?-->/g, "").slice(0, maxChars);
+}
 
 function extractField(root: Element, f: DomFieldSpec): string | null {
   const scope = f.sibling ? root.nextElementSibling : root;

@@ -69,6 +69,7 @@ Use `observe` to inspect the JSON requests and text snapshot needed to author a 
 const observation = await lenses.observe({
   target: "https://github.com/notifications",
   waitMs: 4_000,
+  html: true, // include body markup (scripts/styles stripped) for writing DOM selectors
 });
 ```
 
@@ -84,7 +85,7 @@ lens list --catalog ./examples
 lens call hn/top
 lens call claude/usage
 lens call hn/item --params '{"id":"42","p":2,"limit":10}' --verbose
-lens observe https://github.com/notifications --wait-ms 4000
+lens observe https://github.com/notifications --wait-ms 4000 --html
 lens schema hn/top
 lens gen ts-sdk -o src/lenses.gen.ts
 lens status --wait-ms 5000
