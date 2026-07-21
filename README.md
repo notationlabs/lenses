@@ -85,8 +85,18 @@ lens call hn/top
 lens call claude/usage
 lens call hn/item --params '{"id":"42","p":2,"limit":10}' --verbose
 lens observe https://github.com/notifications --wait-ms 4000
+lens schema hn/top
 lens status --wait-ms 5000
 ```
+
+`lens schema <lens>` emits a standard JSON Schema (draft 2020-12) derived from the lens
+document's `returns` declaration — the input for external codegen or validation. `$lens`
+fields reference the shared `$defs/lensRef` object schema (or null).
+
+Resolved values are validated against the same derived schema. A violation is an
+`error` result naming each failing JSON pointer in `issues` (`{path, message}`).
+`lens call --lax` (or `call({ strict: false })` in the client) demotes violations
+to `warnings` attached to the value result instead.
 
 Call parameters are validated against the lens document. Each parameter becomes a
 JSONata variable such as `$limit`. URL templates and resolver expressions use the same
