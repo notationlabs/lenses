@@ -57,6 +57,14 @@ describe("generateTsSdk", () => {
     expect(source).toContain("[key: string]: unknown;");
   });
 
+  it("emits a narrowed value() beside call() and re-exports the error classes", () => {
+    const source = generateTsSdk([spec({ name: "@example/web/page", returns: "string" })]);
+    expect(source).toContain('Promise<Lenses[Name]["result"]>;');
+    expect(source).toContain(
+      'export { LensOutcomeError, LensResultError } from "@djgrant/lens-client";'
+    );
+  });
+
   it("types an absent returns declaration as unknown", () => {
     expect(generateTsSdk([spec({ name: "@example/web/page" })])).toContain("result: unknown;");
   });

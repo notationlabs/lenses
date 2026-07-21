@@ -51,6 +51,29 @@ export interface LensSummary {
 
 export type LensCallResult = LensResult & { cached?: boolean; warnings?: ValidationIssue[] };
 
+/** A named outcome, thrown by `value()`. `hint` is the remediation text declared in the lens document. */
+export class LensOutcomeError extends Error {
+  constructor(
+    readonly outcome: string,
+    readonly value: unknown,
+    readonly hint?: string
+  ) {
+    super(hint ? `lens outcome "${outcome}": ${hint}` : `lens outcome "${outcome}"`);
+    this.name = "LensOutcomeError";
+  }
+}
+
+/** An error result, thrown by `value()`. `issues` names failing JSON pointers, when present. */
+export class LensResultError extends Error {
+  constructor(
+    message: string,
+    readonly issues?: ValidationIssue[]
+  ) {
+    super(message);
+    this.name = "LensResultError";
+  }
+}
+
 interface CacheEntry {
   result: LensResult;
   expiresAt: number;
@@ -115,6 +138,25 @@ export class LensClient {
       this.cache.set(key, { result, expiresAt: Date.now() + ttl });
     }
     return this.validate(spec, result, input.strict ?? true);
+  }
+
+  /** `call()` unwrapped: the resolved value, or a thrown LensOutcomeError / LensResultError. */
+  async value(input: LensCall): Promise<unknown> {
+    const result = await this.call(input);
+    if (result.kind === "value") return result.value;
+    if (result.kind === "outcome") {
+      const declared = (await this.store.resolve(input.lens)).outcomes?.[result.name];
+      const hint =
+        typeof declared === "object" && declared !== null && "hint" in declared
+          ? (declared as { hint?: unknown }).hint
+          : undefined;
+      throw new LensOutcomeError(
+        result.name,
+        result.value,
+        typeof hint === "string" ? hint : undefined
+      );
+    }
+    throw new LensResultError(result.message, result.issues);
   }
 
   /** Validate a value result against the schema derived from `returns`. */
