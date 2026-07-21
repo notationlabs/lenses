@@ -5,10 +5,9 @@ import { createLensMcpServer } from "./server.js";
 
 async function main(): Promise<void> {
   const port = brokerPort(process.env.LENS_BROKER_PORT);
-  const client = createLensClient({
-    directory: process.env.LENS_DIR,
-    port,
-  });
+  const catalog = process.env.LENS_CATALOG;
+  if (!catalog) throw new Error("LENS_CATALOG must point to a lens catalog directory");
+  const client = createLensClient({ catalog, port });
   const server = createLensMcpServer(client);
   const transport = new StdioServerTransport();
   process.stdin.once("end", () => {

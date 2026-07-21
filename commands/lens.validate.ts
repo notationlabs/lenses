@@ -3,13 +3,13 @@ import { defineCommand } from "@pokit/core";
 import { validateSpec } from "@djgrant/lens";
 
 export const command = defineCommand({
-  label: "Validate every lens spec in lenses/ against the engine's validator",
+  label: "Validate every lens spec in examples/ against the engine's validator",
   run: async (r) => {
-    const files = (await readdir("lenses")).filter((f) => f.endsWith(".json"));
+    const files = (await readdir("examples")).filter((f) => f.endsWith(".json"));
     let failed = 0;
     for (const f of files) {
       try {
-        const spec = validateSpec(JSON.parse(await readFile(`lenses/${f}`, "utf8")));
+        const spec = validateSpec(JSON.parse(await readFile(`examples/${f}`, "utf8")));
         r.reporter.success(`${f} → ${spec.name} ok`);
       } catch (err) {
         failed++;

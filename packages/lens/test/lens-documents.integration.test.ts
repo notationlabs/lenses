@@ -5,10 +5,10 @@ import { executeLens } from "../src/engine.js";
 import type { EngineIO, InterceptedResponse } from "../src/types.js";
 import { validateSpec } from "../src/validate.js";
 
-const lensDirectory = resolve(import.meta.dirname, "../../../lenses");
+const lensCatalog = resolve(import.meta.dirname, "../../../examples");
 
 async function loadLens(file: string) {
-  return validateSpec(JSON.parse(await readFile(resolve(lensDirectory, file), "utf8")));
+  return validateSpec(JSON.parse(await readFile(resolve(lensCatalog, file), "utf8")));
 }
 
 function io(overrides: Partial<EngineIO>): EngineIO {
@@ -23,7 +23,7 @@ function io(overrides: Partial<EngineIO>): EngineIO {
 
 describe("shipped lens documents", () => {
   it("all pass the same nested validation used by the host", async () => {
-    const files = (await readdir(lensDirectory)).filter((file) => file.endsWith(".json"));
+    const files = (await readdir(lensCatalog)).filter((file) => file.endsWith(".json"));
     const specs = await Promise.all(files.map(loadLens));
     expect(specs.map((spec) => spec.name).sort()).toEqual([
       "@djgrant/claude/usage",

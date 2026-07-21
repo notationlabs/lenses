@@ -80,7 +80,7 @@ export interface LensClient extends Omit<BaseLensClient, "call" | "value"> {
   ): Promise<Lenses[Name]["result"]>;
 }
 
-export function createLensClient(options?: LensClientOptions): LensClient {
+export function createLensClient(options: LensClientOptions): LensClient {
   return createBaseClient(options) as LensClient;
 }
 `;
