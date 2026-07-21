@@ -36,6 +36,9 @@ importers:
 
   packages/cli:
     dependencies:
+      '@djgrant/lens':
+        specifier: workspace:*
+        version: link:../lens
       '@djgrant/lens-client':
         specifier: workspace:*
         version: link:../client

@@ -5,7 +5,7 @@ import { createLensMcpServer } from "./server.js";
 
 async function main(): Promise<void> {
   const port = brokerPort(process.env.LENS_BROKER_PORT);
-  const client = await createLensClient({
+  const client = createLensClient({
     directory: process.env.LENS_DIR,
     port,
   });
@@ -16,7 +16,7 @@ async function main(): Promise<void> {
   });
   await server.connect(transport);
   process.stderr.write(
-    `[lens-mcp] stdio; persistent browser broker on ws://127.0.0.1:${client.status().port}\n`
+    `[lens-mcp] stdio; persistent browser broker on ws://127.0.0.1:${(await client.status()).port}\n`
   );
 }
 

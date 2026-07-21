@@ -1,8 +1,8 @@
 # Roadmap
 
-- **TypeScript codegen from lens schemas.** `lens schema` now emits standard JSON
-  Schema for a lens's `returns`, so typed bindings can be generated externally;
-  first-party `lens types` output would remove that extra step.
+- **Python SDK.** `lens gen ts-sdk` now generates a first-party TypeScript SDK, and
+  `lens schema` emits standard JSON Schema for external codegen; Python needs both
+  a generated-types step and a runtime client speaking to the broker or MCP server.
 - **Intercept requests made by service workers.** The intercept tier patches
   `fetch`/XHR in the page world, so requests made by a site's own service worker
   never pass through the patch and are invisible to lenses.

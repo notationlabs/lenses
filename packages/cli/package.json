@@ -10,6 +10,7 @@
     "build": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@djgrant/lens": "workspace:*",
     "@djgrant/lens-client": "workspace:*"
   },
   "devDependencies": {

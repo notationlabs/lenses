@@ -1,11 +1,15 @@
 #!/usr/bin/env node
+import { writeFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { createLensClient } from "@djgrant/lens-client";
+import { generateTsSdk, type LensSpec } from "@djgrant/lens";
+import { createLensClient, LensStore } from "@djgrant/lens-client";
 
 const globalHelp = `Usage:
   lens list [--directory <path>] [--port <number>]
   lens call <lens> [--params <json>] [--timeout-ms <number>] [--lax]
   lens schema <lens>
+  lens gen ts-sdk [<directory> ...] [--out <file>]
   lens observe <target> [--wait-ms <number>] [--timeout-ms <number>]
   lens status [--wait-ms <number>]
 
@@ -73,6 +77,29 @@ Options:
   --verbose, -v           Write timestamped diagnostics to stderr
   --help, -h              Show this help
 `,
+  gen: `Usage: lens gen <target> [<directory> ...] [options]
+
+Generate an SDK for every lens document in the given directories.
+
+Targets:
+  ts-sdk                  TypeScript: a Lenses map of params and result types
+                          per lens, and a TypedLensClient whose call() is typed
+                          against it. Writes to stdout unless --out is given.
+
+Arguments:
+  directory               One or more lens directories (default: --directory,
+                          falling back to ./lenses). Names must be unique
+                          across all directories.
+
+Options:
+  --out, -o <file>        Write generated source to this file
+  --directory, -d <path>  Lens directory (default: ./lenses)
+  --verbose, -v           Write timestamped diagnostics to stderr
+  --help, -h              Show this help
+
+Example:
+  lens gen ts-sdk -o src/lenses.gen.ts
+`,
   observe: `Usage: lens observe <target> [options]
 
 Load a page and return its text snapshot and captured JSON requests.
@@ -119,6 +146,7 @@ async function main(): Promise<void> {
       help: { type: "boolean", short: "h" },
       port: { type: "string", short: "p" },
       lax: { type: "boolean" },
+      out: { type: "string", short: "o" },
       "timeout-ms": { type: "string" },
       verbose: { type: "boolean", short: "v" },
       "wait-ms": { type: "string" },
@@ -137,6 +165,26 @@ async function main(): Promise<void> {
   if (command === "schema" && operands.length !== 1) throw new Error("schema requires one <lens>");
   if (command === "observe" && operands.length < 1) throw new Error("observe requires <target>");
 
+  if (command === "gen") {
+    const [target, ...directoryOperands] = operands;
+    if (target !== "ts-sdk") throw new Error('gen requires a target; supported targets: "ts-sdk"');
+    const directories =
+      directoryOperands.length > 0 ? directoryOperands : [values.directory ?? "lenses"];
+    const specs = new Map<string, LensSpec>();
+    for (const directory of directories) {
+      for (const spec of await new LensStore(resolve(directory)).loadLocal()) {
+        if (specs.has(spec.name)) {
+          throw new Error(`duplicate lens name "${spec.name}" in ${directory}`);
+        }
+        specs.set(spec.name, spec);
+      }
+    }
+    const source = generateTsSdk([...specs.values()]);
+    if (values.out) await writeFile(values.out, source, "utf8");
+    else process.stdout.write(source);
+    return;
+  }
+
   const port = numberOption(values.port, "port");
   const waitMs = numberOption(values["wait-ms"], "wait-ms");
   const timeoutMs = numberOption(values["timeout-ms"], "timeout-ms");
@@ -144,13 +192,13 @@ async function main(): Promise<void> {
   const log = values.verbose
     ? (message: string) => process.stderr.write(`[lens +${Date.now() - startedAt}ms] ${message}\n`)
     : undefined;
-  const client = await createLensClient({ directory: values.directory, port, log });
+  const client = createLensClient({ directory: values.directory, port, log });
 
   try {
     let output: unknown;
     switch (command) {
       case "list":
-        output = { status: client.status(), lenses: await client.list() };
+        output = { status: await client.status(), lenses: await client.list() };
         break;
       case "call": {
         const [lens] = operands;
@@ -172,7 +220,7 @@ async function main(): Promise<void> {
       }
       case "status":
         if (waitMs !== undefined) await client.waitForConnection(waitMs);
-        output = client.status();
+        output = await client.status();
         break;
     }
     process.stdout.write(`${JSON.stringify(output, null, 2)}\n`);
