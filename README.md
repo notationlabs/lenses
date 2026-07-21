@@ -96,15 +96,14 @@ fields reference the shared `$defs/lensRef` object schema (or null).
 
 `lens gen ts-sdk [<directory> ...]` generates a TypeScript SDK from one or more lens
 directories: a `Lenses` map of params and result types per lens (keyed by scoped
-name and shortname), and `typedLensClient(client)`, which narrows `call()` —
+name and shortname), and a `createLensClient` whose `call()` is narrowed against it —
 typed params (defaulted parameters optional), a `value` branch matching the declared
 `returns` shape, and `$lens` fields as nullable `LensRef<"target">` references.
 
 ```ts
-import { createLensClient } from "@djgrant/lens-client";
-import { typedLensClient } from "./lenses.gen.js";
+import { createLensClient } from "./lenses.gen.js";
 
-const client = typedLensClient(createLensClient()); // sync; binds the broker on first call
+const client = createLensClient(); // sync; binds the broker on first call
 const top = await client.call({ lens: "hn/top", params: { p: 2 } });
 if (top.kind === "value") top.value.stories[0].title; // string
 ```
