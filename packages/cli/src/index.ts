@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { generateTsSdk, type LensSpec } from "@djgrant/lens";
+import { evaluate, generateTsSdk, type LensSpec } from "@djgrant/lens";
 import { createLensClient, LensStore } from "@djgrant/lens-client";
 
 const globalHelp = `Usage:
@@ -10,6 +10,7 @@ const globalHelp = `Usage:
   lens call <lens> [--params <json>] [--timeout-ms <number>] [--lax]
   lens schema <lens>
   lens gen ts-sdk [<catalog> ...] [--out <file>]
+  lens eval <expression> [--input <file>] [--params <json>]
   lens observe <target> [--wait-ms <number>] [--timeout-ms <number>] [--html]
   lens status [--wait-ms <number>]
 
@@ -101,6 +102,25 @@ Options:
 Example:
   lens gen ts-sdk -o src/lenses.gen.ts
 `,
+  eval: `Usage: lens eval <expression> [options]
+
+Evaluate a JSONata expression against local JSON, in the same sandbox a lens's
+map, post, and detect bodies run in. No browser or catalog needed — the offline
+way to iterate on an expression before putting it in a lens document.
+
+Arguments:
+  expression              A JSONata expression
+
+Options:
+  --input <file>          JSON file to evaluate against; reads stdin when piped
+  --params <json>         Lens parameters, bound as JSONata variables ($name)
+  --help, -h              Show this help
+
+An expression that produces no result prints null and a stderr note.
+
+Example:
+  lens call hn/top | jq .value | lens eval '[stories.{ "t": title }]'
+`,
   observe: `Usage: lens observe <target> [options]
 
 Load a page and return its text snapshot and captured JSON requests.
@@ -150,6 +170,12 @@ function numberOption(value: string | undefined, name: string): number | undefin
   return parsed;
 }
 
+async function readStdin(): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
+  return Buffer.concat(chunks).toString("utf8");
+}
+
 async function main(): Promise<void> {
   const { values, positionals } = parseArgs({
     allowPositionals: true,
@@ -160,6 +186,7 @@ async function main(): Promise<void> {
       port: { type: "string", short: "p" },
       html: { type: "boolean" },
       lax: { type: "boolean" },
+      input: { type: "string" },
       out: { type: "string", short: "o" },
       "timeout-ms": { type: "string" },
       verbose: { type: "boolean", short: "v" },
@@ -178,6 +205,26 @@ async function main(): Promise<void> {
   if (command === "call" && operands.length < 1) throw new Error("call requires <lens>");
   if (command === "schema" && operands.length !== 1) throw new Error("schema requires one <lens>");
   if (command === "observe" && operands.length < 1) throw new Error("observe requires <target>");
+
+  if (command === "eval") {
+    if (operands.length !== 1) throw new Error("eval requires one <expression>");
+    const params = values.params === undefined ? {} : JSON.parse(values.params);
+    if (typeof params !== "object" || params === null || Array.isArray(params)) {
+      throw new Error("params must be a JSON object");
+    }
+    const source = values.input
+      ? await readFile(values.input, "utf8")
+      : process.stdin.isTTY
+        ? undefined
+        : await readStdin();
+    const data = source === undefined || source.trim() === "" ? undefined : JSON.parse(source);
+    const result = await evaluate(operands[0], data, params);
+    if (result === undefined) {
+      process.stderr.write("expression produced no result\n");
+    }
+    process.stdout.write(`${JSON.stringify(result ?? null, null, 2)}\n`);
+    return;
+  }
 
   if (command === "gen") {
     const [target, ...catalogOperands] = operands;

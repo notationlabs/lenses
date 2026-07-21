@@ -88,6 +88,7 @@ lens call hn/item --params '{"id":"42","p":2,"limit":10}' --verbose
 lens observe https://github.com/notifications --wait-ms 4000 --html
 lens schema hn/top
 lens gen ts-sdk -o src/lenses.gen.ts
+lens eval '[stories.{ "t": title }]' --input sample.json
 lens status --wait-ms 5000
 ```
 
@@ -176,6 +177,8 @@ declared fields are present, so each tier only needs to supply its part of the r
 
 Lens `map` and `detect` bodies are JSONata expressions. They cannot reach the network or
 DOM. Lenses observe what a page already does and cannot fire requests or act on the page.
+`lens eval` runs the same sandboxed evaluator against a JSON file or stdin, so an
+expression can be iterated on offline before it goes into a lens document.
 
 ## Architecture
 
