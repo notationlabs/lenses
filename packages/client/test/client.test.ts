@@ -5,6 +5,8 @@ import { describe, expect, it } from "vitest";
 import type { LensResult, LensSpec } from "@djgrant/lens";
 import {
   LensClient,
+  LensOutcomeError,
+  LensResultError,
   LensStore,
   type LensTransport,
   type LensTransportResult,
@@ -35,7 +37,11 @@ class FakeTransport implements LensTransport {
   async close(): Promise<void> {}
 }
 
-async function fixtureDirectory(parameterised = false, returns?: unknown): Promise<string> {
+async function fixtureDirectory(
+  parameterised = false,
+  returns?: unknown,
+  outcomes?: Record<string, unknown>
+): Promise<string> {
   const directory = await mkdtemp(join(tmpdir(), "lens-client-"));
   await writeFile(
     join(directory, "example.json"),
@@ -44,6 +50,7 @@ async function fixtureDirectory(parameterised = false, returns?: unknown): Promi
       url: parameterised ? "https://example.com/{page}" : "https://example.com/home",
       ...(parameterised ? { params: { page: "string" } } : {}),
       ...(returns !== undefined ? { returns } : {}),
+      ...(outcomes !== undefined ? { outcomes } : {}),
       effects: { reads: ["example.com"], writes: [], cache: 60 },
       resolve: [{ kind: "dom", fields: { title: { selector: "title" } } }],
     })
@@ -204,6 +211,56 @@ describe("LensClient", () => {
       title: "@example/web/page",
       type: "object",
       required: ["title", "score"],
+    });
+  });
+
+  it("unwraps a value result via value()", async () => {
+    const transport = new FakeTransport();
+    const client = new LensClient(new LensStore(await fixtureDirectory()), transport);
+
+    expect(await client.value({ lens: "web/page" })).toEqual({ ok: true });
+  });
+
+  it("throws a LensOutcomeError carrying the declared hint", async () => {
+    const transport = new FakeTransport();
+    transport.result = {
+      kind: "outcome",
+      name: "needs_auth",
+      value: { $lens: "@example/web/login" },
+      resolver: "dom",
+    };
+    const client = new LensClient(
+      new LensStore(
+        await fixtureDirectory(false, undefined, {
+          needs_auth: { $lens: "@example/web/login", hint: "Sign in, then retry." },
+        })
+      ),
+      transport
+    );
+
+    const thrown = await client.value({ lens: "web/page" }).catch((error) => error);
+    expect(thrown).toBeInstanceOf(LensOutcomeError);
+    expect(thrown).toMatchObject({
+      outcome: "needs_auth",
+      value: { $lens: "@example/web/login" },
+      hint: "Sign in, then retry.",
+      message: 'lens outcome "needs_auth": Sign in, then retry.',
+    });
+  });
+
+  it("throws a LensResultError preserving schema issues", async () => {
+    const transport = new FakeTransport();
+    transport.result = { kind: "value", value: { title: 7, score: 3 }, resolver: "dom" };
+    const client = new LensClient(
+      new LensStore(await fixtureDirectory(false, titledReturns)),
+      transport
+    );
+
+    const thrown = await client.value({ lens: "web/page" }).catch((error) => error);
+    expect(thrown).toBeInstanceOf(LensResultError);
+    expect(thrown).toMatchObject({
+      message: "@example/web/page result failed its schema at /title",
+      issues: [{ path: "/title", message: "Invalid input: expected string, received number" }],
     });
   });
 

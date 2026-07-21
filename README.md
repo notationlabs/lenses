@@ -101,12 +101,24 @@ typed params (defaulted parameters optional), a `value` branch matching the decl
 `returns` shape, and `$lens` fields as nullable `LensRef<"target">` references.
 
 ```ts
-import { createLensClient } from "./lenses.gen.js";
+import { createLensClient, LensOutcomeError } from "./lenses.gen.js";
 
 const client = createLensClient(); // sync; binds the broker on first call
-const top = await client.call({ lens: "hn/top", params: { p: 2 } });
-if (top.kind === "value") top.value.stories[0].title; // string
+
+// Default path: value() returns the typed value, or throws.
+const top = await client.value({ lens: "hn/top", params: { p: 2 } });
+top.stories[0].title; // string
+
+// Branching path: call() returns the full result union.
+const result = await client.call({ lens: "github/notifications" });
+if (result.kind === "outcome") result.name; // e.g. "needs_auth"
 ```
+
+`value()` throws `LensOutcomeError` (`{outcome, value, hint}` — `hint` carries the
+remediation text declared in the lens document's `outcomes`) for outcome results, and
+`LensResultError` (`{message, issues}`) for error results. Both classes are exported
+from `@djgrant/lens-client` and from the generated SDK, so callers can catch and
+branch on `error.outcome`.
 
 Resolved values are validated against the same derived schema. A violation is an
 `error` result naming each failing JSON pointer in `issues` (`{path, message}`).
