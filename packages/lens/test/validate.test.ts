@@ -71,6 +71,30 @@ describe("validateSpec", () => {
     ).toThrow(/returns/);
   });
 
+  it("names the failing path as a JSON pointer with the expected forms", () => {
+    expect(() =>
+      validateSpec({
+        ...validSpec,
+        returns: { type: "object", fields: { stories: { type: "list" } } },
+      })
+    ).toThrow(/at \/returns\/fields\/stories\/type: Invalid option: expected one of/);
+  });
+
+  it("summarises the accepted return forms when no branch gets further", () => {
+    expect(() =>
+      validateSpec({ ...validSpec, returns: 42 })
+    ).toThrow(/at \/returns: must be a primitive type \("string" \| "number"/);
+  });
+
+  it("points at malformed resolver fields", () => {
+    expect(() =>
+      validateSpec({
+        ...validSpec,
+        resolve: [{ kind: "dom", fields: { title: { selector: 42 } } }],
+      })
+    ).toThrow(/at \/resolve\/0\/fields\/title\/selector/);
+  });
+
   it("accepts nullable primitive return fields", () => {
     expect(() =>
       validateSpec({

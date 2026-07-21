@@ -47,6 +47,11 @@ const llmSchema = z.strictObject({
   maxSnapshotChars: z.number().int().positive().optional(),
 });
 
+const RETURNS_HINT =
+  'must be a primitive type ("string" | "number" | "integer" | "boolean" | "null"), ' +
+  'a nullable primitive {"type": ..., "nullable": true}, a lens reference {"$lens": ..., "params"?}, ' +
+  '{"type": "object", "fields"?: {...}}, or {"type": "array", "items"?: <field map>}';
+
 const returnSchema: z.ZodType<unknown> = z.lazy(() =>
   z.union([
     z.enum(["string", "number", "boolean", "integer", "null"]),
@@ -66,7 +71,7 @@ const returnSchema: z.ZodType<unknown> = z.lazy(() =>
       type: z.literal("array"),
       items: z.record(z.string(), returnSchema).optional(),
     }),
-  ])
+  ], { error: RETURNS_HINT })
 );
 
 const lensSpecSchema = z.strictObject({
@@ -99,10 +104,48 @@ const lensSpecSchema = z.strictObject({
   resolve: z.array(z.discriminatedUnion("kind", [interceptSchema, domSchema, llmSchema])).min(1),
 });
 
+function pointerOf(path: PropertyKey[]): string {
+  if (path.length === 0) return "/";
+  return `/${path
+    .map((segment) => String(segment).replace(/~/g, "~0").replace(/\//g, "~1"))
+    .join("/")}`;
+}
+
+interface SpecIssue {
+  path: PropertyKey[];
+  message: string;
+}
+
+/**
+ * A union failure is reported at the union node; when one branch got further
+ * (its issues sit deeper than the union itself), those deeper issues locate
+ * the actual mistake, so surface them instead of the union's summary.
+ */
+function flattenIssues(issues: readonly z.core.$ZodIssue[]): SpecIssue[] {
+  return issues.flatMap((issue) => {
+    if (issue.code === "invalid_union") {
+      const branchIssues = issue.errors.flatMap((branch) =>
+        flattenIssues(branch).map((inner) => ({
+          path: [...issue.path, ...inner.path],
+          message: inner.message,
+        }))
+      );
+      const deepest = Math.max(...branchIssues.map((inner) => inner.path.length), 0);
+      if (deepest > issue.path.length) {
+        return branchIssues.filter((inner) => inner.path.length === deepest);
+      }
+    }
+    return [{ path: [...issue.path], message: issue.message }];
+  });
+}
+
 export function validateSpec(raw: unknown): LensSpec {
   const result = lensSpecSchema.safeParse(raw);
   if (!result.success) {
-    throw new Error(`invalid lens spec:\n${z.prettifyError(result.error)}`);
+    const lines = flattenIssues(result.error.issues).map(
+      (issue) => `  at ${pointerOf(issue.path)}: ${issue.message}`
+    );
+    throw new Error(`invalid lens spec:\n${[...new Set(lines)].join("\n")}`);
   }
   const holes = [...result.data.url.matchAll(/\{([a-zA-Z_][a-zA-Z0-9_]*)\}/g)].map(
     (match) => match[1]

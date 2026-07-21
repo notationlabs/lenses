@@ -116,10 +116,22 @@ export interface InterceptedResponse {
   timestamp: number;
 }
 
+/** One violation of a lens's declared `returns` schema. */
+export interface ValidationIssue {
+  /** JSON pointer into the resolved value, e.g. "/stories/3/score". */
+  path: string;
+  message: string;
+}
+
 export type LensResult =
   | { kind: "value"; value: unknown; resolver: Resolver["kind"] | "reconciled"; partial?: boolean }
   | { kind: "outcome"; name: string; value: unknown; resolver: Resolver["kind"] }
-  | { kind: "error"; message: string };
+  | {
+      kind: "error";
+      message: string;
+      /** present when a resolved value failed its declared `returns` schema */
+      issues?: ValidationIssue[];
+    };
 
 /** IO the engine needs from its host environment (extension SW, or a test). */
 export interface EngineIO {

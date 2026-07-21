@@ -35,7 +35,7 @@ class FakeTransport implements LensTransport {
   async close(): Promise<void> {}
 }
 
-async function fixtureDirectory(parameterised = false): Promise<string> {
+async function fixtureDirectory(parameterised = false, returns?: unknown): Promise<string> {
   const directory = await mkdtemp(join(tmpdir(), "lens-client-"));
   await writeFile(
     join(directory, "example.json"),
@@ -43,12 +43,15 @@ async function fixtureDirectory(parameterised = false): Promise<string> {
       name: "@example/web/page",
       url: parameterised ? "https://example.com/{page}" : "https://example.com/home",
       ...(parameterised ? { params: { page: "string" } } : {}),
+      ...(returns !== undefined ? { returns } : {}),
       effects: { reads: ["example.com"], writes: [], cache: 60 },
       resolve: [{ kind: "dom", fields: { title: { selector: "title" } } }],
     })
   );
   return directory;
 }
+
+const titledReturns = { type: "object", fields: { title: "string", score: "number" } };
 
 describe("LensClient", () => {
   it("lists local lenses without exposing storage details", async () => {
@@ -131,6 +134,77 @@ describe("LensClient", () => {
     await client.call(input);
     await client.call(input);
     expect(transport.calls).toBe(2);
+  });
+
+  it("fails a result schema violation with a structured error by default", async () => {
+    const transport = new FakeTransport();
+    transport.result = { kind: "value", value: { title: 7, score: 3 }, resolver: "dom" };
+    const client = new LensClient(
+      new LensStore(await fixtureDirectory(false, titledReturns)),
+      transport
+    );
+
+    expect(await client.call({ lens: "web/page" })).toEqual({
+      kind: "error",
+      message: "@example/web/page result failed its schema at /title",
+      issues: [{ path: "/title", message: "Invalid input: expected string, received number" }],
+    });
+  });
+
+  it("names a missing required field at its JSON pointer", async () => {
+    const transport = new FakeTransport();
+    transport.result = { kind: "value", value: { title: "Home" }, resolver: "dom" };
+    const client = new LensClient(
+      new LensStore(await fixtureDirectory(false, titledReturns)),
+      transport
+    );
+
+    expect(await client.call({ lens: "web/page" })).toMatchObject({
+      kind: "error",
+      issues: [{ path: "/score", message: "Invalid input: expected number, received undefined" }],
+    });
+  });
+
+  it("demotes result schema violations to warnings when strict is off", async () => {
+    const transport = new FakeTransport();
+    transport.result = { kind: "value", value: { title: "Home" }, resolver: "dom" };
+    const client = new LensClient(
+      new LensStore(await fixtureDirectory(false, titledReturns)),
+      transport
+    );
+
+    expect(await client.call({ lens: "web/page", strict: false })).toMatchObject({
+      kind: "value",
+      value: { title: "Home" },
+      warnings: [{ path: "/score", message: "Invalid input: expected number, received undefined" }],
+    });
+  });
+
+  it("returns conforming values untouched", async () => {
+    const transport = new FakeTransport();
+    transport.result = { kind: "value", value: { title: "Home", score: 3 }, resolver: "dom" };
+    const client = new LensClient(
+      new LensStore(await fixtureDirectory(false, titledReturns)),
+      transport
+    );
+
+    const result = await client.call({ lens: "web/page" });
+    expect(result).toMatchObject({ kind: "value" });
+    expect(result).not.toHaveProperty("warnings");
+  });
+
+  it("derives a JSON Schema from a lens's returns declaration", async () => {
+    const client = new LensClient(
+      new LensStore(await fixtureDirectory(false, titledReturns)),
+      new FakeTransport()
+    );
+
+    expect(await client.schema("web/page")).toMatchObject({
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      title: "@example/web/page",
+      type: "object",
+      required: ["title", "score"],
+    });
   });
 
   it("reports lens resolution and call parameters", async () => {

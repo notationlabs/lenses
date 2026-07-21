@@ -1,5 +1,8 @@
 # Roadmap
 
+- **TypeScript codegen from lens schemas.** `lens schema` now emits standard JSON
+  Schema for a lens's `returns`, so typed bindings can be generated externally;
+  first-party `lens types` output would remove that extra step.
 - **Intercept requests made by service workers.** The intercept tier patches
   `fetch`/XHR in the page world, so requests made by a site's own service worker
   never pass through the patch and are invisible to lenses.

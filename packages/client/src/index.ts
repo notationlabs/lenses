@@ -1,5 +1,13 @@
 import { resolve } from "node:path";
-import { expandUrl, resolveParams, type LensResult, type LensSpec } from "@djgrant/lens";
+import {
+  deriveJsonSchema,
+  expandUrl,
+  resolveParams,
+  validateResult,
+  type LensResult,
+  type LensSpec,
+  type ValidationIssue,
+} from "@djgrant/lens";
 import {
   BrowserBridge,
   type LensLogger,
@@ -21,6 +29,8 @@ export interface LensCall {
   lens: string;
   params?: Record<string, unknown>;
   timeoutMs?: number;
+  /** when false, demote `returns` schema violations from an error result to warnings (default true) */
+  strict?: boolean;
 }
 
 export interface LensObservation {
@@ -39,7 +49,7 @@ export interface LensSummary {
   outcomes: string[];
 }
 
-export type LensCallResult = LensResult & { cached?: boolean };
+export type LensCallResult = LensResult & { cached?: boolean; warnings?: ValidationIssue[] };
 
 interface CacheEntry {
   result: LensResult;
@@ -89,7 +99,7 @@ export class LensClient {
     if (hit && hit.expiresAt <= Date.now()) this.cache.delete(key);
     if (ttl > 0 && hit && hit.expiresAt > Date.now()) {
       this.log(`returning cached result for ${spec.name}`);
-      return { ...hit.result, cached: true };
+      return this.validate(spec, { ...hit.result, cached: true }, input.strict ?? true);
     }
 
     this.log(`calling ${spec.name}; params: ${Object.keys(params).join(", ") || "none"}`);
@@ -97,7 +107,30 @@ export class LensClient {
     if (result.kind === "value" && !result.partial && !result.cached && ttl > 0) {
       this.cache.set(key, { result, expiresAt: Date.now() + ttl });
     }
-    return result;
+    return this.validate(spec, result, input.strict ?? true);
+  }
+
+  /** Validate a value result against the schema derived from `returns`. */
+  private validate(spec: LensSpec, result: LensCallResult, strict: boolean): LensCallResult {
+    if (result.kind !== "value") return result;
+    const issues = validateResult(spec, result.value);
+    if (issues.length === 0) return result;
+    if (strict) {
+      return {
+        kind: "error",
+        message: `${spec.name} result failed its schema at ${issues
+          .map((issue) => issue.path)
+          .join(", ")}`,
+        issues,
+      };
+    }
+    this.log(`${spec.name} result has ${issues.length} schema warning(s)`);
+    return { ...result, warnings: issues };
+  }
+
+  /** Standard JSON Schema (draft 2020-12) for a lens's resolved value. */
+  async schema(lens: string): Promise<Record<string, unknown>> {
+    return deriveJsonSchema(await this.store.resolve(lens));
   }
 
   observe(input: LensObservation): Promise<LensResult> {

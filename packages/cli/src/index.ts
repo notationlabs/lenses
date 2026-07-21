@@ -4,7 +4,8 @@ import { createLensClient } from "@djgrant/lens-client";
 
 const globalHelp = `Usage:
   lens list [--directory <path>] [--port <number>]
-  lens call <lens> [--params <json>] [--timeout-ms <number>]
+  lens call <lens> [--params <json>] [--timeout-ms <number>] [--lax]
+  lens schema <lens>
   lens observe <target> [--wait-ms <number>] [--timeout-ms <number>]
   lens status [--wait-ms <number>]
 
@@ -40,6 +41,10 @@ Options:
   --params <json>         Declared lens parameters as a JSON object. Parameters
                           are available to URL templates and resolver expressions.
   --timeout-ms <number>   Whole browser-call timeout (default: 90000)
+  --lax                   Attach result schema violations to the value result
+                          as warnings instead of failing; by default a value
+                          that violates the lens's declared result schema is
+                          a structured error naming the failing paths
   --directory, -d <path>  Lens directory (default: ./lenses)
   --port, -p <number>     Persistent browser broker port
   --verbose, -v           Write timestamped diagnostics to stderr
@@ -53,6 +58,20 @@ Example:
   lens call claude/usage
 
   lens call hn/item --params '{"id":"42","p":2,"limit":10}'
+`,
+  schema: `Usage: lens schema <lens> [options]
+
+Emit a standard JSON Schema (draft 2020-12) for a lens's resolved value,
+derived from the lens document's "returns" declaration.
+
+Arguments:
+  lens                    Scoped name such as @djgrant/hn/top, shortname such as
+                          hn/top, JSON file path, or HTTP URL to a lens document
+
+Options:
+  --directory, -d <path>  Lens directory (default: ./lenses)
+  --verbose, -v           Write timestamped diagnostics to stderr
+  --help, -h              Show this help
 `,
   observe: `Usage: lens observe <target> [options]
 
@@ -99,6 +118,7 @@ async function main(): Promise<void> {
       directory: { type: "string", short: "d" },
       help: { type: "boolean", short: "h" },
       port: { type: "string", short: "p" },
+      lax: { type: "boolean" },
       "timeout-ms": { type: "string" },
       verbose: { type: "boolean", short: "v" },
       "wait-ms": { type: "string" },
@@ -114,6 +134,7 @@ async function main(): Promise<void> {
   if (!(command in commandHelp)) throw new Error(`unknown command "${command}"`);
 
   if (command === "call" && operands.length < 1) throw new Error("call requires <lens>");
+  if (command === "schema" && operands.length !== 1) throw new Error("schema requires one <lens>");
   if (command === "observe" && operands.length < 1) throw new Error("observe requires <target>");
 
   const port = numberOption(values.port, "port");
@@ -138,9 +159,12 @@ async function main(): Promise<void> {
         if (params !== undefined && (typeof params !== "object" || params === null || Array.isArray(params))) {
           throw new Error("params must be a JSON object");
         }
-        output = await client.call({ lens, params, timeoutMs });
+        output = await client.call({ lens, params, timeoutMs, strict: !values.lax });
         break;
       }
+      case "schema":
+        output = await client.schema(operands[0]);
+        break;
       case "observe": {
         const [target] = operands;
         output = await client.observe({ target, waitMs, timeoutMs });
