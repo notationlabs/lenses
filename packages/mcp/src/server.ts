@@ -33,10 +33,13 @@ export function createLensMcpServer(client: LensClient): McpServer {
   server.registerTool(
     "lens_observe",
     {
-      description: "Load a page and return its captured JSON requests and text snapshot.",
+      description:
+        "Load a page and return its captured JSON requests and text snapshot. " +
+        "Set html to also get the body markup for writing DOM-tier selectors.",
       inputSchema: z.object({
         target: z.string().url(),
         waitMs: z.number().nonnegative().optional(),
+        html: z.boolean().optional(),
       }),
     },
     async (input) => {

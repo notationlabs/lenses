@@ -38,6 +38,8 @@ export interface LensObservation {
   target: string;
   waitMs?: number;
   timeoutMs?: number;
+  /** include the page's body HTML (scripts and styles stripped) for selector authoring */
+  html?: boolean;
 }
 
 export interface LensSummary {
@@ -185,7 +187,7 @@ export class LensClient {
 
   async observe(input: LensObservation): Promise<LensResult> {
     this.log(`observing ${input.target}`);
-    return (await this.transport()).observe(input.target, input.waitMs, input.timeoutMs);
+    return (await this.transport()).observe(input.target, input.waitMs, input.timeoutMs, input.html);
   }
 
   async status() {

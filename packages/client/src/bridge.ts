@@ -17,7 +17,12 @@ export interface LensTransport {
     params: Record<string, unknown>,
     timeoutMs?: number
   ): Promise<LensTransportResult>;
-  observe(target: string, waitMs?: number, timeoutMs?: number): Promise<LensTransportResult>;
+  observe(
+    target: string,
+    waitMs?: number,
+    timeoutMs?: number,
+    html?: boolean
+  ): Promise<LensTransportResult>;
   waitForConnection(timeoutMs: number): Promise<boolean>;
   close(): Promise<void>;
 }
@@ -88,8 +93,13 @@ export class BrowserBridge implements LensTransport {
     );
   }
 
-  observe(target: string, waitMs = 4_000, timeoutMs = 60_000): Promise<LensTransportResult> {
-    return this.request((id) => ({ type: "observe", id, target, waitMs }), timeoutMs);
+  observe(
+    target: string,
+    waitMs = 4_000,
+    timeoutMs = 60_000,
+    html = false
+  ): Promise<LensTransportResult> {
+    return this.request((id) => ({ type: "observe", id, target, waitMs, html }), timeoutMs);
   }
 
   async waitForConnection(timeoutMs: number): Promise<boolean> {

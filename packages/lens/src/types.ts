@@ -157,7 +157,7 @@ export type LensBridgeRequest =
       params: Record<string, unknown>;
       timeoutMs: number;
     }
-  | { type: "observe"; id: string; target: string; waitMs: number };
+  | { type: "observe"; id: string; target: string; waitMs: number; html?: boolean };
 
 export type LensBridgeServerMessage = LensBridgeRequest | { type: "ping" };
 

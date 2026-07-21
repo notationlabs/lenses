@@ -89,7 +89,7 @@ async function onBridgeMessage(socket: WebSocket, raw: string): Promise<void> {
 
   try {
     if (message.type === "observe") {
-      result = await observePage(message.target, message.waitMs, progress);
+      result = await observePage(message.target, message.waitMs, message.html, progress);
     } else {
       result = await callLens(message.spec, message.params, progress);
     }

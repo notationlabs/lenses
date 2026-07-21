@@ -10,7 +10,7 @@ const globalHelp = `Usage:
   lens call <lens> [--params <json>] [--timeout-ms <number>] [--lax]
   lens schema <lens>
   lens gen ts-sdk [<catalog> ...] [--out <file>]
-  lens observe <target> [--wait-ms <number>] [--timeout-ms <number>]
+  lens observe <target> [--wait-ms <number>] [--timeout-ms <number>] [--html]
   lens status [--wait-ms <number>]
 
 Run lens <command> --help for command-specific help.
@@ -106,6 +106,9 @@ Example:
 Load a page and return its text snapshot and captured JSON requests.
 
 Options:
+  --html                  Also return the page's body HTML with scripts, styles,
+                          and comments stripped — the input for writing DOM-tier
+                          selectors
   --wait-ms <number>      Time to collect requests after loading (default: 4000)
   --timeout-ms <number>   Whole observation timeout (default: 60000)
   --catalog, -c <path>    Lens catalog directory (required)
@@ -155,6 +158,7 @@ async function main(): Promise<void> {
       catalog: { type: "string", short: "c" },
       help: { type: "boolean", short: "h" },
       port: { type: "string", short: "p" },
+      html: { type: "boolean" },
       lax: { type: "boolean" },
       out: { type: "string", short: "o" },
       "timeout-ms": { type: "string" },
@@ -224,7 +228,7 @@ async function main(): Promise<void> {
         break;
       case "observe": {
         const [target] = operands;
-        output = await client.observe({ target, waitMs, timeoutMs });
+        output = await client.observe({ target, waitMs, timeoutMs, html: values.html });
         break;
       }
       case "status":

@@ -5,6 +5,7 @@ import { bindObservedTab, bindTab, closeIfCreated, reloadTab, tabMessage } from 
 export async function observePage(
   target: string,
   waitMs: number,
+  html = false,
   progress: (message: string) => void = () => {}
 ) {
   progress(`binding browser tab for ${target}`);
@@ -19,10 +20,10 @@ export async function observePage(
       status: capture.status,
       bodyPreview: capture.body.slice(0, 2000),
     }));
-    const snapshot = await tabMessage<{ url: string; title: string; text: string }>(bound.tabId, {
-      type: "snapshot",
-      maxChars: 6000,
-    });
+    const snapshot = await tabMessage<{ url: string; title: string; text: string; html?: string }>(
+      bound.tabId,
+      { type: "snapshot", maxChars: 6000, html }
+    );
     progress(`collected ${requests.length} captured requests`);
     return { kind: "value" as const, value: { snapshot, requests } };
   } finally {
