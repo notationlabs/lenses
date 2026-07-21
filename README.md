@@ -230,8 +230,40 @@ A lens is a JSON file in a catalog directory (such as `examples/`) or at an HTTP
 - `resolve` — ordered intercept, DOM, and LLM resolver definitions.
 
 An intercept resolver can capture one request or declare named `sources` that join several
-responses. A DOM resolver declares an optional repeating `item` selector and named fields.
-An LLM resolver declares the extraction prompt and optional snapshot limit.
+responses. An LLM resolver declares the extraction prompt and optional snapshot limit.
+
+### DOM resolver
+
+A DOM resolver declares an optional repeating `item` selector and named `fields`. With
+`item`, the tier yields one object per matching element and each field selector is scoped
+to that element; without it, fields are resolved once against the whole document.
+
+```jsonc
+{
+  "kind": "dom",
+  "item": "tr.athing",
+  "fields": {
+    "title": { "selector": ".titleline > a" },
+    "url": { "selector": ".titleline > a", "attr": "href" },
+    "score": { "selector": ".score", "sibling": true }
+  },
+  "post": "[$.{ 'title': title, 'points': $number($substringBefore(score, ' ')) }]"
+}
+```
+
+Each field spec supports:
+
+- `selector` — a CSS selector; the **first** matching element wins. The special
+  selector `":self"` reads the item element itself rather than a descendant.
+- `attr` — read this attribute instead of the element's trimmed `textContent`.
+  `href` and `src` values are resolved to absolute URLs against the page.
+- `sibling: true` — search inside `item.nextElementSibling` instead of the item.
+  This handles split-row layouts: HN's story/subtext table rows, or definition
+  lists, where `"item": "dt"` with a sibling field zips each `dt` with its `dd`.
+
+A field that matches nothing is `null`. A tier that extracts nothing (or an empty
+item list) misses and falls through to the next tier. `detect` sees `{url, title}`,
+and `post` is a JSONata expression applied to the extracted value.
 
 Run `pok lens validate` to validate every document under `examples/`.
 
