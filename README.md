@@ -86,12 +86,28 @@ lens call claude/usage
 lens call hn/item --params '{"id":"42","p":2,"limit":10}' --verbose
 lens observe https://github.com/notifications --wait-ms 4000
 lens schema hn/top
+lens gen ts-sdk -o src/lenses.gen.ts
 lens status --wait-ms 5000
 ```
 
 `lens schema <lens>` emits a standard JSON Schema (draft 2020-12) derived from the lens
 document's `returns` declaration — the input for external codegen or validation. `$lens`
 fields reference the shared `$defs/lensRef` object schema (or null).
+
+`lens gen ts-sdk [<directory> ...]` generates a TypeScript SDK from one or more lens
+directories: a `Lenses` map of params and result types per lens (keyed by scoped
+name and shortname), and `typedLensClient(client)`, which narrows `call()` —
+typed params (defaulted parameters optional), a `value` branch matching the declared
+`returns` shape, and `$lens` fields as nullable `LensRef<"target">` references.
+
+```ts
+import { createLensClient } from "@djgrant/lens-client";
+import { typedLensClient } from "./lenses.gen.js";
+
+const client = typedLensClient(createLensClient()); // sync; binds the broker on first call
+const top = await client.call({ lens: "hn/top", params: { p: 2 } });
+if (top.kind === "value") top.value.stories[0].title; // string
+```
 
 Resolved values are validated against the same derived schema. A violation is an
 `error` result naming each failing JSON pointer in `issues` (`{path, message}`).

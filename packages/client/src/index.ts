@@ -58,12 +58,19 @@ interface CacheEntry {
 
 export class LensClient {
   private readonly cache = new Map<string, CacheEntry>();
+  private transportPromise?: Promise<LensTransport>;
 
   constructor(
     private readonly store: LensStore,
-    private readonly transport: LensTransport,
+    private readonly connect: LensTransport | (() => Promise<LensTransport>),
     private readonly log: LensLogger = () => {}
   ) {}
+
+  /** Bind the broker on first use, so constructing a client has no side effects. */
+  private transport(): Promise<LensTransport> {
+    return (this.transportPromise ??=
+      typeof this.connect === "function" ? this.connect() : Promise.resolve(this.connect));
+  }
 
   async list(): Promise<LensSummary[]> {
     this.log("loading local lens listing");
@@ -103,7 +110,7 @@ export class LensClient {
     }
 
     this.log(`calling ${spec.name}; params: ${Object.keys(params).join(", ") || "none"}`);
-    const result = await this.transport.call(spec, params, input.timeoutMs);
+    const result = await (await this.transport()).call(spec, params, input.timeoutMs);
     if (result.kind === "value" && !result.partial && !result.cached && ttl > 0) {
       this.cache.set(key, { result, expiresAt: Date.now() + ttl });
     }
@@ -133,25 +140,28 @@ export class LensClient {
     return deriveJsonSchema(await this.store.resolve(lens));
   }
 
-  observe(input: LensObservation): Promise<LensResult> {
+  async observe(input: LensObservation): Promise<LensResult> {
     this.log(`observing ${input.target}`);
-    return this.transport.observe(input.target, input.waitMs, input.timeoutMs);
+    return (await this.transport()).observe(input.target, input.waitMs, input.timeoutMs);
   }
 
-  status() {
+  async status() {
+    const transport = await this.transport();
     return {
-      connected: this.transport.connected,
-      broker: this.transport.info,
-      port: this.transport.port,
+      connected: transport.connected,
+      broker: transport.info,
+      port: transport.port,
     };
   }
 
-  waitForConnection(timeoutMs = 5_000): Promise<boolean> {
-    return this.transport.waitForConnection(timeoutMs);
+  async waitForConnection(timeoutMs = 5_000): Promise<boolean> {
+    return (await this.transport()).waitForConnection(timeoutMs);
   }
 
-  close(): Promise<void> {
-    return this.transport.close();
+  async close(): Promise<void> {
+    if (!this.transportPromise) return;
+    const transport = await this.transportPromise.catch(() => null);
+    await transport?.close();
   }
 
   async [Symbol.asyncDispose](): Promise<void> {
@@ -159,7 +169,8 @@ export class LensClient {
   }
 }
 
-export async function createLensClient(options: LensClientOptions = {}): Promise<LensClient> {
+/** Construction is synchronous; the broker is bound lazily on first use. */
+export function createLensClient(options: LensClientOptions = {}): LensClient {
   if (options.transport && options.port !== undefined) {
     throw new Error("broker port cannot be combined with a custom transport");
   }
@@ -167,13 +178,12 @@ export async function createLensClient(options: LensClientOptions = {}): Promise
   const directory = resolve(options.directory ?? "lenses");
   const log = options.log ?? (() => {});
   log(`using lens directory ${directory}`);
-  const store = new LensStore(directory);
-  const loaded = await store.loadLocal();
-  log(`validated ${loaded.length} local lenses`);
-  const transport =
+  return new LensClient(
+    new LensStore(directory),
     options.transport ??
-    (await BrowserBridge.bind(options.port ?? DEFAULT_PORT_START, "127.0.0.1", log));
-  return new LensClient(store, transport, log);
+      (() => BrowserBridge.bind(options.port ?? DEFAULT_PORT_START, "127.0.0.1", log)),
+    log
+  );
 }
 
 function validatePort(port: number): void {
