@@ -53,7 +53,7 @@ import { createLensClient } from "@djgrant/lens-client";
 await using lenses = await createLensClient({
   catalog: [
     "./examples", // file:./examples — a local directory, read live
-    "git:github.com/djgrant/lens-catalog#main", // shallow clone, cached under ~/.cache/lenses
+    "git:github.com/notationlabs/lenses#main/examples", // shallow clone, cached under ~/.cache/lenses
     "https://lenses.example.com/catalog.json", // HTTP index of documents, ETag-cached
   ],
 });
@@ -96,8 +96,8 @@ broker and call diagnostics to stderr without contaminating the JSON output. Eve
 command has focused help, for example `lens call --help`.
 
 ```sh
-lens list --catalog ./examples --catalog git:github.com/djgrant/lens-catalog#main
-lens update -c git:github.com/djgrant/lens-catalog#main
+lens list --catalog ./examples --catalog git:github.com/notationlabs/lenses#main/examples
+lens update -c git:github.com/notationlabs/lenses#main/examples
 lens call hn/top
 lens call claude/usage
 lens call hn/item --params '{"id":"42","p":2,"limit":10}' --verbose
@@ -176,7 +176,7 @@ with the lens catalog and built entry point:
     "lenses": {
       "command": "node",
       "args": ["/absolute/path/to/packages/mcp/dist/index.js"],
-      "env": { "LENS_CATALOG": "/absolute/path/to/examples,git:github.com/djgrant/lens-catalog#main" }
+      "env": { "LENS_CATALOG": "/absolute/path/to/examples,git:github.com/notationlabs/lenses#main/examples" }
     }
   }
 }
