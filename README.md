@@ -90,7 +90,13 @@ lens schema hn/top
 lens gen ts-sdk -o src/lenses.gen.ts
 lens eval '[stories.{ "t": title }]' --input sample.json
 lens status --wait-ms 5000
+lens skill > .claude/skills/lenses/SKILL.md
 ```
+
+`lens skill` prints an agent skill — a SKILL.md document (frontmatter included)
+teaching an agent to call lenses, branch on outcomes, and author new lens documents
+with `observe` and `eval`. It needs no catalog or browser, so it can be piped
+straight into an agent's skills directory.
 
 `lens schema <lens>` emits a standard JSON Schema (draft 2020-12) derived from the lens
 document's `returns` declaration — the input for external codegen or validation. `$lens`
