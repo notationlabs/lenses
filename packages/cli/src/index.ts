@@ -1,25 +1,28 @@
 #!/usr/bin/env node
 import { readFile, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { evaluate, generateTsSdk, type LensSpec } from "@djgrant/lens";
 import { createLensClient, LensStore } from "@djgrant/lens-client";
 import { skillMarkdown } from "./skill.js";
 
 const globalHelp = `Usage:
-  lens list [--catalog <path>] [--port <number>]
+  lens list [--catalog <source>] [--port <number>]
   lens call <lens> [--params <json>] [--timeout-ms <number>] [--lax]
   lens schema <lens>
   lens gen ts-sdk [<catalog> ...] [--out <file>]
   lens eval <expression> [--input <file>] [--params <json>]
   lens observe <target> [--wait-ms <number>] [--timeout-ms <number>] [--html]
   lens status [--wait-ms <number>]
+  lens update [--catalog <source>]
   lens skill
 
 Run lens <command> --help for command-specific help.
 
 Global options:
-  --catalog, -c    Lens catalog directory (required; a directory of lens documents)
+  --catalog, -c    Lens catalog source; repeatable, tried in order (required).
+                   A directory path (./examples or file:./examples), a git
+                   reference (git:github.com/owner/repo#ref/subdir), or an
+                   HTTP catalog index URL (https://…/catalog.json)
   --port, -p       Persistent browser broker port (default: 4319)
   --verbose, -v    Write timestamped diagnostics to stderr
   --help, -h       Show this help
@@ -31,7 +34,7 @@ const commandHelp: Record<string, string> = {
 List validated lenses from the configured catalog.
 
 Options:
-  --catalog, -c <path>    Lens catalog directory (required)
+  --catalog, -c <source>  Lens catalog source; repeatable, tried in order (required)
   --port, -p <number>     Persistent browser broker port
   --verbose, -v           Write timestamped diagnostics to stderr
   --help, -h              Show this help
@@ -52,7 +55,7 @@ Options:
                           as warnings instead of failing; by default a value
                           that violates the lens's declared result schema is
                           a structured error naming the failing paths
-  --catalog, -c <path>    Lens catalog directory (required)
+  --catalog, -c <source>  Lens catalog source; repeatable, tried in order (required)
   --port, -p <number>     Persistent browser broker port
   --verbose, -v           Write timestamped diagnostics to stderr
   --help, -h              Show this help
@@ -76,7 +79,7 @@ Arguments:
                           hn/top, JSON file path, or HTTP URL to a lens document
 
 Options:
-  --catalog, -c <path>    Lens catalog directory (required)
+  --catalog, -c <source>  Lens catalog source; repeatable, tried in order (required)
   --verbose, -v           Write timestamped diagnostics to stderr
   --help, -h              Show this help
 `,
@@ -91,13 +94,13 @@ Targets:
                           given.
 
 Arguments:
-  catalog                 One or more lens catalog directories (defaults to
+  catalog                 One or more lens catalog sources (defaults to
                           --catalog when omitted). Names must be unique across
                           all catalogs.
 
 Options:
   --out, -o <file>        Write generated source to this file
-  --catalog, -c <path>    Lens catalog directory (required)
+  --catalog, -c <source>  Lens catalog source; repeatable, tried in order (required)
   --verbose, -v           Write timestamped diagnostics to stderr
   --help, -h              Show this help
 
@@ -133,7 +136,7 @@ Options:
                           selectors
   --wait-ms <number>      Time to collect requests after loading (default: 4000)
   --timeout-ms <number>   Whole observation timeout (default: 60000)
-  --catalog, -c <path>    Lens catalog directory (required)
+  --catalog, -c <source>  Lens catalog source; repeatable, tried in order (required)
   --port, -p <number>     Persistent browser broker port
   --verbose, -v           Write timestamped diagnostics to stderr
   --help, -h              Show this help
@@ -144,8 +147,19 @@ Report the local broker port and browser-extension connection state.
 
 Options:
   --wait-ms <number>      Wait this long for the extension before reporting
-  --catalog, -c <path>    Lens catalog directory (required)
+  --catalog, -c <source>  Lens catalog source; repeatable, tried in order (required)
   --port, -p <number>     Persistent browser broker port
+  --verbose, -v           Write timestamped diagnostics to stderr
+  --help, -h              Show this help
+`,
+  update: `Usage: lens update [options]
+
+Refresh cached catalog sources — git clones and HTTP indexes — from their
+origins, then report the lens count per source. File sources are read live
+and have nothing to refresh.
+
+Options:
+  --catalog, -c <source>  Lens catalog source; repeatable, tried in order (required)
   --verbose, -v           Write timestamped diagnostics to stderr
   --help, -h              Show this help
 `,
@@ -163,13 +177,11 @@ Options:
 `,
 };
 
-function requireCatalog(catalog: string | undefined): string {
-  if (!catalog) throw new Error("a lens catalog is required; pass --catalog <path>");
-  return catalog;
-}
-
-function requireCatalogs(catalog: string | undefined): string[] {
-  return [requireCatalog(catalog)];
+function requireCatalogs(catalogs: string[] | undefined): string[] {
+  if (!catalogs || catalogs.length === 0) {
+    throw new Error("a lens catalog is required; pass --catalog <source>");
+  }
+  return catalogs;
 }
 
 function numberOption(value: string | undefined, name: string): number | undefined {
@@ -195,7 +207,7 @@ async function main(): Promise<void> {
     allowPositionals: true,
     options: {
       params: { type: "string" },
-      catalog: { type: "string", short: "c" },
+      catalog: { type: "string", short: "c", multiple: true },
       help: { type: "boolean", short: "h" },
       port: { type: "string", short: "p" },
       html: { type: "boolean" },
@@ -249,18 +261,16 @@ async function main(): Promise<void> {
     const [target, ...catalogOperands] = operands;
     if (target !== "ts-sdk") throw new Error('gen requires a target; supported targets: "ts-sdk"');
     const catalogs = catalogOperands.length > 0 ? catalogOperands : requireCatalogs(values.catalog);
-    const specs = new Map<string, LensSpec>();
-    for (const catalog of catalogs) {
-      for (const spec of await new LensStore(resolve(catalog)).loadLocal()) {
-        if (specs.has(spec.name)) {
-          throw new Error(`duplicate lens name "${spec.name}" in ${catalog}`);
-        }
-        specs.set(spec.name, spec);
-      }
-    }
-    const source = generateTsSdk([...specs.values()]);
+    const specs: LensSpec[] = await new LensStore(catalogs).load();
+    const source = generateTsSdk(specs);
     if (values.out) await writeFile(values.out, source, "utf8");
     else process.stdout.write(source);
+    return;
+  }
+
+  if (command === "update") {
+    const updates = await new LensStore(requireCatalogs(values.catalog)).update();
+    process.stdout.write(`${JSON.stringify({ sources: updates }, null, 2)}\n`);
     return;
   }
 
@@ -271,7 +281,7 @@ async function main(): Promise<void> {
   const log = values.verbose
     ? (message: string) => process.stderr.write(`[lens +${Date.now() - startedAt}ms] ${message}\n`)
     : undefined;
-  const client = createLensClient({ catalog: requireCatalog(values.catalog), port, log });
+  const client = createLensClient({ catalog: requireCatalogs(values.catalog), port, log });
 
   try {
     let output: unknown;

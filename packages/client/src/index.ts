@@ -1,4 +1,3 @@
-import { resolve } from "node:path";
 import {
   deriveJsonSchema,
   expandUrl,
@@ -14,13 +13,19 @@ import {
   type LensTransport,
   type LensTransportResult,
 } from "./bridge.js";
-import { LensStore } from "./lens-store.js";
+import { LensStore, type CatalogUpdate } from "./lens-store.js";
+import { parseCatalogSource, type CatalogSource } from "./catalog.js";
 
 const DEFAULT_PORT_START = 4319;
 
 export interface LensClientOptions {
-  /** Path to the lens catalog: a directory of lens documents. Required — never assumed. */
-  catalog: string;
+  /**
+   * One or more lens catalog sources, tried in order. Required — never assumed.
+   * A source is a directory path (`./examples` or `file:./examples`), a git
+   * reference (`git:github.com/owner/repo#ref/subdir`), or an HTTP catalog
+   * index URL (`https://…/catalog.json`).
+   */
+  catalog: string | string[];
   port?: number;
   transport?: LensTransport;
   log?: LensLogger;
@@ -99,8 +104,8 @@ export class LensClient {
   }
 
   async list(): Promise<LensSummary[]> {
-    this.log("loading local lens listing");
-    const specs = await this.store.loadLocal();
+    this.log("loading lens listing");
+    const specs = await this.store.load();
     this.log(`loaded ${specs.length} lenses`);
     return specs.map((spec) => ({
       name: spec.name,
@@ -180,6 +185,11 @@ export class LensClient {
     return { ...result, warnings: issues };
   }
 
+  /** Refresh cached catalog sources (git clones, HTTP indexes) from their origins. */
+  async update(): Promise<CatalogUpdate[]> {
+    return this.store.update();
+  }
+
   /** Standard JSON Schema (draft 2020-12) for a lens's resolved value. */
   async schema(lens: string): Promise<Record<string, unknown>> {
     return deriveJsonSchema(await this.store.resolve(lens));
@@ -220,12 +230,15 @@ export function createLensClient(options: LensClientOptions): LensClient {
     throw new Error("broker port cannot be combined with a custom transport");
   }
   if (options.port !== undefined) validatePort(options.port);
-  if (!options.catalog) throw new Error("a lens catalog directory is required");
-  const catalog = resolve(options.catalog);
+  const catalogs = Array.isArray(options.catalog) ? options.catalog : [options.catalog];
+  if (catalogs.length === 0 || catalogs.some((catalog) => !catalog)) {
+    throw new Error("at least one lens catalog source is required");
+  }
+  const sources = catalogs.map(parseCatalogSource);
   const log = options.log ?? (() => {});
-  log(`using lens catalog ${catalog}`);
+  log(`using lens catalog(s) ${sources.map((source) => source.id).join(", ")}`);
   return new LensClient(
-    new LensStore(catalog),
+    new LensStore(sources),
     options.transport ??
       (() => BrowserBridge.bind(options.port ?? DEFAULT_PORT_START, "127.0.0.1", log)),
     log
@@ -238,5 +251,5 @@ function validatePort(port: number): void {
   }
 }
 
-export { BrowserBridge, LensStore };
-export type { LensLogger, LensTransport, LensTransportResult };
+export { BrowserBridge, LensStore, parseCatalogSource };
+export type { CatalogSource, CatalogUpdate, LensLogger, LensTransport, LensTransportResult };

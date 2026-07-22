@@ -50,13 +50,28 @@ extension connection.
 ```ts
 import { createLensClient } from "@djgrant/lens-client";
 
-await using lenses = await createLensClient({ catalog: "./examples" });
+await using lenses = await createLensClient({
+  catalog: [
+    "./examples", // file:./examples — a local directory, read live
+    "git:github.com/djgrant/lens-catalog#main", // shallow clone, cached under ~/.cache/lenses
+    "https://lenses.example.com/catalog.json", // HTTP index of documents, ETag-cached
+  ],
+});
 
 const available = await lenses.list();
 const result = await lenses.call({
   lens: "claude/usage",
 });
 ```
+
+Catalog sources are tried in order. A source is a directory path (`file:` optional), a
+`git:host/owner/repo[#ref][/subdir]` reference (`git:/abs/path` clones a local
+repository), or the URL of an HTTP catalog index —
+`{ "lenses": ["hn.top.json", …] }` — whose entries are document URLs resolved against it
+(whole documents may also be inlined). Scoped lens names must be unique across all
+sources; a contested shortname resolves to the earliest source. Git clones and HTTP
+indexes load from `~/.cache/lenses` once fetched; `lens update` (or `client.update()`)
+refreshes them from their origins.
 
 The client owns lens discovery, reference resolution, parameter validation, TTL caching, and the
 local broker connection. `call` returns a `value`, a structured `outcome`, or an `error`.
@@ -81,7 +96,8 @@ broker and call diagnostics to stderr without contaminating the JSON output. Eve
 command has focused help, for example `lens call --help`.
 
 ```sh
-lens list --catalog ./examples
+lens list --catalog ./examples --catalog git:github.com/djgrant/lens-catalog#main
+lens update -c git:github.com/djgrant/lens-catalog#main
 lens call hn/top
 lens call claude/usage
 lens call hn/item --params '{"id":"42","p":2,"limit":10}' --verbose
@@ -160,7 +176,7 @@ with the lens catalog and built entry point:
     "lenses": {
       "command": "node",
       "args": ["/absolute/path/to/packages/mcp/dist/index.js"],
-      "env": { "LENS_CATALOG": "/absolute/path/to/examples" }
+      "env": { "LENS_CATALOG": "/absolute/path/to/examples,git:github.com/djgrant/lens-catalog#main" }
     }
   }
 }
@@ -200,7 +216,8 @@ state, and browser operations. The service worker only assembles those modules.
 
 ## Lens spec reference
 
-A lens is a JSON file in a catalog directory (such as `examples/`) or at an HTTP URL.
+A lens is a JSON file in a catalog source — a local directory such as `examples/`, a git
+repository, or an HTTP catalog index — or at a direct HTTP URL.
 
 - `name` — globally scoped name such as `@djgrant/hn/item`. The local catalog also
   resolves the shortname `hn/item`.
