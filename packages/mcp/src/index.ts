@@ -5,8 +5,13 @@ import { createLensMcpServer } from "./server.js";
 
 async function main(): Promise<void> {
   const port = brokerPort(process.env.LENS_BROKER_PORT);
-  const catalog = process.env.LENS_CATALOG;
-  if (!catalog) throw new Error("LENS_CATALOG must point to a lens catalog directory");
+  const catalog = (process.env.LENS_CATALOG ?? "")
+    .split(",")
+    .map((source) => source.trim())
+    .filter(Boolean);
+  if (catalog.length === 0) {
+    throw new Error("LENS_CATALOG must name one or more comma-separated lens catalog sources");
+  }
   const client = createLensClient({ catalog, port });
   const server = createLensMcpServer(client);
   const transport = new StdioServerTransport();
