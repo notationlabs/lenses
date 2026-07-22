@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { evaluate, generateTsSdk, type LensSpec } from "@djgrant/lens";
 import { createLensClient, LensStore } from "@djgrant/lens-client";
+import { skillMarkdown } from "./skill.js";
 
 const globalHelp = `Usage:
   lens list [--catalog <path>] [--port <number>]
@@ -13,6 +14,7 @@ const globalHelp = `Usage:
   lens eval <expression> [--input <file>] [--params <json>]
   lens observe <target> [--wait-ms <number>] [--timeout-ms <number>] [--html]
   lens status [--wait-ms <number>]
+  lens skill
 
 Run lens <command> --help for command-specific help.
 
@@ -147,6 +149,18 @@ Options:
   --verbose, -v           Write timestamped diagnostics to stderr
   --help, -h              Show this help
 `,
+  skill: `Usage: lens skill
+
+Print an agent skill (SKILL.md with frontmatter) that teaches an agent how to
+call lenses, handle outcomes, and author new lens documents with observe and
+eval. No catalog or browser needed.
+
+Example:
+  mkdir -p .claude/skills/lenses && lens skill > .claude/skills/lenses/SKILL.md
+
+Options:
+  --help, -h              Show this help
+`,
 };
 
 function requireCatalog(catalog: string | undefined): string {
@@ -205,6 +219,11 @@ async function main(): Promise<void> {
   if (command === "call" && operands.length < 1) throw new Error("call requires <lens>");
   if (command === "schema" && operands.length !== 1) throw new Error("schema requires one <lens>");
   if (command === "observe" && operands.length < 1) throw new Error("observe requires <target>");
+
+  if (command === "skill") {
+    process.stdout.write(skillMarkdown);
+    return;
+  }
 
   if (command === "eval") {
     if (operands.length !== 1) throw new Error("eval requires one <expression>");
