@@ -134,4 +134,11 @@ A call result is one of:
 access. Declared params are available as variables (`$id`) in URL templates
 and every expression.
 
+## Other commands
+
+```sh
+lens schema hn/top                    # JSON Schema (draft 2020-12) for the result
+lens gen ts-sdk -o src/lenses.gen.ts  # typed TypeScript SDK for a catalog
+```
+
 Run `lens <command> --help` for full options.
