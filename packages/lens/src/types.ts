@@ -106,7 +106,7 @@ export interface LlmResolver {
   maxSnapshotChars?: number;
 }
 
-/** A response captured by the main-world fetch/XHR patch. */
+/** A JSON response captured from the bound page's network activity. */
 export interface InterceptedResponse {
   url: string;
   method: string;
@@ -135,13 +135,13 @@ export type LensResult =
       issues?: ValidationIssue[];
     };
 
-/** IO the engine needs from its host environment (extension SW, or a test). */
+/** IO the engine needs from its host environment (CDP host, or a test). */
 export interface EngineIO {
   /** recently captured responses for the bound tab, newest last */
   getIntercepted(): Promise<InterceptedResponse[]>;
   /** reload the bound tab (used by reloadOnMiss); resolves when load committed */
   reload?(): Promise<void>;
-  /** run a DOM extraction spec in the bound tab's content script */
+  /** run a DOM extraction spec in the bound page */
   domExtract(spec: DomResolver): Promise<{ url: string; title: string; value: unknown }>;
   /** plain-text snapshot of the page for the LLM tier */
   snapshot(maxChars: number): Promise<{ url: string; title: string; text: string }>;
@@ -150,7 +150,7 @@ export interface EngineIO {
   log?(message: string): void;
 }
 
-/** Messages exchanged between a Lens client and the browser extension. */
+/** Requests a Lens client sends to the local broker. */
 export type LensBridgeRequest =
   | {
       type: "call";
@@ -160,11 +160,3 @@ export type LensBridgeRequest =
       timeoutMs: number;
     }
   | { type: "observe"; id: string; target: string; waitMs: number; html?: boolean };
-
-export type LensBridgeServerMessage = LensBridgeRequest | { type: "ping" };
-
-export type LensBridgeExtensionMessage =
-  | { type: "result"; id: string; result: LensResult }
-  | { type: "progress"; id: string; message: string }
-  | { type: "hello"; ua?: string }
-  | { type: "pong" };

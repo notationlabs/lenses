@@ -1,0 +1,279 @@
+/**
+ * CDP-backed lens host: drives the user's running default-profile Chrome via
+ * the Chrome 144+ consent-gated remote debugging endpoint (enabled at
+ * chrome://inspect/#remote-debugging).
+ *
+ * Implements the EngineIO contract, so the engine and resolvers in
+ * @djgrant/lens run unchanged against any host.
+ */
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import puppeteer, { type Browser, type Page } from "puppeteer-core";
+import {
+  executeLens,
+  expandUrl,
+  pageDomExtract,
+  pageSnapshot,
+  type DomResolver,
+  type EngineIO,
+  type InterceptedResponse,
+  type LensBridgeRequest,
+  type LensResult,
+  type LensSpec,
+} from "@djgrant/lens";
+
+const MAX_CAPTURES = 200;
+const MAX_BODY_BYTES = 512 * 1024;
+const LOAD_GRACE_MS = 500;
+const DEFAULT_LOAD_TIMEOUT_MS = 30_000;
+const CONNECT_WINDOW_MS = 45_000;
+const CONNECT_RETRY_MS = 2_000;
+
+/** Where Chrome stable writes DevToolsActivePort when remote debugging is on. */
+function defaultUserDataDir(): string {
+  switch (process.platform) {
+    case "darwin":
+      return join(homedir(), "Library", "Application Support", "Google", "Chrome");
+    case "win32":
+      return join(process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local"), "Google", "Chrome", "User Data");
+    default:
+      return join(process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config"), "google-chrome");
+  }
+}
+
+interface BoundPage {
+  page: Page;
+  created: boolean;
+  navigated: boolean;
+}
+
+export interface CdpHost {
+  /** true when the running Chrome exposes a remote debugging endpoint */
+  available(): boolean;
+  info(): string;
+  handle(
+    message: LensBridgeRequest,
+    emit: (frame: { type: "result"; id: string; result: LensResult } | { type: "progress"; id: string; message: string }) => void
+  ): Promise<void>;
+}
+
+export function createCdpHost(log: (message: string) => void = () => {}): CdpHost {
+  let browser: Browser | undefined;
+  let browserVersion = "";
+  const captures = new WeakMap<Page, InterceptedResponse[]>();
+
+  const available = () => existsSync(join(defaultUserDataDir(), "DevToolsActivePort"));
+
+  async function ensureBrowser(progress: (message: string) => void): Promise<Browser> {
+    if (browser?.connected) return browser;
+    progress("connecting to Chrome (a permission dialog may appear — click Allow)");
+    // Chrome holds or rejects the socket until the user answers the consent
+    // dialog, so keep retrying while they decide.
+    const deadline = Date.now() + CONNECT_WINDOW_MS;
+    let connected: Browser | undefined;
+    for (;;) {
+      try {
+        // channel resolves the default user data dir and reads DevToolsActivePort.
+        // defaultViewport: null — don't emulate a fixed viewport in the
+        // user's real browser windows; use each window's actual size.
+        connected = await puppeteer.connect({ channel: "chrome", defaultViewport: null });
+        break;
+      } catch (error) {
+        if (Date.now() >= deadline) {
+          const reason = error instanceof Error ? error.message : String(error);
+          throw new Error(
+            `could not connect to Chrome (${reason}); approve the permission dialog in Chrome, ` +
+              "or re-enable remote debugging at chrome://inspect/#remote-debugging"
+          );
+        }
+        await new Promise((resolve) => setTimeout(resolve, CONNECT_RETRY_MS));
+      }
+    }
+    browser = connected;
+    browserVersion = await connected.version();
+    connected.on("disconnected", () => {
+      if (browser === connected) browser = undefined;
+    });
+    log(`cdp connected: ${browserVersion}`);
+    return connected;
+  }
+
+  function buffer(page: Page): InterceptedResponse[] {
+    let buf = captures.get(page);
+    if (!buf) {
+      buf = [];
+      captures.set(page, buf);
+      page.on("response", (res) => {
+        void (async () => {
+          const ct = res.headers()["content-type"] ?? "";
+          if (!/json|text|^$/.test(ct)) return;
+          try {
+            const body = await res.text();
+            const trimmed = body.trimStart();
+            const looksJson = ct.includes("json") || trimmed.startsWith("{") || trimmed.startsWith("[");
+            if (!looksJson || body.length > MAX_BODY_BYTES) return;
+            const store = captures.get(page);
+            if (!store) return;
+            store.push({
+              url: res.url(),
+              method: res.request().method(),
+              status: res.status(),
+              body,
+              timestamp: Date.now(),
+            });
+            if (store.length > MAX_CAPTURES) store.splice(0, store.length - MAX_CAPTURES);
+          } catch {
+            // Body evicted (e.g. by a navigation) before we read it.
+          }
+        })();
+      });
+    }
+    return buf;
+  }
+
+  const resetCaptures = (page: Page) => void (buffer(page).length = 0);
+
+  async function settle(action: Promise<unknown>): Promise<void> {
+    await action;
+    // Grace period after "load" so late DOM writes land before extraction.
+    await new Promise((resolve) => setTimeout(resolve, LOAD_GRACE_MS));
+  }
+
+  async function reloadPage(page: Page, loadTimeoutMs?: number): Promise<void> {
+    resetCaptures(page);
+    await settle(page.reload({ waitUntil: "load", timeout: loadTimeoutMs ?? DEFAULT_LOAD_TIMEOUT_MS }));
+  }
+
+  async function bindPage(b: Browser, spec: LensSpec, target: string): Promise<BoundPage> {
+    const existing = await findPage(b, target);
+    if (existing) {
+      buffer(existing);
+      // Intercept resolvers read capture buffers that only fill during a
+      // navigation, so a reused page must be reloaded with fresh captures.
+      if (spec.resolve.some((resolver) => resolver.kind === "intercept")) {
+        await reloadPage(existing, spec.loadTimeoutMs);
+        return { page: existing, created: false, navigated: true };
+      }
+      return { page: existing, created: false, navigated: false };
+    }
+    const page = await b.newPage();
+    buffer(page);
+    await settle(page.goto(target, { waitUntil: "load", timeout: spec.loadTimeoutMs ?? DEFAULT_LOAD_TIMEOUT_MS }));
+    return { page, created: true, navigated: true };
+  }
+
+  async function bindObservedPage(b: Browser, target: string): Promise<BoundPage> {
+    const existing = await findPage(b, target);
+    if (existing) {
+      buffer(existing);
+      await reloadPage(existing);
+      return { page: existing, created: false, navigated: true };
+    }
+    const page = await b.newPage();
+    buffer(page);
+    await settle(page.goto(target, { waitUntil: "load", timeout: DEFAULT_LOAD_TIMEOUT_MS }));
+    return { page, created: true, navigated: true };
+  }
+
+  async function closeIfCreated(bound: BoundPage, result: { kind: string; name?: string }): Promise<void> {
+    if (!bound.created) return;
+    // Keep pages open when the caller must act in them (e.g. a login flow).
+    if (result.kind === "outcome" && result.name?.startsWith("needs_")) return;
+    try {
+      await bound.page.close();
+    } catch {
+      // The user may close the page while its call is still running.
+    }
+  }
+
+  async function callLens(
+    spec: LensSpec,
+    params: Record<string, unknown>,
+    progress: (message: string) => void
+  ): Promise<LensResult> {
+    const b = await ensureBrowser(progress);
+    const target = expandUrl(spec.url, params);
+    progress(`binding browser page for ${target}`);
+    const bound = await bindPage(b, spec, target);
+    progress(`bound page${bound.created ? " (created)" : " (existing)"}`);
+    let navigationIsFresh = bound.navigated;
+    const io: EngineIO = {
+      getIntercepted: async () => [...buffer(bound.page)],
+      reload: async () => {
+        if (navigationIsFresh) {
+          navigationIsFresh = false;
+          progress("using the page's fresh navigation for intercept capture");
+          return;
+        }
+        await reloadPage(bound.page, spec.loadTimeoutMs);
+      },
+      domExtract: (resolver: DomResolver) =>
+        bound.page.evaluate(pageDomExtract, { item: resolver.item, fields: resolver.fields }),
+      snapshot: (maxChars: number) => bound.page.evaluate(pageSnapshot, { maxChars }),
+      sleep: (ms: number) => new Promise((resolve) => setTimeout(resolve, ms)),
+      log: progress,
+    };
+
+    let result: LensResult | undefined;
+    try {
+      result = await executeLens(spec, params, io);
+      return result;
+    } finally {
+      await closeIfCreated(bound, result ?? { kind: "error" });
+    }
+  }
+
+  async function observePage(target: string, waitMs: number, html: boolean, progress: (message: string) => void) {
+    const b = await ensureBrowser(progress);
+    progress(`binding browser page for ${target}`);
+    const bound = await bindObservedPage(b, target);
+    try {
+      progress(`collecting page activity for ${waitMs}ms`);
+      await new Promise((resolve) => setTimeout(resolve, waitMs));
+      const requests = buffer(bound.page)
+        .slice(-40)
+        .map((capture) => ({
+          method: capture.method,
+          url: capture.url,
+          status: capture.status,
+          bodyPreview: capture.body.slice(0, 2000),
+        }));
+      const snapshot = await bound.page.evaluate(pageSnapshot, { maxChars: 6000, html });
+      progress(`collected ${requests.length} captured requests`);
+      return { kind: "value" as const, value: { snapshot, requests } };
+    } finally {
+      await closeIfCreated(bound, { kind: "value" });
+    }
+  }
+
+  return {
+    available,
+    info: () => `cdp ${browserVersion || "(not yet connected)"}`,
+    async handle(message, emit) {
+      const progress = (text: string) => emit({ type: "progress", id: message.id, message: text });
+      try {
+        const result =
+          message.type === "call"
+            ? await callLens(message.spec, message.params, progress)
+            : await observePage(message.target, message.waitMs, message.html ?? false, progress);
+        emit({ type: "result", id: message.id, result: result as LensResult });
+      } catch (error) {
+        emit({
+          type: "result",
+          id: message.id,
+          result: { kind: "error", message: error instanceof Error ? error.message : String(error) },
+        });
+      }
+    },
+  };
+}
+
+async function findPage(b: Browser, target: string): Promise<Page | undefined> {
+  const pages = await b.pages();
+  return pages.find((page) => sameTarget(page.url(), target));
+}
+
+function sameTarget(left: string, right: string): boolean {
+  return left.replace(/\/$/, "") === right.replace(/\/$/, "");
+}

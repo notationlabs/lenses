@@ -33,8 +33,8 @@ type BrokerMessage =
   | { type: "progress"; id: string; message: string };
 
 export class BrowserBridge implements LensTransport {
-  private extensionConnected = false;
-  private extensionInfo = "";
+  private browserConnected = false;
+  private browserInfo = "";
   private readonly pending = new Map<
     string,
     { resolve: (result: LensResult) => void; timer: NodeJS.Timeout }
@@ -49,11 +49,11 @@ export class BrowserBridge implements LensTransport {
     private readonly log: LensLogger,
     status: Extract<BrokerMessage, { type: "status" }>
   ) {
-    this.extensionConnected = status.connected;
-    this.extensionInfo = status.ua ?? "";
+    this.browserConnected = status.connected;
+    this.browserInfo = status.ua ?? "";
     socket.on("message", (data) => this.onMessage(data.toString()));
     socket.on("close", () => {
-      this.extensionConnected = false;
+      this.browserConnected = false;
       this.resolvePending({ kind: "error", message: "lens broker disconnected" });
     });
   }
@@ -67,18 +67,18 @@ export class BrowserBridge implements LensTransport {
     const connection = (await connectBroker(port, 150)) ?? (await startBroker(port, log));
     log(`connected to lens broker on ws://${host}:${port}`);
     if (connection.status.connected) {
-      log(`browser extension connected through broker port ${port}`);
+      log(`browser connected through broker port ${port}`);
     }
     return new BrowserBridge(connection.socket, port, log, connection.status);
   }
 
   get connected(): boolean {
-    return this.extensionConnected;
+    return this.browserConnected;
   }
 
   get info(): string {
     return this.connected
-      ? `connected${this.extensionInfo ? ` (${this.extensionInfo})` : ""}`
+      ? `connected${this.browserInfo ? ` (${this.browserInfo})` : ""}`
       : "not connected";
   }
 
@@ -134,8 +134,8 @@ export class BrowserBridge implements LensTransport {
     timeoutMs: number
   ): Promise<LensTransportResult> {
     if (!this.connected) {
-      this.log("browser extension is not connected");
-      return { kind: "error", message: "browser extension is not connected" };
+      this.log("browser is not connected (enable chrome://inspect/#remote-debugging in Chrome)");
+      return { kind: "error", message: "browser is not connected (enable chrome://inspect/#remote-debugging in Chrome)" };
     }
     const id = `call_${++this.sequence}`;
     const message = make(id);
@@ -169,16 +169,16 @@ export class BrowserBridge implements LensTransport {
       return;
     }
     if (message.type === "status") {
-      const wasConnected = this.extensionConnected;
-      this.extensionConnected = message.connected;
-      this.extensionInfo = message.ua ?? "";
+      const wasConnected = this.browserConnected;
+      this.browserConnected = message.connected;
+      this.browserInfo = message.ua ?? "";
       if (message.connected && !wasConnected) {
-        this.log(`browser extension connected through broker port ${this.port}`);
+        this.log(`browser connected through broker port ${this.port}`);
         for (const resolve of this.connectionWaiters) resolve();
         this.connectionWaiters.clear();
       } else if (!message.connected && wasConnected) {
-        this.log("browser extension disconnected from lens broker");
-        this.resolvePending({ kind: "error", message: "browser extension disconnected" });
+        this.log("browser disconnected from lens broker");
+        this.resolvePending({ kind: "error", message: "browser disconnected" });
       }
       return;
     }
