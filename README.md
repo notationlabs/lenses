@@ -36,12 +36,11 @@ pnpm install
 pnpm build
 ```
 
-Load the browser extension by opening `chrome://extensions`, enabling **Developer
-mode**, choosing **Load unpacked**, and selecting `extensions/chrome/dist`.
-
-The extension connects to the persistent local broker on port 4319. The first client
-starts the broker automatically; CLI, MCP, and library clients then share the same
-extension connection.
+Enable remote debugging in Chrome (144+) at `chrome://inspect/#remote-debugging`.
+Calls run through a persistent local broker on port 4319, which holds one CDP
+connection to your running Chrome; the first client starts the broker automatically,
+and CLI, MCP, and library clients then share that connection. Chrome asks for
+permission (an **Allow** dialog) once per broker lifetime.
 
 ## TypeScript client
 
@@ -155,8 +154,9 @@ parameter set.
 
 Each command connects to the persistent broker and disconnects when it finishes. The
 broker stays connected to Chrome between commands and shares successful cached results
-for each lens's declared TTL. Calls fail immediately when the browser extension is not
-connected. Use `lens status --wait-ms <number>` when a script should wait for it.
+for each lens's declared TTL. Calls fail immediately when Chrome's remote-debugging
+endpoint is unavailable. Use `lens status --wait-ms <number>` when a script should wait
+for it.
 
 For repository development, Bun resolves the workspace packages directly to their
 TypeScript source, so the CLI does not need a build first:
@@ -206,13 +206,14 @@ expression can be iterated on offline before it goes into a lens document.
 
 ```text
 application ─┐
-lens CLI ────┼─► @djgrant/lens-client ── WebSocket ──► Chrome extension
-lens MCP ────┘           │                                    │
-                         └──── @djgrant/lens resolver engine ◄─┘
+lens CLI ────┼─► @djgrant/lens-client ── WebSocket ──► broker ── CDP ──► Chrome
+lens MCP ────┘                                           │
+                                       @djgrant/lens resolver engine
 ```
 
-The extension background code separates transport, tab lifecycle, intercepted response
-state, and browser operations. The service worker only assembles those modules.
+The broker hosts the resolver engine in-process: a CDP host (puppeteer-core) supplies
+page lifecycle, network capture, and in-page extraction behind the `EngineIO`
+interface.
 
 ## Lens spec reference
 
@@ -301,7 +302,6 @@ Run `pok lens validate` to validate every document under `examples/`.
 | `packages/client` | `@djgrant/lens-client` | Lens orchestration and persistent browser broker |
 | `packages/cli` | `@djgrant/lens-cli` | JSON command-line adapter |
 | `packages/mcp` | `@djgrant/lens-mcp` | stdio MCP adapter |
-| `extensions/chrome` | private | Browser interception and extraction |
 | `examples` | — | Example lens catalog |
 
 Planned work lives in [ROADMAP.md](./ROADMAP.md).

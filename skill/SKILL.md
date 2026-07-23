@@ -6,8 +6,8 @@ description: Read live web pages as typed function calls through the lens CLI. U
 # Lenses
 
 A lens turns a webpage into a typed function. Calls run through the user's own
-browser via a Chrome extension, so signed-in sessions work without exporting
-cookies. Lenses observe what a page already does — they cannot click, type,
+browser over Chrome's remote-debugging protocol, so signed-in sessions work
+without exporting cookies. Lenses observe what a page already does — they cannot click, type,
 navigate sequences, or fire requests.
 
 Every command prints JSON to stdout and exits non-zero on errors. Pass a catalog
@@ -16,14 +16,18 @@ directory with `--catalog <path>` (or ask the user where their lens catalog is).
 ## Calling a lens
 
 ```sh
-lens status --wait-ms 5000        # check the browser extension is connected
+lens status --wait-ms 5000        # check the browser is reachable
 lens list --catalog ./examples    # discover lenses, their params and outcomes
 lens call hn/item --params '{"id":"42"}' --catalog ./examples
 ```
 
-If `status` reports no extension, Chrome is probably not running. Launch it —
-on macOS `open -na "Google Chrome" --args --profile-directory=Default`, or the
-equivalent on other operating systems — then retry `status`.
+If `status` reports the browser is unreachable, Chrome is probably not running,
+or remote debugging is off. Launch Chrome — on macOS
+`open -na "Google Chrome" --args --profile-directory=Default`, or the equivalent
+on other operating systems — and ask the user to enable
+`chrome://inspect/#remote-debugging` if it still fails, then retry `status`.
+The first call may show a permission dialog in Chrome; the user must click
+Allow.
 
 A call result is one of:
 

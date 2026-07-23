@@ -152,11 +152,11 @@ Example:
 `,
   status: `Usage: lens status [options]
 
-Report the local broker port and browser-extension connection state.
+Report the local broker port and browser connection state.
 No catalog needed.
 
 Options:
-  --wait-ms <number>      Wait this long for the extension before reporting
+  --wait-ms <number>      Wait this long for the browser before reporting
   --port, -p <number>     Persistent browser broker port
   --verbose, -v           Write timestamped diagnostics to stderr
   --help, -h              Show this help

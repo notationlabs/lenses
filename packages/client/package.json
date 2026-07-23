@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@djgrant/lens": "workspace:*",
+    "puppeteer-core": "^25.3.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {
