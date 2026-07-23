@@ -134,11 +134,16 @@ A call result is one of:
 access. Declared params are available as variables (`$id`) in URL templates
 and every expression.
 
-## Other commands
+## Result types
 
-```sh
-lens schema hn/top                    # JSON Schema (draft 2020-12) for the result
-lens gen ts-sdk -o src/lenses.gen.ts  # typed TypeScript SDK for a catalog
-```
+Run `lens schema <lens>` to get a JSON Schema (draft 2020-12) of a lens's
+result. Use it to validate stored results, wire a lens into schema-driven
+tooling, or check the exact result shape without making a call.
+
+## Generated SDK
+
+Run `lens gen ts-sdk -o src/lenses.gen.ts` to generate a typed TypeScript
+client for the catalog. Use it to call lenses from application code with
+typed params and results. Re-run after editing a lens.
 
 Run `lens <command> --help` for full options.
