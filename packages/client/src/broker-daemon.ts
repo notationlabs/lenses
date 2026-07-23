@@ -8,6 +8,7 @@
 import { WebSocket, WebSocketServer } from "ws";
 import type { LensBridgeRequest } from "@djgrant/lens";
 import { createCdpHost } from "./cdp-host.js";
+import { SerialTaskQueue } from "./serial-task-queue.js";
 
 const port = Number(process.argv[2]);
 if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
@@ -23,10 +24,15 @@ const server = new WebSocketServer({ port, host: "127.0.0.1" });
 const clients = new Set<WebSocket>();
 const cache = new Map<string, { result: unknown; expiresAt: number }>();
 const cdp = createCdpHost();
+const requestQueue = new SerialTaskQueue();
+
+cdp.onStatusChange(broadcastStatus);
+cdp.start();
 
 server.on("connection", (socket) => {
   socket.once("message", (data) => identify(socket, data.toString()));
 });
+server.on("close", () => cdp.stop());
 
 function identify(socket: WebSocket, raw: string): void {
   const message = parse(raw);
@@ -40,6 +46,13 @@ function identify(socket: WebSocket, raw: string): void {
 function onClientMessage(client: WebSocket, raw: string): void {
   const message = parse(raw) as LensBridgeRequest | undefined;
   if (!message || (message.type !== "call" && message.type !== "observe")) return;
+  void requestQueue
+    .run(() => handleClientMessage(client, message))
+    .catch((error) => console.error("broker request failed:", error));
+}
+
+async function handleClientMessage(client: WebSocket, message: LensBridgeRequest): Promise<void> {
+  if (client.readyState !== WebSocket.OPEN) return;
   const cacheTtlMs = message.type === "call" ? (message.spec.effects.cache ?? 0) * 1000 : 0;
   const cacheKey =
     message.type === "call"
@@ -55,7 +68,7 @@ function onClientMessage(client: WebSocket, raw: string): void {
     return;
   }
   if (cached && cached.expiresAt <= Date.now()) cache.delete(cacheKey!);
-  void cdp.handle(message, (frame) => {
+  await cdp.handle(message, (frame) => {
     if (
       frame.type === "result" &&
       frame.result.kind === "value" &&
@@ -75,6 +88,10 @@ function sendStatus(socket: WebSocket): void {
     connected: cdp.available(),
     ua: cdp.available() ? cdp.info() : undefined,
   });
+}
+
+function broadcastStatus(): void {
+  for (const client of clients) sendStatus(client);
 }
 
 function send(socket: WebSocket, value: unknown): void {

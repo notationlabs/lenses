@@ -133,10 +133,6 @@ export class BrowserBridge implements LensTransport {
     make: (id: string) => LensBridgeRequest,
     timeoutMs: number
   ): Promise<LensTransportResult> {
-    if (!this.connected) {
-      this.log("browser is not connected (enable chrome://inspect/#remote-debugging in Chrome)");
-      return { kind: "error", message: "browser is not connected (enable chrome://inspect/#remote-debugging in Chrome)" };
-    }
     const id = `call_${++this.sequence}`;
     const message = make(id);
     const startedAt = Date.now();

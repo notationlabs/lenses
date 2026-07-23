@@ -29,6 +29,7 @@ const LOAD_GRACE_MS = 500;
 const DEFAULT_LOAD_TIMEOUT_MS = 30_000;
 const CONNECT_WINDOW_MS = 45_000;
 const CONNECT_RETRY_MS = 2_000;
+const ENDPOINT_POLL_MS = 500;
 
 /** Where Chrome stable writes DevToolsActivePort when remote debugging is on. */
 function defaultUserDataDir(): string {
@@ -49,9 +50,12 @@ interface BoundPage {
 }
 
 export interface CdpHost {
-  /** true when the running Chrome exposes a remote debugging endpoint */
+  /** true when the broker has a live CDP connection to Chrome */
   available(): boolean;
   info(): string;
+  start(): void;
+  stop(): void;
+  onStatusChange(listener: () => void): () => void;
   handle(
     message: LensBridgeRequest,
     emit: (frame: { type: "result"; id: string; result: LensResult } | { type: "progress"; id: string; message: string }) => void
@@ -61,12 +65,35 @@ export interface CdpHost {
 export function createCdpHost(log: (message: string) => void = () => {}): CdpHost {
   let browser: Browser | undefined;
   let browserVersion = "";
+  let connecting: Promise<Browser> | undefined;
+  let endpointPresent = false;
+  let endpointPoll: ReturnType<typeof setInterval> | undefined;
   const captures = new WeakMap<Page, InterceptedResponse[]>();
+  const statusListeners = new Set<() => void>();
 
-  const available = () => existsSync(join(defaultUserDataDir(), "DevToolsActivePort"));
+  const endpointAvailable = () => existsSync(join(defaultUserDataDir(), "DevToolsActivePort"));
+  const available = () => browser?.connected === true;
+  const notifyStatusChange = () => {
+    for (const listener of statusListeners) listener();
+  };
 
   async function ensureBrowser(progress: (message: string) => void): Promise<Browser> {
     if (browser?.connected) return browser;
+    if (connecting) return connecting;
+    if (!endpointAvailable()) {
+      throw new Error(
+        "browser is not connected (enable chrome://inspect/#remote-debugging in Chrome)"
+      );
+    }
+    connecting = connectBrowser(progress);
+    try {
+      return await connecting;
+    } finally {
+      connecting = undefined;
+    }
+  }
+
+  async function connectBrowser(progress: (message: string) => void): Promise<Browser> {
     progress("connecting to Chrome (a permission dialog may appear — click Allow)");
     // Chrome holds or rejects the socket until the user answers the consent
     // dialog, so keep retrying while they decide.
@@ -90,13 +117,32 @@ export function createCdpHost(log: (message: string) => void = () => {}): CdpHos
         await new Promise((resolve) => setTimeout(resolve, CONNECT_RETRY_MS));
       }
     }
+    const version = await connected.version();
     browser = connected;
-    browserVersion = await connected.version();
+    browserVersion = version;
     connected.on("disconnected", () => {
-      if (browser === connected) browser = undefined;
+      if (browser !== connected) return;
+      browser = undefined;
+      browserVersion = "";
+      endpointPresent = false;
+      notifyStatusChange();
     });
     log(`cdp connected: ${browserVersion}`);
+    notifyStatusChange();
     return connected;
+  }
+
+  function pollEndpoint(): void {
+    const present = endpointAvailable();
+    if (!present) {
+      endpointPresent = false;
+      return;
+    }
+    if (endpointPresent || available() || connecting) return;
+    endpointPresent = true;
+    void ensureBrowser(() => {}).catch((error) => {
+      log(`cdp connection failed: ${error instanceof Error ? error.message : String(error)}`);
+    });
   }
 
   function buffer(page: Page): InterceptedResponse[] {
@@ -249,7 +295,21 @@ export function createCdpHost(log: (message: string) => void = () => {}): CdpHos
 
   return {
     available,
-    info: () => `cdp ${browserVersion || "(not yet connected)"}`,
+    info: () => `cdp ${browserVersion}`,
+    start() {
+      if (endpointPoll) return;
+      pollEndpoint();
+      endpointPoll = setInterval(pollEndpoint, ENDPOINT_POLL_MS);
+    },
+    stop() {
+      if (!endpointPoll) return;
+      clearInterval(endpointPoll);
+      endpointPoll = undefined;
+    },
+    onStatusChange(listener) {
+      statusListeners.add(listener);
+      return () => statusListeners.delete(listener);
+    },
     async handle(message, emit) {
       const progress = (text: string) => emit({ type: "progress", id: message.id, message: text });
       try {
