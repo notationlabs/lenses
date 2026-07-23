@@ -1,8 +1,7 @@
 # Lenses
 
 A lens is a one-file declarative document that turns a webpage into a typed function.
-The call runs in your own browser through a Chrome extension, so it can use your
-existing signed-in session without exporting cookies or running scraping infrastructure.
+The call runs in your own browser over Chrome's remote-debugging protocol, so it can use your existing signed-in session without exporting cookies or running scraping infrastructure.
 
 Applications use the TypeScript client directly. A CLI and an MCP server expose the
 same client without reimplementing lens loading, caching, validation, or browser transport.
@@ -30,6 +29,8 @@ Here is `@djgrant/claude/usage`, trimmed:
 ```
 
 ## Setup
+
+Lenses requires Node.js 22.12 or later and Chrome 144 or later.
 
 ```sh
 pnpm install
