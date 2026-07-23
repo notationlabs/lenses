@@ -3,3 +3,6 @@ dist/
 *.log
 .DS_Store
 apps/extension/dist/
+
+# build-time copy of skill/SKILL.md
+packages/cli/SKILL.md
