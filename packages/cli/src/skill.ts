@@ -53,8 +53,10 @@ A call result is one of:
    lens eval '[stories.{ "t": title }]' --input sample.json
    \`\`\`
 
-3. Write a JSON lens document into the catalog. Resolver tiers run in order and
-   accumulate fields until \`returns\` is satisfied:
+3. Write a JSON lens document into the catalog. Every field below is required
+   except \`params\` and \`outcomes\`; \`effects\` in particular is mandatory.
+   Resolver tiers run in order and accumulate fields until \`returns\` is
+   satisfied:
    - \`intercept\` — map a JSON response the page already fetched (preferred).
    - \`dom\` — CSS selectors, optionally a repeating \`item\` selector.
    - \`llm\` — last resort; returns the snapshot and prompt to you.
@@ -66,6 +68,7 @@ A call result is one of:
      "params": { "id": "string" },
      "returns": { "type": "object", "fields": { "title": "string" } },
      "outcomes": { "needs_auth": { "$lens": "@scope/site/login" } },
+     "effects": { "reads": ["site.com"], "writes": [], "idempotent": true },
      "resolve": [
        { "kind": "intercept",
          "request": "GET https://site.com/api/thing/*",
@@ -75,18 +78,39 @@ A call result is one of:
    }
    \`\`\`
 
+   A \`dom\` tier reads the rendered page. With a repeating \`item\` selector it
+   yields one object per match, each \`fields\` selector scoped to that element:
+
+   \`\`\`jsonc
+   { "kind": "dom",
+     "item": "tr.athing",
+     "fields": {
+       "title": { "selector": ".titleline > a" },
+       "url": { "selector": ".titleline > a", "attr": "href" },
+       "score": { "selector": ".score", "sibling": true } } }
+   \`\`\`
+
+   Field specs: \`selector\` (first match wins; \`":self"\` reads the item
+   element itself), \`attr\` (read an attribute instead of text; \`href\`/\`src\`
+   are absolutised), \`sibling: true\` (search \`item.nextElementSibling\`, for
+   split-row layouts). A field matching nothing is \`null\`; declare it
+   \`nullable\` in \`returns\` or coerce to \`null\` in \`map\`, since \`undefined\`
+   fails a non-nullable field.
+
+   Return only what the caller needs — a lens that emits every row bloats every
+   call. Declare a \`limit\` param and slice in \`post\` (or \`map\`), since params
+   are JSONata variables:
+
+   \`\`\`jsonc
+   "params": { "limit": { "type": "integer", "default": 5 } },
+   // in a resolver: "post": "$[[0..$limit - 1]]"
+   \`\`\`
+
 4. Call it by file path to test: \`lens call ./my-lens.json --catalog .\`
 
 \`map\`, \`post\`, and \`detect\` are sandboxed JSONata: no network or DOM
 access. Declared params are available as variables (\`$id\`) in URL templates
 and every expression.
-
-## Other commands
-
-\`\`\`sh
-lens schema hn/top                  # JSON Schema (draft 2020-12) for the result
-lens gen ts-sdk -o src/lenses.gen.ts  # typed TypeScript SDK for a catalog
-\`\`\`
 
 Run \`lens <command> --help\` for full options.
 `;
