@@ -10,9 +10,11 @@ async function main(): Promise<void> {
     .map((source) => source.trim())
     .filter(Boolean);
   if (catalog.length === 0) {
-    throw new Error("LENS_CATALOG must name one or more comma-separated lens catalog sources");
+    process.stderr.write(
+      "[lens-mcp] LENS_CATALOG unset; lens_list will only show file lenses and lens_call needs a path or URL\n"
+    );
   }
-  const client = createLensClient({ catalog, port });
+  const client = createLensClient({ catalog: catalog.length > 0 ? catalog : undefined, port });
   const server = createLensMcpServer(client);
   const transport = new StdioServerTransport();
   process.stdin.once("end", () => {

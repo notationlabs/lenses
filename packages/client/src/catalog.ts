@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { validateSpec, type LensSpec } from "@djgrant/lens";
@@ -63,6 +63,48 @@ export async function readLensDirectory(directory: string): Promise<LensSpec[]> 
     }
   }
   return specs;
+}
+
+export interface LensFile {
+  /** Path relative to the scanned root, usable directly as a lens_call / lens call reference. */
+  path: string;
+  spec: LensSpec;
+}
+
+const SCAN_SKIP = new Set(["node_modules", "dist", "build", "coverage"]);
+
+/**
+ * Leniently scan a directory tree for loose lens documents: every *.json that
+ * parses and validates as a lens spec. Unlike readLensDirectory, files that are
+ * not lens documents (package.json, tsconfig.json, …) are silently skipped.
+ */
+export async function scanLensFiles(root: string, maxDepth = 2): Promise<LensFile[]> {
+  const found: LensFile[] = [];
+  const walk = async (directory: string, depth: number): Promise<void> => {
+    let entries;
+    try {
+      entries = await readdir(directory, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      if (entry.name.startsWith(".")) continue;
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) {
+        if (depth < maxDepth && !SCAN_SKIP.has(entry.name)) await walk(path, depth + 1);
+        continue;
+      }
+      if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+      try {
+        const spec = validateSpec(JSON.parse(await readFile(path, "utf8")));
+        found.push({ path: relative(root, path), spec });
+      } catch {
+        // not a lens document
+      }
+    }
+  };
+  await walk(resolve(root), 1);
+  return found;
 }
 
 class FileCatalogSource implements CatalogSource {

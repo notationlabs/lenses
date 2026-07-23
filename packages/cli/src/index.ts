@@ -11,7 +11,7 @@ const globalHelp = `Usage:
   lens schema <lens>
   lens gen ts-sdk [<catalog> ...] [--out <file>]
   lens eval <expression> [--input <file>] [--params <json>]
-  lens observe <target> [--wait-ms <number>] [--timeout-ms <number>] [--html]
+  lens observe <target> [--request <index|pattern>] [--wait-ms <number>] [--timeout-ms <number>] [--html]
   lens status [--wait-ms <number>]
   lens update [--catalog <source>]
   lens skill
@@ -19,7 +19,8 @@ const globalHelp = `Usage:
 Run lens <command> --help for command-specific help.
 
 Global options:
-  --catalog, -c    Lens catalog source; repeatable, tried in order (required).
+  --catalog, -c    Lens catalog source; repeatable, tried in order (required
+                   except for status, observe, eval, and skill).
                    A directory path (./examples or file:./examples), a git
                    reference (git:github.com/owner/repo#ref/subdir), or an
                    HTTP catalog index URL (https://…/catalog.json)
@@ -128,26 +129,34 @@ Example:
 `,
   observe: `Usage: lens observe <target> [options]
 
-Load a page and return its text snapshot and captured JSON requests.
+Load a page and return its text snapshot and an index of captured JSON requests
+(method, url, status, body size, short preview). Request bodies are elided; drill
+into one with --request. No catalog needed.
 
 Options:
+  --request <sel>         Return the body of captured requests matching <sel>:
+                          a request index from a prior observation, or a URL
+                          substring (first 5 matches)
   --html                  Also return the page's body HTML with scripts, styles,
                           and comments stripped — the input for writing DOM-tier
                           selectors
   --wait-ms <number>      Time to collect requests after loading (default: 4000)
   --timeout-ms <number>   Whole observation timeout (default: 60000)
-  --catalog, -c <source>  Lens catalog source; repeatable, tried in order (required)
   --port, -p <number>     Persistent browser broker port
   --verbose, -v           Write timestamped diagnostics to stderr
   --help, -h              Show this help
+
+Example:
+  lens observe https://example.com
+  lens observe https://example.com --request api/v2/items
 `,
   status: `Usage: lens status [options]
 
 Report the local broker port and browser-extension connection state.
+No catalog needed.
 
 Options:
   --wait-ms <number>      Wait this long for the extension before reporting
-  --catalog, -c <source>  Lens catalog source; repeatable, tried in order (required)
   --port, -p <number>     Persistent browser broker port
   --verbose, -v           Write timestamped diagnostics to stderr
   --help, -h              Show this help
@@ -210,6 +219,7 @@ async function main(): Promise<void> {
       catalog: { type: "string", short: "c", multiple: true },
       help: { type: "boolean", short: "h" },
       port: { type: "string", short: "p" },
+      request: { type: "string" },
       html: { type: "boolean" },
       lax: { type: "boolean" },
       input: { type: "string" },
@@ -281,7 +291,12 @@ async function main(): Promise<void> {
   const log = values.verbose
     ? (message: string) => process.stderr.write(`[lens +${Date.now() - startedAt}ms] ${message}\n`)
     : undefined;
-  const client = createLensClient({ catalog: requireCatalogs(values.catalog), port, log });
+  // status and observe are catalog-independent; the rest resolve lenses by name.
+  const catalog =
+    command === "status" || command === "observe"
+      ? values.catalog
+      : requireCatalogs(values.catalog);
+  const client = createLensClient({ catalog, port, log });
 
   try {
     let output: unknown;
@@ -304,7 +319,13 @@ async function main(): Promise<void> {
         break;
       case "observe": {
         const [target] = operands;
-        output = await client.observe({ target, waitMs, timeoutMs, html: values.html });
+        const request =
+          values.request === undefined
+            ? undefined
+            : /^\d+$/.test(values.request)
+              ? Number(values.request)
+              : values.request;
+        output = await client.observe({ target, waitMs, timeoutMs, html: values.html, request });
         break;
       }
       case "status":

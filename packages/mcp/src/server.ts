@@ -1,14 +1,35 @@
 import { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
-import type { LensClient } from "@djgrant/lens-client";
+import { scanLensFiles, type LensClient } from "@djgrant/lens-client";
 
 export function createLensMcpServer(client: LensClient): McpServer {
   const server = new McpServer({ name: "lens-mcp", version: "0.1.0" });
 
   server.registerTool(
     "lens_list",
-    { description: "List the lenses available to call in the user's browser." },
-    async () => ok({ lenses: await client.list() })
+    {
+      description:
+        "List the lenses available to call in the user's browser: catalog lenses " +
+        "(callable by name) and loose lens documents found in the working directory " +
+        "(callable by file path).",
+    },
+    async () => {
+      const files = await scanLensFiles(process.cwd()).catch(() => []);
+      return ok({
+        lenses: await client.list(),
+        ...(files.length > 0
+          ? {
+              fileLensesNote: "call a file lens by passing its path as lens_call's lens argument",
+              fileLenses: files.map(({ path, spec }) => ({
+                path,
+                name: spec.name,
+                description: spec.description,
+                params: spec.params,
+              })),
+            }
+          : {}),
+      });
+    }
   );
 
   server.registerTool(
@@ -34,12 +55,19 @@ export function createLensMcpServer(client: LensClient): McpServer {
     "lens_observe",
     {
       description:
-        "Load a page and return its captured JSON requests and text snapshot. " +
+        "Load a page and return its text snapshot plus an index of captured JSON " +
+        "requests (method, url, status, body size, short preview) with bodies elided. " +
+        "To read a request's body, call again with request set to an index from the " +
+        "listing or a URL substring (first 5 matches). " +
         "Set html to also get the body markup for writing DOM-tier selectors.",
       inputSchema: z.object({
         target: z.string().url(),
         waitMs: z.number().nonnegative().optional(),
         html: z.boolean().optional(),
+        request: z
+          .union([z.number().int().nonnegative(), z.string()])
+          .optional()
+          .describe("Captured-request selector: an index or a URL substring"),
       }),
     },
     async (input) => {
