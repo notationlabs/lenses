@@ -21,6 +21,10 @@ lens list --catalog ./examples    # discover lenses, their params and outcomes
 lens call hn/item --params '{"id":"42"}' --catalog ./examples
 ```
 
+If `status` reports no extension, Chrome is probably not running. Launch it —
+on macOS `open -na "Google Chrome" --args --profile-directory=Default`, or the
+equivalent on other operating systems — then retry `status`.
+
 A call result is one of:
 
 - `{"kind": "value", "value": ...}` — the typed result. Fields may contain
@@ -77,7 +81,21 @@ A call result is one of:
    }
    ```
 
-   A `dom` tier reads the rendered page. With a repeating `item` selector it
+   For a list, `returns` is `{"type": "array", "items": {...}}` where `items`
+   is a **bare field map** — field names straight to types, NOT a nested
+   `{ "type": "object", "fields": ... }` object (that nesting would silently
+   declare literal `type`/`fields` fields and every row fails validation):
+
+   ```jsonc
+   "returns": {
+     "type": "array",
+     "items": { "title": "string", "score": { "type": "integer", "nullable": true } }
+   }
+   ```
+
+   A `dom` tier reads the rendered page. It takes `fields` (selector specs)
+   and optionally `post` (JSONata over the extracted value) — there is no
+   `map` key; `map` belongs to `intercept` tiers. With a repeating `item` selector it
    yields one object per match, each `fields` selector scoped to that element:
 
    ```jsonc
@@ -86,7 +104,8 @@ A call result is one of:
      "fields": {
        "title": { "selector": ".titleline > a" },
        "url": { "selector": ".titleline > a", "attr": "href" },
-       "score": { "selector": ".score", "sibling": true } } }
+       "score": { "selector": ".score", "sibling": true } },
+     "post": "$[[0..$limit - 1]]" }
    ```
 
    Field specs: `selector` (first match wins; `":self"` reads the item
