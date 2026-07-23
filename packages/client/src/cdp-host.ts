@@ -203,7 +203,8 @@ export function createCdpHost(log: (message: string) => void = () => {}): CdpHos
       }
       return { page: existing, created: false, navigated: false };
     }
-    const page = await b.newPage();
+    // background: don't steal focus from the user's active tab or window.
+    const page = await b.newPage({ background: true });
     buffer(page);
     await settle(page.goto(target, { waitUntil: "load", timeout: spec.loadTimeoutMs ?? DEFAULT_LOAD_TIMEOUT_MS }));
     return { page, created: true, navigated: true };
@@ -216,7 +217,7 @@ export function createCdpHost(log: (message: string) => void = () => {}): CdpHos
       await reloadPage(existing);
       return { page: existing, created: false, navigated: true };
     }
-    const page = await b.newPage();
+    const page = await b.newPage({ background: true });
     buffer(page);
     await settle(page.goto(target, { waitUntil: "load", timeout: DEFAULT_LOAD_TIMEOUT_MS }));
     return { page, created: true, navigated: true };
