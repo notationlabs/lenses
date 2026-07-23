@@ -14,18 +14,19 @@ import {
   type LensTransportResult,
 } from "./bridge.js";
 import { LensStore, type CatalogUpdate } from "./lens-store.js";
-import { parseCatalogSource, type CatalogSource } from "./catalog.js";
+import { parseCatalogSource, scanLensFiles, type CatalogSource, type LensFile } from "./catalog.js";
 
 const DEFAULT_PORT_START = 4319;
 
 export interface LensClientOptions {
   /**
-   * One or more lens catalog sources, tried in order. Required — never assumed.
+   * One or more lens catalog sources, tried in order — never assumed.
    * A source is a directory path (`./examples` or `file:./examples`), a git
    * reference (`git:github.com/owner/repo#ref/subdir`), or an HTTP catalog
-   * index URL (`https://…/catalog.json`).
+   * index URL (`https://…/catalog.json`). May be omitted for catalog-independent
+   * operations (status, observe, calling a lens by file path or URL).
    */
-  catalog: string | string[];
+  catalog?: string | string[];
   port?: number;
   transport?: LensTransport;
   log?: LensLogger;
@@ -45,7 +46,23 @@ export interface LensObservation {
   timeoutMs?: number;
   /** include the page's body HTML (scripts and styles stripped) for selector authoring */
   html?: boolean;
+  /**
+   * Drill into captured request bodies: a request index from a prior observation,
+   * or a URL substring matching one or more requests. Without this, observations
+   * return an index of captured requests (method, url, status, size, preview)
+   * with bodies omitted.
+   */
+  request?: number | string;
 }
+
+interface CapturedRequest {
+  method: string;
+  url: string;
+  status: number;
+  bodyPreview: string;
+}
+
+const REQUEST_MATCH_LIMIT = 5;
 
 export interface LensSummary {
   name: string;
@@ -173,13 +190,15 @@ export class LensClient {
     const issues = validateResult(spec, result.value);
     if (issues.length === 0) return result;
     if (strict) {
-      return {
-        kind: "error",
-        message: `${spec.name} result failed its schema at ${issues
-          .map((issue) => issue.path)
-          .join(", ")}`,
-        issues,
-      };
+      const missing = issues.filter((issue) => issue.missing);
+      const message = missing.length
+        ? `${spec.name}: no resolver produced field ${missing
+            .map((issue) => issue.path)
+            .join(", ")}`
+        : `${spec.name} result failed its schema at ${issues
+            .map((issue) => issue.path)
+            .join(", ")}`;
+      return { kind: "error", message, issues };
     }
     this.log(`${spec.name} result has ${issues.length} schema warning(s)`);
     return { ...result, warnings: issues };
@@ -197,7 +216,64 @@ export class LensClient {
 
   async observe(input: LensObservation): Promise<LensResult> {
     this.log(`observing ${input.target}`);
-    return (await this.transport()).observe(input.target, input.waitMs, input.timeoutMs, input.html);
+    const result = await (await this.transport()).observe(
+      input.target,
+      input.waitMs,
+      input.timeoutMs,
+      input.html
+    );
+    if (result.kind !== "value") return result;
+    const value = result.value as { snapshot?: unknown; requests?: CapturedRequest[] };
+    if (typeof value !== "object" || value === null || !Array.isArray(value.requests)) {
+      return result;
+    }
+    const indexed = value.requests.map((request, index) => ({ index, ...request }));
+
+    if (input.request !== undefined) {
+      const selector = input.request;
+      const matches =
+        typeof selector === "number"
+          ? indexed.filter((request) => request.index === selector)
+          : indexed.filter((request) => request.url.includes(selector));
+      if (matches.length === 0) {
+        return {
+          kind: "error",
+          message: `no captured request matches ${JSON.stringify(selector)} (${indexed.length} requests captured; observe without "request" for the index)`,
+        };
+      }
+      return {
+        ...result,
+        value: {
+          matched: matches.length,
+          ...(matches.length > REQUEST_MATCH_LIMIT
+            ? { note: `showing first ${REQUEST_MATCH_LIMIT} of ${matches.length} matching bodies; narrow the request pattern or select by index` }
+            : {}),
+          requests: matches.slice(0, REQUEST_MATCH_LIMIT).map((request) => ({
+            index: request.index,
+            method: request.method,
+            url: request.url,
+            status: request.status,
+            body: request.bodyPreview,
+          })),
+        },
+      };
+    }
+
+    return {
+      ...result,
+      value: {
+        ...value,
+        requests: indexed.map((request) => ({
+          index: request.index,
+          method: request.method,
+          url: request.url,
+          status: request.status,
+          bodyChars: request.bodyPreview.length,
+          bodyPreview: request.bodyPreview.slice(0, 120),
+        })),
+        note: "request bodies elided; observe again with request set to an index or URL substring to read a body",
+      },
+    };
   }
 
   async status() {
@@ -230,9 +306,14 @@ export function createLensClient(options: LensClientOptions): LensClient {
     throw new Error("broker port cannot be combined with a custom transport");
   }
   if (options.port !== undefined) validatePort(options.port);
-  const catalogs = Array.isArray(options.catalog) ? options.catalog : [options.catalog];
-  if (catalogs.length === 0 || catalogs.some((catalog) => !catalog)) {
-    throw new Error("at least one lens catalog source is required");
+  const catalogs =
+    options.catalog === undefined
+      ? []
+      : Array.isArray(options.catalog)
+        ? options.catalog
+        : [options.catalog];
+  if (catalogs.some((catalog) => !catalog)) {
+    throw new Error("lens catalog sources must be non-empty strings");
   }
   const sources = catalogs.map(parseCatalogSource);
   const log = options.log ?? (() => {});
@@ -251,5 +332,12 @@ function validatePort(port: number): void {
   }
 }
 
-export { BrowserBridge, LensStore, parseCatalogSource };
-export type { CatalogSource, CatalogUpdate, LensLogger, LensTransport, LensTransportResult };
+export { BrowserBridge, LensStore, parseCatalogSource, scanLensFiles };
+export type {
+  CatalogSource,
+  CatalogUpdate,
+  LensFile,
+  LensLogger,
+  LensTransport,
+  LensTransportResult,
+};
