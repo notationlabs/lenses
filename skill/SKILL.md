@@ -136,14 +136,13 @@ and every expression.
 
 ## Result types
 
-Run `lens schema <lens>` to get a JSON Schema (draft 2020-12) of a lens's
-result. Use it to validate stored results, wire a lens into schema-driven
-tooling, or check the exact result shape without making a call.
+Run `lens schema <lens>` to get a JSON Schema (draft 2020-12) of a lens's result.
+Use it to validate stored results, wire a lens into schema-driven tooling, or check the exact result shape without making a call.
 
 ## Generated SDK
 
-Run `lens gen ts-sdk -o src/lenses.gen.ts` to generate a typed TypeScript
-client for the catalog. Use it to call lenses from application code with
-typed params and results. Re-run after editing a lens.
+Run `lens gen ts-sdk -o src/lenses.gen.ts` to generate a typed TypeScript client for the catalog.
+Use it to call lenses from application code with typed params and results.
+Re-run after editing a lens.
 
 Run `lens <command> --help` for full options.
