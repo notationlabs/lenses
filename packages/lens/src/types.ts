@@ -121,6 +121,8 @@ export interface ValidationIssue {
   /** JSON pointer into the resolved value, e.g. "/stories/3/score". */
   path: string;
   message: string;
+  /** true when the field is absent entirely, i.e. no resolver produced it */
+  missing?: boolean;
 }
 
 export type LensResult =

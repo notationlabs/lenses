@@ -70,7 +70,18 @@ export function validateResult(spec: LensSpec, value: unknown): ValidationIssue[
   return result.error.issues.map((issue) => ({
     path: pointerOf(issue.path),
     message: issue.message,
+    // An absent field means a resolver tier underfilled, not a type mismatch.
+    ...(valueAt(value, issue.path) === undefined ? { missing: true } : {}),
   }));
+}
+
+function valueAt(value: unknown, path: PropertyKey[]): unknown {
+  let current = value;
+  for (const segment of path) {
+    if (current === null || typeof current !== "object") return undefined;
+    current = (current as Record<PropertyKey, unknown>)[segment];
+  }
+  return current;
 }
 
 function pointerOf(path: PropertyKey[]): string {

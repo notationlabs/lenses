@@ -13,6 +13,13 @@ export async function bindTab(spec: LensSpec, target: string): Promise<BoundTab>
   const tabs = await chrome.tabs.query({});
   const exact = tabs.find((tab) => tab.url && sameTarget(tab.url, target));
   if (exact?.id !== undefined) {
+    // Intercept resolvers read capture buffers that only fill during a
+    // navigation, so a reused tab must be reloaded with fresh intercepts
+    // (mirroring bindObservedTab) or resolvers would see stale/empty captures.
+    if (spec.resolve.some((resolver) => resolver.kind === "intercept")) {
+      await reloadTab(exact.id, loadTimeoutMs);
+      return { tabId: exact.id, created: false, navigated: true };
+    }
     await ensureContentScript(exact.id, loadTimeoutMs);
     return { tabId: exact.id, created: false, navigated: false };
   }
