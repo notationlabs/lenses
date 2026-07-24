@@ -135,7 +135,7 @@ export type LensResult =
       issues?: ValidationIssue[];
     };
 
-/** IO the engine needs from its host environment (CDP host, or a test). */
+/** IO the engine needs from a bound browser session or a test. */
 export interface EngineIO {
   /** recently captured responses for the bound tab, newest last */
   getIntercepted(): Promise<InterceptedResponse[]>;

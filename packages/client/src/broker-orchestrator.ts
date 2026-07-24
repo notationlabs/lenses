@@ -24,12 +24,32 @@ export interface BrokerOrchestrator {
   ): Promise<void>;
 }
 
-export function createBrokerOrchestrator(backends: BrowserBackend[]): BrokerOrchestrator {
+export function createBrokerOrchestrator(
+  backends: BrowserBackend[],
+  options: { preferredWaitMs?: number } = {}
+): BrokerOrchestrator {
   if (backends.length === 0) throw new Error("broker orchestrator requires a browser backend");
   const cache = new Map<string, { result: LensResult; expiresAt: number }>();
 
-  function selectBackend(): BrowserBackend {
+  function currentBackend(): BrowserBackend {
     return backends.find((backend) => backend.available()) ?? backends[backends.length - 1];
+  }
+
+  async function selectBackend(): Promise<BrowserBackend> {
+    const selected = currentBackend();
+    const preferredWaitMs = options.preferredWaitMs ?? 0;
+    if (
+      selected !== backends[backends.length - 1] ||
+      preferredWaitMs <= 0 ||
+      backends.length === 1
+    ) {
+      return selected;
+    }
+    await waitForPreferredBackend(
+      backends.slice(0, -1),
+      preferredWaitMs
+    );
+    return currentBackend();
   }
 
   async function call(
@@ -44,7 +64,7 @@ export function createBrokerOrchestrator(backends: BrowserBackend[]): BrokerOrch
     }
     if (cached) cache.delete(cacheKey);
 
-    const backend = selectBackend();
+    const backend = await selectBackend();
     const target = expandUrl(message.spec.url, message.params);
     progress(`binding browser page for ${target} via ${backend.name}`);
     const session = await backend.bind({
@@ -72,7 +92,7 @@ export function createBrokerOrchestrator(backends: BrowserBackend[]): BrokerOrch
     message: Extract<LensBridgeRequest, { type: "observe" }>,
     progress: (text: string) => void
   ): Promise<LensResult> {
-    const backend = selectBackend();
+    const backend = await selectBackend();
     progress(`binding browser page for ${message.target} via ${backend.name}`);
     const session = await backend.bind({
       target: message.target,
@@ -119,6 +139,32 @@ export function createBrokerOrchestrator(backends: BrowserBackend[]): BrokerOrch
       }
     },
   };
+}
+
+function waitForPreferredBackend(
+  backends: BrowserBackend[],
+  timeoutMs: number
+): Promise<void> {
+  return new Promise((resolve) => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const unsubscribes: Array<() => void> = [];
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      for (const unsubscribe of unsubscribes) unsubscribe();
+      resolve();
+    };
+    const changed = () => {
+      if (backends.some((backend) => backend.available())) finish();
+    };
+    for (const backend of backends) {
+      unsubscribes.push(backend.onStatusChange(changed));
+    }
+    timer = setTimeout(finish, timeoutMs);
+    changed();
+  });
 }
 
 export function createSessionEngineIO(

@@ -19,6 +19,18 @@
       "navigation": "fresh"
     }
   },
+  "immediateReadRequest": {
+    "type": "extension-rpc",
+    "requestId": "request_immediate",
+    "epoch": "epoch_fixture",
+    "deadline": 1893456005000,
+    "operation": {
+      "name": "read-intercepts",
+      "sessionId": "session_fixture",
+      "cursor": 0,
+      "pollDeadline": 0
+    }
+  },
   "deltaResponse": {
     "type": "extension-rpc-result",
     "requestId": "request_2",

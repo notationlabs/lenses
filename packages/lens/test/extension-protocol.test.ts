@@ -28,6 +28,13 @@ describe("broker-extension protocol", () => {
     expect(decodeBrokerExtensionMessage(fixtures.bindRequest)).toEqual(
       fixtures.bindRequest
     );
+    expect(
+      decodeExtensionRpcRequest(
+        fixtures.immediateReadRequest,
+        "epoch_fixture",
+        1893456000000
+      )
+    ).toEqual(fixtures.immediateReadRequest);
     expect(decodeExtensionBrokerMessage(fixtures.deltaResponse)).toEqual(
       fixtures.deltaResponse
     );
