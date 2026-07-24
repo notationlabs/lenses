@@ -78,7 +78,7 @@ export function createLensMcpServer(client: LensClient): McpServer {
 
   server.registerTool(
     "broker_status",
-    { description: "Report whether the browser is reachable over CDP." },
+    { description: "Report whether the browser is reachable through the extension or CDP fallback." },
     async () => ok(await client.status())
   );
 

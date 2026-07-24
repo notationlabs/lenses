@@ -1,34 +1,38 @@
 /** Relay page intercepts and serve service-worker extraction requests. */
 
+import {
+  pageDomExtract,
+  pageSnapshot,
+  type DomResolver,
+} from "@djgrant/lens";
 import { formatError } from "./errors.js";
 
 export {};
 
 const MARK = "__lens_host__";
 
-interface DomFieldSpec {
-  selector: string;
-  attr?: string;
-  sibling?: boolean;
-}
-interface DomExtractRequest {
-  type: "dom_extract";
-  spec: {
-    item?: string;
-    fields?: Record<string, DomFieldSpec>;
-  };
-}
-
-// Stop relaying once an extension reload orphans this script.
 let orphaned = false;
-window.addEventListener("message", (ev) => {
-  const d = ev.data;
-  if (!d || d.source !== MARK || d.kind !== "intercepted" || orphaned) return;
+window.addEventListener("message", (event) => {
+  const data = event.data;
+  if (
+    !data ||
+    data.source !== MARK ||
+    data.kind !== "intercepted" ||
+    orphaned
+  ) {
+    return;
+  }
   try {
     chrome.runtime
       .sendMessage({
         type: "intercepted",
-        response: { url: d.url, method: d.method, status: d.status, body: d.body, timestamp: d.timestamp },
+        response: {
+          url: data.url,
+          method: data.method,
+          status: data.status,
+          body: data.body,
+          timestamp: data.timestamp,
+        },
       })
       .catch(() => {});
   } catch {
@@ -36,73 +40,32 @@ window.addEventListener("message", (ev) => {
   }
 });
 
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  if (msg.type === "ping") {
-    // The service worker reloads tabs that fail this probe.
-    sendResponse({ ok: true });
-    return false;
-  }
-  if (msg.type === "dom_extract") {
-    runDomExtract(msg as DomExtractRequest)
-      .then(sendResponse)
-      .catch((error) => sendResponse({ error: formatError(error) }));
-    return true;
-  }
-  if (msg.type === "snapshot") {
-    sendResponse({
-      url: location.href,
-      title: document.title,
-      text: (document.body?.innerText ?? "").slice(0, msg.maxChars ?? 20000),
-      ...(msg.html ? { html: pageHtml(msg.maxHtmlChars ?? 80000) } : {}),
-    });
-    return false;
-  }
-  return false;
-});
-
-/** Body markup for selector authoring: no scripts, styles, or comments. */
-function pageHtml(maxChars: number): string {
-  const root = (document.body ?? document.documentElement).cloneNode(true) as Element;
-  for (const el of root.querySelectorAll("script, style, noscript, template")) el.remove();
-  return root.outerHTML.replace(/<!--[\s\S]*?-->/g, "").slice(0, maxChars);
-}
-
-function extractField(root: Element, f: DomFieldSpec): string | null {
-  const scope = f.sibling ? root.nextElementSibling : root;
-  if (!scope) return null;
-  const el = f.selector === ":self" ? scope : scope.querySelector(f.selector);
-  if (!el) return null;
-  if (f.attr) {
-    const v = el.getAttribute(f.attr);
-    if (v && (f.attr === "href" || f.attr === "src")) {
-      try {
-        return new URL(v, location.href).href;
-      } catch {
-        return v;
+chrome.runtime.onMessage.addListener(
+  (message, _sender, sendResponse) => {
+    try {
+      if (message.type === "ping") {
+        sendResponse({ ok: true });
+        return false;
       }
+      if (message.type === "dom_extract") {
+        sendResponse(
+          pageDomExtract(message.spec as DomResolver)
+        );
+        return false;
+      }
+      if (message.type === "snapshot") {
+        sendResponse(
+          pageSnapshot({
+            maxChars: message.maxChars,
+            html: message.html,
+            maxHtmlChars: message.maxHtmlChars,
+          })
+        );
+        return false;
+      }
+    } catch (error) {
+      sendResponse({ error: formatError(error) });
     }
-    return v;
+    return false;
   }
-  return (el.textContent ?? "").trim();
-}
-
-async function runDomExtract(req: DomExtractRequest) {
-  const { spec } = req;
-
-  let value: unknown = null;
-  if (spec.item && spec.fields) {
-    const items: Record<string, string | null>[] = [];
-    for (const el of document.querySelectorAll(spec.item)) {
-      const row: Record<string, string | null> = {};
-      for (const [name, f] of Object.entries(spec.fields)) row[name] = extractField(el, f);
-      items.push(row);
-    }
-    value = items;
-  } else if (spec.fields) {
-    const row: Record<string, string | null> = {};
-    for (const [name, f] of Object.entries(spec.fields)) row[name] = extractField(document.documentElement, f);
-    value = row;
-  }
-
-  return { url: location.href, title: document.title, value };
-}
+);

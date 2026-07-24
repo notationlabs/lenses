@@ -51,6 +51,8 @@ export type ExtensionRpcOperation =
       name: "read-intercepts";
       sessionId: string;
       cursor: number;
+      /** Long-poll until this time; a past value requests current state immediately. */
+      pollDeadline: number;
     }
   | { name: "dom-extract"; sessionId: string; resolver: DomResolver }
   | {
@@ -70,6 +72,10 @@ export interface ExtensionRpcRequest {
   type: "extension-rpc";
   requestId: string;
   epoch: string;
+  /**
+   * Reject the request if it has not started by this time. There is no cancel
+   * frame: callers abandon timed-out requests by ignoring their late response.
+   */
   deadline: number;
   operation: ExtensionRpcOperation;
 }
@@ -184,6 +190,7 @@ const operationSchema = z.discriminatedUnion("name", [
     name: z.literal("read-intercepts"),
     sessionId: z.string().min(1),
     cursor: z.number().int().nonnegative(),
+    pollDeadline: z.number().int().nonnegative(),
   }),
   z.strictObject({
     name: z.literal("dom-extract"),

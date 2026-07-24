@@ -1,4 +1,4 @@
-import type { LensSpec } from "@djgrant/lens";
+import type { ExtensionRpcOperation } from "@djgrant/lens";
 import { resetIntercepts } from "./intercepts.js";
 import { formatError } from "../errors.js";
 
@@ -8,51 +8,58 @@ export interface BoundTab {
   navigated: boolean;
 }
 
-export async function bindTab(spec: LensSpec, target: string): Promise<BoundTab> {
-  const loadTimeoutMs = spec.loadTimeoutMs;
+type BindOperation = Extract<
+  ExtensionRpcOperation,
+  { name: "bind" }
+>;
+
+export async function bindTab(
+  request: BindOperation
+): Promise<BoundTab> {
   const tabs = await chrome.tabs.query({});
-  const exact = tabs.find((tab) => tab.url && sameTarget(tab.url, target));
+  const exact = tabs.find(
+    (tab) => tab.url && sameTarget(tab.url, request.target)
+  );
   if (exact?.id !== undefined) {
-    // Intercept resolvers read capture buffers that only fill during a
-    // navigation, so a reused tab must be reloaded with fresh intercepts
-    // (mirroring bindObservedTab) or resolvers would see stale/empty captures.
-    if (spec.resolve.some((resolver) => resolver.kind === "intercept")) {
-      await reloadTab(exact.id, loadTimeoutMs);
+    if (request.navigation === "fresh") {
+      await reloadTab(exact.id, request.loadTimeoutMs);
       return { tabId: exact.id, created: false, navigated: true };
     }
-    await ensureContentScript(exact.id, loadTimeoutMs);
+    await ensureContentScript(exact.id, request.loadTimeoutMs);
     return { tabId: exact.id, created: false, navigated: false };
   }
 
-  const created = await chrome.tabs.create({ url: target, active: false });
+  const created = await chrome.tabs.create({
+    url: request.target,
+    active: false,
+  });
   if (created.id === undefined) throw new Error("could not create tab");
-  await waitForLoad(created.id, loadTimeoutMs);
+  resetIntercepts(created.id);
+  await waitForLoad(created.id, request.loadTimeoutMs);
   return { tabId: created.id, created: true, navigated: true };
 }
 
-export async function bindObservedTab(target: string): Promise<BoundTab> {
-  const tabs = await chrome.tabs.query({});
-  const exact = tabs.find((tab) => tab.url && sameTarget(tab.url, target));
-  if (exact?.id !== undefined) {
-    resetIntercepts(exact.id);
-    await chrome.tabs.reload(exact.id, { bypassCache: false });
-    await waitForLoad(exact.id);
-    return { tabId: exact.id, created: false, navigated: true };
-  }
-
-  const created = await chrome.tabs.create({ url: target, active: false });
-  if (created.id === undefined) throw new Error("could not create tab");
-  await waitForLoad(created.id);
-  return { tabId: created.id, created: true, navigated: true };
-}
-
-export async function reloadTab(tabId: number, loadTimeoutMs?: number): Promise<void> {
+export async function reloadTab(
+  tabId: number,
+  loadTimeoutMs: number
+): Promise<void> {
   resetIntercepts(tabId);
   await chrome.tabs.reload(tabId, { bypassCache: false });
   await waitForLoad(tabId, loadTimeoutMs);
 }
 
-export async function ensureContentScript(tabId: number, loadTimeoutMs?: number): Promise<void> {
+export async function closeTab(tabId: number): Promise<void> {
+  try {
+    await chrome.tabs.remove(tabId);
+  } catch {
+    // The user may close a background tab while its session is active.
+  }
+}
+
+async function ensureContentScript(
+  tabId: number,
+  loadTimeoutMs: number
+): Promise<void> {
   try {
     await chrome.tabs.sendMessage(tabId, { type: "ping" });
   } catch {
@@ -60,25 +67,17 @@ export async function ensureContentScript(tabId: number, loadTimeoutMs?: number)
   }
 }
 
-export async function closeIfCreated(
-  bound: BoundTab,
-  result: { kind: string; name?: string }
-): Promise<void> {
-  if (!bound.created) return;
-  if (result.kind === "outcome" && result.name?.startsWith("needs_")) return;
-
-  try {
-    await chrome.tabs.remove(bound.tabId);
-  } catch {
-    // The user may close a background tab while its call is still running.
-  }
-}
-
-export function tabMessage<T>(tabId: number, payload: unknown): Promise<T> {
+export function tabMessage<T>(
+  tabId: number,
+  payload: unknown
+): Promise<T> {
   return chrome.tabs.sendMessage(tabId, payload) as Promise<T>;
 }
 
-export function waitForLoad(tabId: number, timeoutMs = 30_000): Promise<void> {
+function waitForLoad(
+  tabId: number,
+  timeoutMs: number
+): Promise<void> {
   return new Promise((resolve, reject) => {
     let settled = false;
     let loadSeen = false;
@@ -99,11 +98,19 @@ export function waitForLoad(tabId: number, timeoutMs = 30_000): Promise<void> {
       clearTimeout(timeout);
       graceTimer = setTimeout(() => finish(), 500);
     };
-    const listener = (id: number, info: chrome.tabs.TabChangeInfo) => {
+    const listener = (
+      id: number,
+      info: chrome.tabs.TabChangeInfo
+    ) => {
       if (id === tabId && info.status === "complete") loaded();
     };
     const timeout = setTimeout(
-      () => finish(new Error(`tab ${tabId} did not finish loading within ${timeoutMs}ms`)),
+      () =>
+        finish(
+          new Error(
+            `tab ${tabId} did not finish loading within ${timeoutMs}ms`
+          )
+        ),
       timeoutMs
     );
 
