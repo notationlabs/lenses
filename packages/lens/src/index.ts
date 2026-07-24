@@ -7,3 +7,4 @@ export { validateSpec } from "./validate.js";
 export { deriveJsonSchema, returnsSchema, validateResult } from "./schema.js";
 export { generateTsSdk } from "./generate.js";
 export { pageDomExtract, pageSnapshot, type PageSnapshot } from "./page-functions.js";
+export * from "./extension-protocol.js";
