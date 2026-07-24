@@ -15,7 +15,7 @@ vi.mock("puppeteer-core", () => ({
   },
 }));
 
-import { createCdpHost } from "../src/cdp-host.js";
+import { createCdpBackend } from "../src/cdp-host.js";
 
 interface FakeBrowser {
   connected: boolean;
@@ -60,14 +60,14 @@ describe("CDP host connection lifecycle", () => {
     const browser = fakeBrowser();
     state.endpointAvailable = true;
     state.connect = vi.fn(async () => browser);
-    const host = createCdpHost();
+    const host = createCdpBackend();
     const statuses: boolean[] = [];
     host.onStatusChange(() => statuses.push(host.available()));
 
     host.start();
     await vi.waitFor(() => expect(host.available()).toBe(true));
     host.stop();
-    expect(host.info()).toBe("cdp Chrome/144.0.0.0");
+    expect(host.info()).toEqual({ name: "cdp", detail: "Chrome/144.0.0.0" });
     expect(statuses).toEqual([true]);
 
     browser.emitDisconnected();
@@ -78,7 +78,7 @@ describe("CDP host connection lifecycle", () => {
   it("releases the CDP lease without auto-reconnecting, and reacquires on demand", async () => {
     state.endpointAvailable = true;
     state.connect = vi.fn(async () => fakeBrowser());
-    const host = createCdpHost();
+    const host = createCdpBackend();
     host.start();
     await vi.waitFor(() => expect(host.available()).toBe(true));
     expect(host.lease()).toBe("held");
@@ -103,26 +103,23 @@ describe("CDP host connection lifecycle", () => {
   it("reacquires lazily when a request arrives after a release", async () => {
     state.endpointAvailable = true;
     state.connect = vi.fn(async () => fakeBrowser());
-    const host = createCdpHost();
+    const host = createCdpBackend();
     host.start();
     await vi.waitFor(() => expect(host.available()).toBe(true));
     await host.release();
     expect(host.lease()).toBe("released");
 
-    const frames: unknown[] = [];
-    await host.handle(
-      { type: "observe", id: "observe_after_release", target: "https://example.com", waitMs: 0 },
-      (frame) => frames.push(frame)
-    );
+    await expect(
+      host.bind({
+        target: "https://example.com",
+        loadTimeoutMs: 30_000,
+        navigation: "fresh",
+      })
+    ).rejects.toThrow("page access is not part of this connection test");
     host.stop();
 
     expect(state.connect).toHaveBeenCalledTimes(2);
     expect(host.lease()).toBe("held");
-    expect(frames).toContainEqual({
-      type: "result",
-      id: "observe_after_release",
-      result: { kind: "error", message: "page access is not part of this connection test" },
-    });
   });
 
   it("shares an in-flight connection between monitoring and a request", async () => {
@@ -135,24 +132,19 @@ describe("CDP host connection lifecycle", () => {
           resolveConnection = resolve;
         })
     );
-    const host = createCdpHost();
+    const host = createCdpBackend();
     host.start();
-    const frames: unknown[] = [];
-    const request = host.handle(
-      { type: "observe", id: "observe_1", target: "https://example.com", waitMs: 0 },
-      (frame) => frames.push(frame)
-    );
+    const request = host.bind({
+      target: "https://example.com",
+      loadTimeoutMs: 30_000,
+      navigation: "fresh",
+    });
 
     await vi.waitFor(() => expect(state.connect).toHaveBeenCalledTimes(1));
     resolveConnection(browser);
-    await request;
+    await expect(request).rejects.toThrow("page access is not part of this connection test");
     host.stop();
 
     expect(state.connect).toHaveBeenCalledTimes(1);
-    expect(frames).toContainEqual({
-      type: "result",
-      id: "observe_1",
-      result: { kind: "error", message: "page access is not part of this connection test" },
-    });
   });
 });
