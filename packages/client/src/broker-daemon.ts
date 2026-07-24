@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 /**
- * Persistent local broker: serialises lens calls from CLI/MCP/library clients
- * onto one long-lived CDP connection to the user's running Chrome, so consent
- * (the chrome://inspect/#remote-debugging Allow dialog) is granted once per
- * broker lifetime rather than once per client process.
+ * Persistent local broker: serialises lens calls from CLI/MCP/library clients,
+ * preferring the Chrome extension and retaining CDP as the fallback backend.
  */
 import { WebSocket, WebSocketServer } from "ws";
 import type { LensBridgeRequest } from "@djgrant/lens";
-import { createCdpHost } from "./cdp-host.js";
+import { createBrokerOrchestrator } from "./broker-orchestrator.js";
+import { createCdpBackend } from "./cdp-host.js";
+import { createExtensionBackend } from "./extension-backend.js";
 import { SerialTaskQueue } from "./serial-task-queue.js";
 
 const port = Number(process.argv[2]);
@@ -22,8 +22,11 @@ process.on("unhandledRejection", (error) => console.error("broker unhandled:", e
 
 const server = new WebSocketServer({ port, host: "127.0.0.1" });
 const clients = new Set<WebSocket>();
-const cache = new Map<string, { result: unknown; expiresAt: number }>();
-const cdp = createCdpHost();
+const cdp = createCdpBackend();
+const extension = createExtensionBackend();
+const orchestrator = createBrokerOrchestrator([extension, cdp], {
+  preferredWaitMs: 2_000,
+});
 const requestQueue = new SerialTaskQueue();
 
 // Idle auto-release is opt-in (0 = hold the lease forever): releasing frees
@@ -48,20 +51,42 @@ function endWork(): void {
 }
 
 cdp.onStatusChange(broadcastStatus);
-cdp.start();
+extension.onStatusChange(() => {
+  broadcastStatus();
+  if (extension.available()) {
+    cdp.stop();
+    void cdp.release();
+  } else {
+    cdp.start();
+  }
+});
+const fallbackStart = setTimeout(() => {
+  if (!extension.available()) cdp.start();
+}, 2_000);
 
 server.on("connection", (socket) => {
   socket.once("message", (data) => identify(socket, data.toString()));
 });
-server.on("close", () => cdp.stop());
+server.on("close", () => {
+  clearTimeout(fallbackStart);
+  extension.stop();
+  cdp.stop();
+});
 
 function identify(socket: WebSocket, raw: string): void {
   const message = parse(raw);
-  if (message?.type !== "client") return;
-  clients.add(socket);
-  sendStatus(socket);
-  socket.on("message", (data) => onClientMessage(socket, data.toString()));
-  socket.on("close", () => clients.delete(socket));
+  if (message?.type === "client") {
+    clients.add(socket);
+    sendStatus(socket);
+    socket.on("message", (data) => onClientMessage(socket, data.toString()));
+    socket.on("close", () => clients.delete(socket));
+    return;
+  }
+  if (message?.type === "extension-hello") {
+    extension.attach(socket, message);
+    return;
+  }
+  socket.close();
 }
 
 function onClientMessage(client: WebSocket, raw: string): void {
@@ -110,41 +135,17 @@ async function handleControl(
 
 async function handleClientMessage(client: WebSocket, message: LensBridgeRequest): Promise<void> {
   if (client.readyState !== WebSocket.OPEN) return;
-  const cacheTtlMs = message.type === "call" ? (message.spec.effects.cache ?? 0) * 1000 : 0;
-  const cacheKey =
-    message.type === "call"
-      ? `${JSON.stringify(message.spec)}|${JSON.stringify(message.params)}`
-      : undefined;
-  const cached = cacheKey ? cache.get(cacheKey) : undefined;
-  if (cached && cached.expiresAt > Date.now()) {
-    send(client, {
-      type: "result",
-      id: message.id,
-      result: { ...(cached.result as object), cached: true },
-    });
-    return;
-  }
-  if (cached && cached.expiresAt <= Date.now()) cache.delete(cacheKey!);
-  await cdp.handle(message, (frame) => {
-    if (
-      frame.type === "result" &&
-      frame.result.kind === "value" &&
-      !frame.result.partial &&
-      cacheKey &&
-      cacheTtlMs > 0
-    ) {
-      cache.set(cacheKey, { result: frame.result, expiresAt: Date.now() + cacheTtlMs });
-    }
-    send(client, frame);
-  });
+  if (message.type !== "call" && message.type !== "observe") return;
+  await orchestrator.handle(message, (frame) => send(client, frame));
 }
 
 function sendStatus(socket: WebSocket): void {
+  const preferred = extension.available() ? extension : cdp;
   send(socket, {
     type: "status",
-    connected: cdp.available(),
+    connected: preferred.available(),
     lease: cdp.lease(),
-    ua: cdp.available() ? cdp.info() : undefined,
+    ua: preferred.available() ? preferred.info().detail : undefined,
   });
 }
 
