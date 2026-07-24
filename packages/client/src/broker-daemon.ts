@@ -7,7 +7,8 @@
  */
 import { WebSocket, WebSocketServer } from "ws";
 import type { LensBridgeRequest } from "@djgrant/lens";
-import { createCdpHost } from "./cdp-host.js";
+import { createBrokerOrchestrator } from "./broker-orchestrator.js";
+import { createCdpBackend } from "./cdp-host.js";
 import { SerialTaskQueue } from "./serial-task-queue.js";
 
 const port = Number(process.argv[2]);
@@ -22,8 +23,8 @@ process.on("unhandledRejection", (error) => console.error("broker unhandled:", e
 
 const server = new WebSocketServer({ port, host: "127.0.0.1" });
 const clients = new Set<WebSocket>();
-const cache = new Map<string, { result: unknown; expiresAt: number }>();
-const cdp = createCdpHost();
+const cdp = createCdpBackend();
+const orchestrator = createBrokerOrchestrator([cdp]);
 const requestQueue = new SerialTaskQueue();
 
 // Idle auto-release is opt-in (0 = hold the lease forever): releasing frees
@@ -110,33 +111,8 @@ async function handleControl(
 
 async function handleClientMessage(client: WebSocket, message: LensBridgeRequest): Promise<void> {
   if (client.readyState !== WebSocket.OPEN) return;
-  const cacheTtlMs = message.type === "call" ? (message.spec.effects.cache ?? 0) * 1000 : 0;
-  const cacheKey =
-    message.type === "call"
-      ? `${JSON.stringify(message.spec)}|${JSON.stringify(message.params)}`
-      : undefined;
-  const cached = cacheKey ? cache.get(cacheKey) : undefined;
-  if (cached && cached.expiresAt > Date.now()) {
-    send(client, {
-      type: "result",
-      id: message.id,
-      result: { ...(cached.result as object), cached: true },
-    });
-    return;
-  }
-  if (cached && cached.expiresAt <= Date.now()) cache.delete(cacheKey!);
-  await cdp.handle(message, (frame) => {
-    if (
-      frame.type === "result" &&
-      frame.result.kind === "value" &&
-      !frame.result.partial &&
-      cacheKey &&
-      cacheTtlMs > 0
-    ) {
-      cache.set(cacheKey, { result: frame.result, expiresAt: Date.now() + cacheTtlMs });
-    }
-    send(client, frame);
-  });
+  if (message.type !== "call" && message.type !== "observe") return;
+  await orchestrator.handle(message, (frame) => send(client, frame));
 }
 
 function sendStatus(socket: WebSocket): void {
@@ -144,7 +120,7 @@ function sendStatus(socket: WebSocket): void {
     type: "status",
     connected: cdp.available(),
     lease: cdp.lease(),
-    ua: cdp.available() ? cdp.info() : undefined,
+    ua: cdp.available() ? cdp.info().detail : undefined,
   });
 }
 
