@@ -9,6 +9,8 @@ import {
 } from "@djgrant/lens";
 import {
   BrowserBridge,
+  type BrokerControlAction,
+  type BrokerLease,
   type LensLogger,
   type LensTransport,
   type LensTransportResult,
@@ -280,9 +282,30 @@ export class LensClient {
     const transport = await this.transport();
     return {
       connected: transport.connected,
+      lease: transport.lease ?? (transport.connected ? "held" : "disconnected"),
       broker: transport.info,
       port: transport.port,
     };
+  }
+
+  /**
+   * Control the broker's CDP lease on Chrome's single consented debugging slot.
+   * "release" frees the slot for other CDP tools; "acquire" reconnects (Chrome
+   * shows a fresh Allow dialog); "status" reports without side effects.
+   */
+  async broker(
+    action: BrokerControlAction,
+    timeoutMs?: number
+  ): Promise<{ connected: boolean; lease: BrokerLease }> {
+    const transport = await this.transport();
+    if (!transport.control) {
+      throw new Error("this transport does not support broker lease control");
+    }
+    const result = await transport.control(action, timeoutMs);
+    if (result.kind === "error") throw new Error(result.message);
+    return result.kind === "value"
+      ? (result.value as { connected: boolean; lease: BrokerLease })
+      : { connected: transport.connected, lease: transport.lease ?? "disconnected" };
   }
 
   async waitForConnection(timeoutMs = 5_000): Promise<boolean> {
@@ -334,6 +357,8 @@ function validatePort(port: number): void {
 
 export { BrowserBridge, LensStore, parseCatalogSource, scanLensFiles };
 export type {
+  BrokerControlAction,
+  BrokerLease,
   CatalogSource,
   CatalogUpdate,
   LensFile,

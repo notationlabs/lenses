@@ -7,6 +7,8 @@ const BROKER_START_WAIT_MS = 3_000;
 
 export type LensLogger = (message: string) => void;
 export type LensTransportResult = LensResult & { cached?: boolean };
+export type BrokerLease = "held" | "released" | "disconnected";
+export type BrokerControlAction = "release" | "acquire" | "status";
 
 export interface LensTransport {
   readonly connected: boolean;
@@ -25,19 +27,24 @@ export interface LensTransport {
   ): Promise<LensTransportResult>;
   waitForConnection(timeoutMs: number): Promise<boolean>;
   close(): Promise<void>;
+  /** CDP lease state, when the transport reports it (the broker does). */
+  readonly lease?: BrokerLease;
+  /** Release/acquire the broker's CDP lease; optional for custom transports. */
+  control?(action: BrokerControlAction, timeoutMs?: number): Promise<LensTransportResult>;
 }
 
 type BrokerMessage =
-  | { type: "status"; connected: boolean; ua?: string }
+  | { type: "status"; connected: boolean; lease?: BrokerLease; ua?: string }
   | { type: "result"; id: string; result: LensTransportResult }
   | { type: "progress"; id: string; message: string };
 
 export class BrowserBridge implements LensTransport {
   private browserConnected = false;
   private browserInfo = "";
+  private browserLease: BrokerLease = "disconnected";
   private readonly pending = new Map<
     string,
-    { resolve: (result: LensResult) => void; timer: NodeJS.Timeout }
+    { resolve: (result: LensResult) => void; timer: NodeJS.Timeout; control?: boolean }
   >();
   private readonly connectionWaiters = new Set<() => void>();
   private sequence = 0;
@@ -51,6 +58,7 @@ export class BrowserBridge implements LensTransport {
   ) {
     this.browserConnected = status.connected;
     this.browserInfo = status.ua ?? "";
+    this.browserLease = status.lease ?? (status.connected ? "held" : "disconnected");
     socket.on("message", (data) => this.onMessage(data.toString()));
     socket.on("close", () => {
       this.browserConnected = false;
@@ -74,6 +82,10 @@ export class BrowserBridge implements LensTransport {
 
   get connected(): boolean {
     return this.browserConnected;
+  }
+
+  get lease(): BrokerLease {
+    return this.browserLease;
   }
 
   get info(): string {
@@ -100,6 +112,15 @@ export class BrowserBridge implements LensTransport {
     html = false
   ): Promise<LensTransportResult> {
     return this.request((id) => ({ type: "observe", id, target, waitMs, html }), timeoutMs);
+  }
+
+  /**
+   * release: broker drops its CDP connection so other tools can use Chrome's
+   * single consented debugging slot. acquire: broker reconnects — Chrome shows
+   * a fresh Allow dialog, so allow up to a minute. status: report only.
+   */
+  control(action: BrokerControlAction, timeoutMs = 60_000): Promise<LensTransportResult> {
+    return this.request((id) => ({ type: "control", id, action }), timeoutMs);
   }
 
   async waitForConnection(timeoutMs: number): Promise<boolean> {
@@ -142,7 +163,7 @@ export class BrowserBridge implements LensTransport {
         this.pending.delete(id);
         resolve({ kind: "error", message: `${message.type} timed out after ${timeoutMs}ms` });
       }, timeoutMs);
-      this.pending.set(id, { resolve, timer });
+      this.pending.set(id, { resolve, timer, control: message.type === "control" });
       this.socket.send(JSON.stringify(message), (error) => {
         if (!error) return;
         const pending = this.pending.get(id);
@@ -168,13 +189,15 @@ export class BrowserBridge implements LensTransport {
       const wasConnected = this.browserConnected;
       this.browserConnected = message.connected;
       this.browserInfo = message.ua ?? "";
+      this.browserLease = message.lease ?? (message.connected ? "held" : "disconnected");
       if (message.connected && !wasConnected) {
         this.log(`browser connected through broker port ${this.port}`);
         for (const resolve of this.connectionWaiters) resolve();
         this.connectionWaiters.clear();
       } else if (!message.connected && wasConnected) {
         this.log("browser disconnected from lens broker");
-        this.resolvePending({ kind: "error", message: "browser disconnected" });
+        // Control requests survive: a "release" causes this very transition.
+        this.resolvePending({ kind: "error", message: "browser disconnected" }, true);
       }
       return;
     }
@@ -189,12 +212,13 @@ export class BrowserBridge implements LensTransport {
     pending.resolve(message.result);
   }
 
-  private resolvePending(result: LensResult): void {
-    for (const pending of this.pending.values()) {
+  private resolvePending(result: LensResult, keepControl = false): void {
+    for (const [id, pending] of this.pending) {
+      if (keepControl && pending.control) continue;
       clearTimeout(pending.timer);
       pending.resolve(result);
+      this.pending.delete(id);
     }
-    this.pending.clear();
   }
 }
 

@@ -49,10 +49,28 @@ interface BoundPage {
   navigated: boolean;
 }
 
+export type CdpLease = "held" | "released" | "disconnected";
+
 export interface CdpHost {
   /** true when the broker has a live CDP connection to Chrome */
   available(): boolean;
   info(): string;
+  /**
+   * held: live CDP connection (Chrome's consented debugging slot is ours).
+   * released: connection dropped on purpose; other CDP tools may use Chrome.
+   * disconnected: no connection and none deliberately released (e.g. remote
+   * debugging is off, or Chrome closed the socket).
+   */
+  lease(): CdpLease;
+  /**
+   * Drop the CDP connection and stop auto-reconnecting, freeing Chrome's single
+   * consented debugging slot for other tools. The next lens call (or acquire)
+   * reconnects — Chrome then shows a fresh Allow dialog, which is why release
+   * is explicit rather than idle-triggered by default.
+   */
+  release(): Promise<void>;
+  /** Reconnect after a release (prompts the user to Allow in Chrome). */
+  acquire(progress?: (message: string) => void): Promise<void>;
   start(): void;
   stop(): void;
   onStatusChange(listener: () => void): () => void;
@@ -68,6 +86,8 @@ export function createCdpHost(log: (message: string) => void = () => {}): CdpHos
   let connecting: Promise<Browser> | undefined;
   let endpointPresent = false;
   let endpointPoll: ReturnType<typeof setInterval> | undefined;
+  /** true after an explicit release(): suppress auto-reconnect until asked. */
+  let released = false;
   const captures = new WeakMap<Page, InterceptedResponse[]>();
   const statusListeners = new Set<() => void>();
 
@@ -78,6 +98,9 @@ export function createCdpHost(log: (message: string) => void = () => {}): CdpHos
   };
 
   async function ensureBrowser(progress: (message: string) => void): Promise<Browser> {
+    // A lens call is an explicit demand for the browser: leave the released
+    // state and reacquire (Chrome will show a fresh Allow dialog).
+    released = false;
     if (browser?.connected) return browser;
     if (connecting) return connecting;
     if (!endpointAvailable()) {
@@ -138,7 +161,7 @@ export function createCdpHost(log: (message: string) => void = () => {}): CdpHos
       endpointPresent = false;
       return;
     }
-    if (endpointPresent || available() || connecting) return;
+    if (released || endpointPresent || available() || connecting) return;
     endpointPresent = true;
     void ensureBrowser(() => {}).catch((error) => {
       log(`cdp connection failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -297,6 +320,27 @@ export function createCdpHost(log: (message: string) => void = () => {}): CdpHos
   return {
     available,
     info: () => `cdp ${browserVersion}`,
+    lease: () => (available() ? "held" : released ? "released" : "disconnected"),
+    async release() {
+      released = true;
+      // Settle any in-flight connect first so we do not leak a connection that
+      // completes after the release.
+      if (connecting) await connecting.catch(() => {});
+      const current = browser;
+      if (!current) {
+        notifyStatusChange();
+        return;
+      }
+      try {
+        await current.disconnect();
+      } catch {
+        // Socket already gone; the disconnected listener has cleaned up.
+      }
+      log("cdp lease released");
+    },
+    async acquire(progress = () => {}) {
+      await ensureBrowser(progress);
+    },
     start() {
       if (endpointPoll) return;
       pollEndpoint();
@@ -314,6 +358,9 @@ export function createCdpHost(log: (message: string) => void = () => {}): CdpHos
     async handle(message, emit) {
       const progress = (text: string) => emit({ type: "progress", id: message.id, message: text });
       try {
+        if (message.type === "control") {
+          throw new Error("control messages are handled by the broker, not the CDP host");
+        }
         const result =
           message.type === "call"
             ? await callLens(message.spec, message.params, progress)
