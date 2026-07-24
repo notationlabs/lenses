@@ -30,18 +30,16 @@ Here is `@djgrant/claude/usage`, trimmed:
 
 ## Setup
 
-Lenses requires Node.js 22.12 or later and Chrome 144 or later.
+Lenses requires Node.js 22.12 or later and Chrome.
 
 ```sh
 pnpm install
 pnpm build
 ```
 
-Enable remote debugging in Chrome (144+) at `chrome://inspect/#remote-debugging`.
-Calls run through a persistent local broker on port 4319, which holds one CDP
-connection to your running Chrome; the first client starts the broker automatically,
-and CLI, MCP, and library clients then share that connection. Chrome asks for
-permission (an **Allow** dialog) once per broker lifetime.
+For the streamlined path, run `pnpm --filter @djgrant/lens-extension-chrome build`, open `chrome://extensions`, enable Developer mode, choose **Load unpacked**, and select `extensions/chrome/dist`. Calls run through a persistent local broker on port 4319; the first client starts it automatically, and CLI, MCP, and library clients share the extension connection.
+
+Chrome 144+ remote debugging is always available as the fallback. Enable it at `chrome://inspect/#remote-debugging`; if no compatible extension is connected, the next call uses CDP and Chrome asks for permission with an **Allow** dialog.
 
 ## TypeScript client
 
@@ -206,15 +204,13 @@ expression can be iterated on offline before it goes into a lens document.
 ## Architecture
 
 ```text
-application ─┐
-lens CLI ────┼─► @djgrant/lens-client ── WebSocket ──► broker ── CDP ──► Chrome
-lens MCP ────┘                                           │
-                                       @djgrant/lens resolver engine
+application ─┐                                              ┌─ extension ─► Chrome
+lens CLI ────┼─► @djgrant/lens-client ── WebSocket ──► broker ┤
+lens MCP ────┘                                │             └─ CDP fallback
+                                  @djgrant/lens resolver engine
 ```
 
-The broker hosts the resolver engine in-process: a CDP host (puppeteer-core) supplies
-page lifecycle, network capture, and in-page extraction behind the `EngineIO`
-interface.
+The broker hosts the resolver engine, caching, retry policy, and page-retention policy once. It pins each call to one session backend: the extension is preferred when its protocol and capabilities are compatible, while the CDP backend supplies the same page lifecycle, network capture, and in-page extraction primitives as a fallback.
 
 ## Lens spec reference
 
@@ -303,6 +299,7 @@ Run `pok lens validate` to validate every document under `examples/`.
 | `packages/client` | `@djgrant/lens-client` | Lens orchestration and persistent browser broker |
 | `packages/cli` | `@djgrant/lens-cli` | JSON command-line adapter |
 | `packages/mcp` | `@djgrant/lens-mcp` | stdio MCP adapter |
+| `extensions/chrome` | `@djgrant/lens-extension-chrome` | Preferred Chrome session backend |
 | `examples` | — | Example lens catalog |
 
 Planned work lives in [ROADMAP.md](./ROADMAP.md).

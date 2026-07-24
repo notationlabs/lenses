@@ -1,0 +1,54 @@
+{
+  "hello": {
+    "type": "extension-hello",
+    "protocolMajor": 1,
+    "extensionVersion": "0.1.0",
+    "capabilities": ["sessions", "cursor-delta", "dom-extract", "snapshot-html"],
+    "epoch": "epoch_fixture",
+    "ua": "Chrome/144"
+  },
+  "bindRequest": {
+    "type": "extension-rpc",
+    "requestId": "request_1",
+    "epoch": "epoch_fixture",
+    "deadline": 1893456000000,
+    "operation": {
+      "name": "bind",
+      "target": "https://example.com/",
+      "loadTimeoutMs": 30000,
+      "navigation": "fresh"
+    }
+  },
+  "immediateReadRequest": {
+    "type": "extension-rpc",
+    "requestId": "request_immediate",
+    "epoch": "epoch_fixture",
+    "deadline": 1893456005000,
+    "operation": {
+      "name": "read-intercepts",
+      "sessionId": "session_fixture",
+      "cursor": 0,
+      "pollDeadline": 0
+    }
+  },
+  "deltaResponse": {
+    "type": "extension-rpc-result",
+    "requestId": "request_2",
+    "epoch": "epoch_fixture",
+    "ok": true,
+    "result": {
+      "name": "read-intercepts",
+      "captures": [
+        {
+          "url": "https://example.com/api",
+          "method": "GET",
+          "status": 200,
+          "body": "{\"ok\":true}",
+          "timestamp": 1784900000000
+        }
+      ],
+      "nextCursor": 1,
+      "truncated": false
+    }
+  }
+}

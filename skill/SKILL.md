@@ -5,10 +5,7 @@ description: Read live web pages as typed function calls through the lens CLI. U
 
 # Lenses
 
-A lens turns a webpage into a typed function. Calls run through the user's own
-browser over Chrome's remote-debugging protocol, so signed-in sessions work
-without exporting cookies. Lenses observe what a page already does — they cannot click, type,
-navigate sequences, or fire requests.
+A lens turns a webpage into a typed function. Calls run through the user's own browser, preferring the Lens Chrome extension and falling back to Chrome's remote-debugging protocol, so signed-in sessions work without exporting cookies. Lenses observe what a page already does — they cannot click, type, navigate sequences, or fire requests.
 
 Every command prints JSON to stdout and exits non-zero on errors. Pass a catalog
 directory with `--catalog <path>` (or ask the user where their lens catalog is).
@@ -21,13 +18,7 @@ lens list --catalog ./examples    # discover lenses, their params and outcomes
 lens call hn/item --params '{"id":"42"}' --catalog ./examples
 ```
 
-If `status` reports the browser is unreachable, Chrome is probably not running,
-or remote debugging is off. Launch Chrome — on macOS
-`open -na "Google Chrome" --args --profile-directory=Default`, or the equivalent
-on other operating systems — and ask the user to enable
-`chrome://inspect/#remote-debugging` if it still fails, then retry `status`.
-The first call may show a permission dialog in Chrome; the user must click
-Allow.
+If `status` reports the browser is unreachable, Chrome is probably not running or the extension is not connected. Launch Chrome — on macOS `open -na "Google Chrome" --args --profile-directory=Default`, or the equivalent on other operating systems. If the Lens extension is not installed, ask the user to enable the CDP fallback at `chrome://inspect/#remote-debugging`, then retry `status`; the first fallback call may show a permission dialog in Chrome and the user must click Allow.
 
 A call result is one of:
 
