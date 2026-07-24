@@ -39,6 +39,7 @@ export function createBrokerOrchestrator(
     const selected = currentBackend();
     const preferredWaitMs = options.preferredWaitMs ?? 0;
     if (
+      selected.available() ||
       selected !== backends[backends.length - 1] ||
       preferredWaitMs <= 0 ||
       backends.length === 1
