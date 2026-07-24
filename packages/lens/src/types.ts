@@ -159,4 +159,10 @@ export type LensBridgeRequest =
       params: Record<string, unknown>;
       timeoutMs: number;
     }
-  | { type: "observe"; id: string; target: string; waitMs: number; html?: boolean };
+  | { type: "observe"; id: string; target: string; waitMs: number; html?: boolean }
+  /**
+   * Broker lease control. "release" drops the CDP connection so other tools can
+   * use Chrome's single consented debugging slot; "acquire" reconnects (Chrome
+   * shows a fresh Allow dialog); "status" reports the lease without side effects.
+   */
+  | { type: "control"; id: string; action: "release" | "acquire" | "status" };

@@ -13,6 +13,7 @@ const globalHelp = `Usage:
   lens eval <expression> [--input <file>] [--params <json>]
   lens observe <target> [--request <index|pattern>] [--wait-ms <number>] [--timeout-ms <number>] [--html]
   lens status [--wait-ms <number>]
+  lens broker <status|release|acquire>
   lens update [--catalog <source>]
   lens skill
 
@@ -152,11 +153,35 @@ Example:
 `,
   status: `Usage: lens status [options]
 
-Report the local broker port and browser connection state.
-No catalog needed.
+Report the local broker port, browser connection state, and CDP lease
+("held", "released", or "disconnected"). No catalog needed.
 
 Options:
   --wait-ms <number>      Wait this long for the browser before reporting
+  --port, -p <number>     Persistent browser broker port
+  --verbose, -v           Write timestamped diagnostics to stderr
+  --help, -h              Show this help
+`,
+  broker: `Usage: lens broker <action> [options]
+
+Control the broker's CDP lease on Chrome's single consented debugging slot.
+No catalog needed.
+
+Actions:
+  status                  Report the lease without side effects
+  release                 Drop the CDP connection so other CDP tools (e.g.
+                          chrome-devtools-mcp) can connect to Chrome. The
+                          broker keeps running and reacquires on the next
+                          lens call or "acquire".
+  acquire                 Reconnect to Chrome. Consent is session-scoped, so
+                          no new Allow dialog appears; bare lens calls also
+                          reacquire silently. Release frees Chrome's single
+                          debugging slot for other tools — it is not a hard
+                          stop. Set LENS_BROKER_IDLE_RELEASE_MS in the
+                          broker's environment to opt in to idle auto-release.
+
+Options:
+  --timeout-ms <number>   Whole control-call timeout (default: 60000)
   --port, -p <number>     Persistent browser broker port
   --verbose, -v           Write timestamped diagnostics to stderr
   --help, -h              Show this help
@@ -293,7 +318,7 @@ async function main(): Promise<void> {
     : undefined;
   // status and observe are catalog-independent; the rest resolve lenses by name.
   const catalog =
-    command === "status" || command === "observe"
+    command === "status" || command === "observe" || command === "broker"
       ? values.catalog
       : requireCatalogs(values.catalog);
   const client = createLensClient({ catalog, port, log });
@@ -332,6 +357,14 @@ async function main(): Promise<void> {
         if (waitMs !== undefined) await client.waitForConnection(waitMs);
         output = await client.status();
         break;
+      case "broker": {
+        const [action] = operands;
+        if (action !== "status" && action !== "release" && action !== "acquire") {
+          throw new Error('broker requires an action: "status", "release", or "acquire"');
+        }
+        output = await client.broker(action, timeoutMs);
+        break;
+      }
     }
     process.stdout.write(`${JSON.stringify(output, null, 2)}\n`);
     if (
