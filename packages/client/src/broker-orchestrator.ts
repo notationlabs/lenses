@@ -155,6 +155,8 @@ export function createSessionEngineIO(
     domExtract: (resolver) => session.domExtract(resolver),
     snapshot: (maxChars) => session.snapshot({ maxChars }),
     async sleep(ms) {
+      // EngineIO.sleep is a polling hook: defer the next cursor read until this
+      // deadline so the backend can long-poll instead of sleeping then polling.
       readDeadline = Date.now() + ms;
     },
     log: progress,

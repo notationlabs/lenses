@@ -145,6 +145,10 @@ export interface EngineIO {
   domExtract(spec: DomResolver): Promise<{ url: string; title: string; value: unknown }>;
   /** plain-text snapshot of the page for the LLM tier */
   snapshot(maxChars: number): Promise<{ url: string; title: string; text: string }>;
+  /**
+   * Pause resolver polling. Hosts may treat this as a poll-deadline hint
+   * rather than a wall-clock delay; resolvers must not rely on it for real waits.
+   */
   sleep(ms: number): Promise<void>;
   /** Optional progress diagnostics for interactive hosts. */
   log?(message: string): void;
