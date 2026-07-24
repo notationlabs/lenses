@@ -26,9 +26,9 @@ const cache = new Map<string, { result: unknown; expiresAt: number }>();
 const cdp = createCdpHost();
 const requestQueue = new SerialTaskQueue();
 
-// Idle auto-release is opt-in (0 = hold the lease forever): reacquiring the
-// consent-gated CDP endpoint pops a fresh Allow dialog in Chrome, so silently
-// releasing on idle would re-prompt the user on every lens call after a gap.
+// Idle auto-release is opt-in (0 = hold the lease forever): releasing frees
+// Chrome's single debugging slot for other CDP tools, at the cost of a
+// reconnect (no re-consent — Chrome scopes the Allow dialog to the session).
 const idleReleaseMs = Number(process.env.LENS_BROKER_IDLE_RELEASE_MS ?? 0) || 0;
 let inFlight = 0;
 let idleTimer: ReturnType<typeof setTimeout> | undefined;

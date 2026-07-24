@@ -29,7 +29,9 @@ const LOAD_GRACE_MS = 500;
 const DEFAULT_LOAD_TIMEOUT_MS = 30_000;
 const CONNECT_WINDOW_MS = 45_000;
 const CONNECT_RETRY_MS = 2_000;
+const CONNECT_ATTEMPT_MS = 10_000;
 const ENDPOINT_POLL_MS = 500;
+const RECONNECT_BACKOFF_MAX_MS = 30_000;
 
 /** Where Chrome stable writes DevToolsActivePort when remote debugging is on. */
 function defaultUserDataDir(): string {
@@ -65,8 +67,9 @@ export interface CdpHost {
   /**
    * Drop the CDP connection and stop auto-reconnecting, freeing Chrome's single
    * consented debugging slot for other tools. The next lens call (or acquire)
-   * reconnects — Chrome then shows a fresh Allow dialog, which is why release
-   * is explicit rather than idle-triggered by default.
+   * silently reconnects: Chrome scopes consent to the browser session, so no
+   * new Allow dialog appears. Release is cooperative slot-sharing, not a
+   * consent boundary or a hard stop.
    */
   release(): Promise<void>;
   /** Reconnect after a release (prompts the user to Allow in Chrome). */
@@ -88,6 +91,8 @@ export function createCdpHost(log: (message: string) => void = () => {}): CdpHos
   let endpointPoll: ReturnType<typeof setInterval> | undefined;
   /** true after an explicit release(): suppress auto-reconnect until asked. */
   let released = false;
+  let reconnectDelayMs = CONNECT_RETRY_MS;
+  let nextReconnectAt = 0;
   const captures = new WeakMap<Page, InterceptedResponse[]>();
   const statusListeners = new Set<() => void>();
 
@@ -99,7 +104,8 @@ export function createCdpHost(log: (message: string) => void = () => {}): CdpHos
 
   async function ensureBrowser(progress: (message: string) => void): Promise<Browser> {
     // A lens call is an explicit demand for the browser: leave the released
-    // state and reacquire (Chrome will show a fresh Allow dialog).
+    // state and reacquire. Consent is session-scoped in Chrome, so this
+    // reconnect raises no new Allow dialog.
     released = false;
     if (browser?.connected) return browser;
     if (connecting) return connecting;
@@ -127,7 +133,13 @@ export function createCdpHost(log: (message: string) => void = () => {}): CdpHos
         // channel resolves the default user data dir and reads DevToolsActivePort.
         // defaultViewport: null — don't emulate a fixed viewport in the
         // user's real browser windows; use each window's actual size.
-        connected = await puppeteer.connect({ channel: "chrome", defaultViewport: null });
+        // Chrome can hold the socket open without answering while consent is
+        // pending, so a single connect attempt can hang forever; bound each
+        // attempt so the overall deadline is actually enforced.
+        connected = await attemptWithTimeout(
+          puppeteer.connect({ channel: "chrome", defaultViewport: null }),
+          CONNECT_ATTEMPT_MS
+        );
         break;
       } catch (error) {
         if (Date.now() >= deadline) {
@@ -143,6 +155,8 @@ export function createCdpHost(log: (message: string) => void = () => {}): CdpHos
     const version = await connected.version();
     browser = connected;
     browserVersion = version;
+    reconnectDelayMs = CONNECT_RETRY_MS;
+    nextReconnectAt = 0;
     connected.on("disconnected", () => {
       if (browser !== connected) return;
       browser = undefined;
@@ -159,10 +173,17 @@ export function createCdpHost(log: (message: string) => void = () => {}): CdpHos
     const present = endpointAvailable();
     if (!present) {
       endpointPresent = false;
+      reconnectDelayMs = CONNECT_RETRY_MS;
       return;
     }
-    if (released || endpointPresent || available() || connecting) return;
+    const fresh = !endpointPresent;
     endpointPresent = true;
+    if (released || available() || connecting) return;
+    // A failed attempt must not end reconnection while the endpoint is live:
+    // keep retrying with backoff instead of latching on endpointPresent.
+    if (!fresh && Date.now() < nextReconnectAt) return;
+    nextReconnectAt = Date.now() + reconnectDelayMs;
+    reconnectDelayMs = Math.min(reconnectDelayMs * 2, RECONNECT_BACKOFF_MAX_MS);
     void ensureBrowser(() => {}).catch((error) => {
       log(`cdp connection failed: ${error instanceof Error ? error.message : String(error)}`);
     });
@@ -375,6 +396,29 @@ export function createCdpHost(log: (message: string) => void = () => {}): CdpHos
       }
     },
   };
+}
+
+/**
+ * Bound a connect attempt. A timed-out attempt may still resolve later, in
+ * which case its browser must be disconnected rather than leaked.
+ */
+function attemptWithTimeout(connect: Promise<Browser>, timeoutMs: number): Promise<Browser> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`connect attempt timed out after ${timeoutMs}ms`));
+      connect.then((late) => void late.disconnect()).catch(() => {});
+    }, timeoutMs);
+    connect.then(
+      (browser) => {
+        clearTimeout(timer);
+        resolve(browser);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      }
+    );
+  });
 }
 
 async function findPage(b: Browser, target: string): Promise<Page | undefined> {
