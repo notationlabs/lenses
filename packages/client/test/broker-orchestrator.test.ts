@@ -245,6 +245,29 @@ describe("broker orchestration", () => {
     expect(extension.finishes).toEqual(["close-if-created"]);
     expect(cdp.binds).toHaveLength(0);
   });
+
+  it("uses an available fallback without waiting for a preferred backend", async () => {
+    vi.useFakeTimers();
+    const extension = new FakeBackend("extension", false);
+    const cdp = new FakeBackend("cdp", true);
+    const result = request(
+      createBrokerOrchestrator([extension, cdp], {
+        preferredWaitMs: 2000,
+      }),
+      {
+        type: "call",
+        id: "fallback",
+        spec: domSpec(),
+        params: {},
+        timeoutMs: 1000,
+      }
+    );
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(cdp.binds).toHaveLength(1);
+    await expect(result).resolves.toMatchObject({ kind: "value" });
+    vi.useRealTimers();
+  });
 });
 
 describe("session cursor adapter", () => {
