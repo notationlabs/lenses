@@ -1,5 +1,6 @@
 import type { ExtensionRpcOperation } from "@djgrant/lens";
 import { resetIntercepts } from "./intercepts.js";
+import { loadCreatedTabLeases } from "./tab-leases.js";
 import { formatError } from "../errors.js";
 
 export interface BoundTab {
@@ -17,17 +18,17 @@ export async function bindTab(
   request: BindOperation
 ): Promise<BoundTab> {
   const tabs = await chrome.tabs.query({});
+
+  // A tab this extension opened for the target is ours whatever it is showing
+  // now: a signed-out target redirects onto a sign-in form, and matching on
+  // URL alone would miss it and open another tab for every later call.
+  const leased = await leasedTabFor(request.target, tabs);
+  if (leased) return bindExisting(leased, request, true);
+
   const exact = tabs.find(
     (tab) => tab.url && sameTarget(tab.url, request.target)
   );
-  if (exact?.id !== undefined) {
-    if (request.navigation === "fresh") {
-      await reloadTab(exact.id, request.loadTimeoutMs);
-      return { tabId: exact.id, created: false, navigated: true };
-    }
-    await ensureContentScript(exact.id, request.loadTimeoutMs);
-    return { tabId: exact.id, created: false, navigated: false };
-  }
+  if (exact) return bindExisting(exact, request, false);
 
   const created = await chrome.tabs.create({
     url: request.target,
@@ -37,6 +38,58 @@ export async function bindTab(
   resetIntercepts(created.id);
   await waitForLoad(created.id, request.loadTimeoutMs);
   return { tabId: created.id, created: true, navigated: true };
+}
+
+async function leasedTabFor(
+  target: string,
+  tabs: chrome.tabs.Tab[]
+): Promise<chrome.tabs.Tab | undefined> {
+  const leases = await loadCreatedTabLeases();
+  const leased = leases.find(
+    (lease) => lease.target && sameTarget(lease.target, target)
+  );
+  if (!leased) return undefined;
+  // The user may have closed the tab since; its lease is then dead weight the
+  // reaper clears, and this call falls through to opening a new tab.
+  return tabs.find((tab) => tab.id === leased.tabId);
+}
+
+async function bindExisting(
+  tab: chrome.tabs.Tab,
+  request: BindOperation,
+  owned: boolean
+): Promise<BoundTab> {
+  const tabId = tab.id;
+  if (tabId === undefined) throw new Error("could not bind tab");
+  if (!tab.url || !sameTarget(tab.url, request.target)) {
+    await navigateTab(tabId, request.target, request.loadTimeoutMs);
+    return { tabId, created: owned, navigated: true };
+  }
+  if (request.navigation === "fresh") {
+    await reloadTab(tabId, request.loadTimeoutMs);
+    return { tabId, created: owned, navigated: true };
+  }
+  await ensureContentScript(tabId, request.loadTimeoutMs);
+  return { tabId, created: owned, navigated: false };
+}
+
+export async function navigateTab(
+  tabId: number,
+  url: string,
+  loadTimeoutMs: number
+): Promise<void> {
+  resetIntercepts(tabId);
+  // The tab still reports the previous page as complete for a moment, so wait
+  // for the load event rather than the status we can read now — and listen
+  // before navigating, since a fast load can complete before update resolves.
+  const loaded = waitForLoad(tabId, loadTimeoutMs, true);
+  try {
+    await chrome.tabs.update(tabId, { url });
+  } catch (error) {
+    loaded.catch(() => {});
+    throw error;
+  }
+  await loaded;
 }
 
 export async function reloadTab(
@@ -76,7 +129,8 @@ export function tabMessage<T>(
 
 function waitForLoad(
   tabId: number,
-  timeoutMs: number
+  timeoutMs: number,
+  awaitEvent = false
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -117,7 +171,7 @@ function waitForLoad(
     chrome.tabs.onUpdated.addListener(listener);
     void chrome.tabs.get(tabId).then(
       (tab) => {
-        if (tab.status === "complete") loaded();
+        if (tab.status === "complete" && !awaitEvent) loaded();
       },
       (error) => finish(new Error(formatError(error)))
     );

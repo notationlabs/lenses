@@ -62,7 +62,7 @@ describe("created-tab leases", () => {
     const session = await bind();
     expect(session.created).toBe(true);
     expect(chrome.createdUrls).toEqual([TARGET]);
-    expect(leases()).toEqual([1]);
+    expect(leases()).toEqual([{ tabId: 1, target: TARGET }]);
 
     await finish(session.id, "close-if-created");
 
@@ -80,7 +80,7 @@ describe("created-tab leases", () => {
     // untracked, so nothing could ever collect it.
     expect(chrome.removed).toEqual([]);
     expect(chrome.tabs.has(1)).toBe(true);
-    expect(leases()).toEqual([1]);
+    expect(leases()).toEqual([{ tabId: 1, target: TARGET }]);
   });
 
   it("never closes a tab it did not create, under either disposition", async () => {
@@ -116,7 +116,7 @@ describe("reapAbandonedTabLeases", () => {
   it("collects a kept tab left by a previous run", async () => {
     const kept = chrome.addTab(SIGN_IN);
     const untracked = chrome.addTab("https://example.com/other");
-    chrome.storage.set(LEASES_KEY, [kept.id]);
+    chrome.storage.set(LEASES_KEY, [{ tabId: kept.id, target: TARGET }]);
 
     await reapAbandonedTabLeases();
 
@@ -125,10 +125,87 @@ describe("reapAbandonedTabLeases", () => {
     expect(leases()).toBeUndefined();
   });
 
+  it("reads a lease written before leases carried a target", async () => {
+    const kept = chrome.addTab(SIGN_IN);
+    chrome.storage.set(LEASES_KEY, [kept.id]);
+
+    await reapAbandonedTabLeases();
+
+    expect(chrome.removed).toEqual([kept.id]);
+  });
 
   it("survives a lease whose tab the user already closed", async () => {
-    chrome.storage.set(LEASES_KEY, [99]);
+    chrome.storage.set(LEASES_KEY, [{ tabId: 99, target: TARGET }]);
 
     await expect(reapAbandonedTabLeases()).resolves.toBeUndefined();
+  });
+});
+
+describe("rebinding a kept tab", () => {
+  it("reuses the tab it opened for the target after a redirect moved it", async () => {
+    const first = await bind();
+    await finish(first.id, "keep");
+    // needs_auth: the target bounced the tab onto a sign-in form.
+    chrome.setUrl(1, SIGN_IN);
+
+    const second = await bind();
+
+    expect(chrome.createdUrls).toEqual([TARGET]);
+    expect(second).toMatchObject({ created: true, navigated: true });
+    expect(chrome.navigations).toEqual([[1, TARGET]]);
+    expect(chrome.tabs.size).toBe(1);
+
+    await finish(second.id, "close-if-created");
+    expect(chrome.removed).toEqual([1]);
+    expect(leases()).toEqual([]);
+  });
+
+  it("does not accumulate a tab per call across a run of signed-out calls", async () => {
+    for (let call = 0; call < 5; call++) {
+      const session = await bind();
+      await finish(session.id, "keep");
+      chrome.redirectAll(TARGET, SIGN_IN);
+    }
+
+    expect(chrome.tabs.size).toBe(1);
+    expect(chrome.createdUrls).toEqual([TARGET]);
+  });
+
+  it("keeps leases for different targets apart", async () => {
+    const other = "https://example.com/invoices";
+    const first = await bind();
+    await finish(first.id, "keep");
+    chrome.setUrl(1, SIGN_IN);
+
+    const second = await bind(other);
+
+    expect(second.created).toBe(true);
+    expect(chrome.createdUrls).toEqual([TARGET, other]);
+    expect(leases()).toEqual([
+      { tabId: 1, target: TARGET },
+      { tabId: 2, target: other },
+    ]);
+  });
+
+  it("creates a fresh tab when the user closed the leased one", async () => {
+    const first = await bind();
+    await finish(first.id, "keep");
+    chrome.tabs.delete(1);
+
+    const second = await bind();
+
+    expect(second.created).toBe(true);
+    expect(chrome.createdUrls).toEqual([TARGET, TARGET]);
+  });
+
+  it("reuses a leased tab still sitting on the target without renavigating it", async () => {
+    const first = await bind();
+    await finish(first.id, "keep");
+
+    const second = await bind(TARGET, "reuse");
+
+    expect(chrome.createdUrls).toEqual([TARGET]);
+    expect(second).toMatchObject({ created: true, navigated: false });
+    expect(chrome.navigations).toEqual([]);
   });
 });

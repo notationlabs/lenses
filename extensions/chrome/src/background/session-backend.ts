@@ -4,14 +4,17 @@ import type {
 } from "@djgrant/lens";
 import { readIntercepts } from "./intercepts.js";
 import {
+  forgetCreatedTab,
+  rememberCreatedTab,
+  takeCreatedTabLeases,
+} from "./tab-leases.js";
+import {
   bindTab,
   closeTab,
   reloadTab,
   tabMessage,
   type BoundTab,
 } from "./tabs.js";
-
-const CREATED_TAB_LEASES_KEY = "createdTabLeases";
 
 interface SessionState {
   id: string;
@@ -24,9 +27,8 @@ export interface ExtensionSessionBackend {
 }
 
 export async function reapAbandonedTabLeases(): Promise<void> {
-  const tabIds = await loadCreatedTabLeases();
-  await chrome.storage.session.remove(CREATED_TAB_LEASES_KEY);
-  await Promise.all(tabIds.map((tabId) => closeTab(tabId)));
+  const leases = await takeCreatedTabLeases();
+  await Promise.all(leases.map((lease) => closeTab(lease.tabId)));
 }
 
 export function createExtensionSessionBackend(): ExtensionSessionBackend {
@@ -46,7 +48,9 @@ export function createExtensionSessionBackend(): ExtensionSessionBackend {
           const bound = await bindTab(operation);
           const id = crypto.randomUUID();
           sessions.set(id, { id, bound });
-          if (bound.created) await rememberCreatedTab(bound.tabId);
+          if (bound.created) {
+            await rememberCreatedTab(bound.tabId, operation.target);
+          }
           return {
             name: "bind",
             session: {
@@ -146,38 +150,4 @@ async function checkedTabMessage<T>(
     throw new Error(response.error);
   }
   return response;
-}
-
-let leaseUpdate: Promise<void> = Promise.resolve();
-
-async function rememberCreatedTab(tabId: number): Promise<void> {
-  leaseUpdate = leaseUpdate.then(async () => {
-    const tabIds = new Set(await loadCreatedTabLeases());
-    tabIds.add(tabId);
-    await chrome.storage.session.set({
-      [CREATED_TAB_LEASES_KEY]: [...tabIds],
-    });
-  });
-  await leaseUpdate;
-}
-
-async function forgetCreatedTab(tabId: number): Promise<void> {
-  leaseUpdate = leaseUpdate.then(async () => {
-    const tabIds = new Set(await loadCreatedTabLeases());
-    tabIds.delete(tabId);
-    await chrome.storage.session.set({
-      [CREATED_TAB_LEASES_KEY]: [...tabIds],
-    });
-  });
-  await leaseUpdate;
-}
-
-async function loadCreatedTabLeases(): Promise<number[]> {
-  const stored = await chrome.storage.session.get(
-    CREATED_TAB_LEASES_KEY
-  );
-  const value = stored[CREATED_TAB_LEASES_KEY];
-  return Array.isArray(value)
-    ? value.filter((tabId): tabId is number => Number.isInteger(tabId))
-    : [];
 }
