@@ -100,10 +100,16 @@ export function createExtensionSessionBackend(): ExtensionSessionBackend {
           const active = session(operation.sessionId);
           sessions.delete(operation.sessionId);
           if (active.bound.created) {
-            await forgetCreatedTab(active.bound.tabId);
             if (operation.disposition === "close-if-created") {
+              await forgetCreatedTab(active.bound.tabId);
               await closeTab(active.bound.tabId);
             }
+            // A kept tab holds a sign-in page the caller still needs, so it
+            // outlives its session — but its lease outlives it too. Dropping
+            // the lease here left the tab untracked and therefore permanent,
+            // and since a needs_auth redirect moves the tab off the target
+            // URL, the next call could not rebind to it either: one orphan
+            // per signed-out call, forever. The reaper collects it instead.
           }
           return { name: "finish" };
         }
