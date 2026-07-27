@@ -8,6 +8,7 @@ import type { LensBridgeRequest } from "@djgrant/lens";
 import { createBrokerOrchestrator } from "./broker-orchestrator.js";
 import { createCdpBackend } from "./cdp-host.js";
 import { createExtensionBackend } from "./extension-backend.js";
+import { brokerBuildStamp } from "./broker-stamp.js";
 import { SerialTaskQueue } from "./serial-task-queue.js";
 
 const port = Number(process.argv[2]);
@@ -28,6 +29,11 @@ const orchestrator = createBrokerOrchestrator([extension, cdp], {
   preferredWaitMs: 2_000,
 });
 const requestQueue = new SerialTaskQueue();
+// Stamped once at startup: this daemon reports the code it is actually running,
+// even after a rebuild replaces the files on disk.
+const buildStamp = brokerBuildStamp();
+const DRAIN_TIMEOUT_MS = 10_000;
+let shuttingDown = false;
 
 // Idle auto-release is opt-in (0 = hold the lease forever): releasing frees
 // Chrome's single debugging slot for other CDP tools, at the cost of a
@@ -64,6 +70,12 @@ const fallbackStart = setTimeout(() => {
   if (!extension.available()) cdp.start();
 }, 2_000);
 
+// A losing spawn race (another daemon already owns the port) must exit rather
+// than linger as a server-less process kept alive by the handlers above.
+server.on("error", (error) => {
+  console.error("broker server error:", error);
+  process.exit(1);
+});
 server.on("connection", (socket) => {
   socket.once("message", (data) => identify(socket, data.toString()));
 });
@@ -99,6 +111,14 @@ function onClientMessage(client: WebSocket, raw: string): void {
     return;
   }
   if (message.type !== "call" && message.type !== "observe") return;
+  if (shuttingDown) {
+    send(client, {
+      type: "result",
+      id: message.id,
+      result: { kind: "error", message: "lens broker is shutting down; reconnect to respawn it" },
+    });
+    return;
+  }
   beginWork();
   void requestQueue
     .run(() => handleClientMessage(client, message))
@@ -110,6 +130,15 @@ async function handleControl(
   client: WebSocket,
   message: Extract<LensBridgeRequest, { type: "control" }>
 ): Promise<void> {
+  if (message.action === "shutdown") {
+    send(client, {
+      type: "result",
+      id: message.id,
+      result: { kind: "value", value: { shuttingDown: true, stamp: buildStamp } },
+    });
+    void shutdown("client requested a restart");
+    return;
+  }
   try {
     if (message.action === "release") await cdp.release();
     if (message.action === "acquire") {
@@ -139,10 +168,33 @@ async function handleClientMessage(client: WebSocket, message: LensBridgeRequest
   await orchestrator.handle(message, (frame) => send(client, frame));
 }
 
+/**
+ * Retire this daemon: refuse new work, let in-flight calls finish (bounded, so a
+ * wedged call cannot pin a stale broker forever), release the CDP lease, then
+ * exit. Clients see the socket close and fail their pending calls cleanly.
+ */
+async function shutdown(reason: string): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.error(`broker shutting down: ${reason}`);
+  const deadline = Date.now() + DRAIN_TIMEOUT_MS;
+  while (inFlight > 0 && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  extension.stop();
+  await cdp.release().catch(() => {});
+  cdp.stop();
+  clearTimeout(fallbackStart);
+  for (const client of clients) client.close();
+  server.close();
+  process.exit(0);
+}
+
 function sendStatus(socket: WebSocket): void {
   const preferred = extension.available() ? extension : cdp;
   send(socket, {
     type: "status",
+    stamp: buildStamp,
     connected: preferred.available(),
     lease: cdp.lease(),
     ua: preferred.available() ? preferred.info().detail : undefined,

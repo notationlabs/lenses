@@ -212,6 +212,10 @@ lens MCP ────┘                                │             └─ C
 
 The broker hosts the resolver engine, caching, retry policy, and page-retention policy once. It pins each call to one session backend: the extension is preferred when its protocol and capabilities are compatible, while the CDP backend supplies the same page lifecycle, network capture, and in-page extraction primitives as a fallback.
 
+### Broker lifecycle
+
+The first client to need the broker spawns it as a detached process on port 4319 and every later client shares it. Because it outlives the command that started it, the daemon stamps itself at startup with a content hash of its own module directory and reports that stamp in its status frame. A client whose own stamp differs — the normal state after a rebuild or a pull — asks the broker to shut down and reconnects to a freshly spawned one, so nobody keeps talking to yesterday's code. Concurrent clients coordinate through a lock file, so exactly one restarts the broker while the rest wait and reconnect; a stamp that never converges fails the bind after three attempts rather than looping. A retiring broker drains in-flight calls (bounded at 10s), releases the CDP lease and exits, so a call in flight completes or fails with a clear error instead of hanging.
+
 ## Lens spec reference
 
 A lens is a JSON file in a catalog source — a local directory such as `examples/`, a git
