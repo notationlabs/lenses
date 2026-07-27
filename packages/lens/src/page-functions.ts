@@ -34,8 +34,27 @@ export function pageDomExtract(spec: Pick<DomResolver, "item" | "fields">): {
     return raw.replace(/\s+/g, " ").trim();
   }
 
+  /**
+   * Where this field's selector is run from. A row often loses context that
+   * lives on an enclosing element — a tax year on the tab panel wrapping the
+   * table — which no descendant selector can reach, so `scope` moves the root
+   * first: "+" (or "+ sel") crosses to the next sibling, anything else is an
+   * ancestor selector resolved with closest(). `sibling: true` is the older
+   * spelling of "+".
+   */
+  function fieldRoot(root: Element, f: DomFieldSpec): Element | null {
+    const scope = f.scope ?? (f.sibling ? "+" : undefined);
+    if (!scope) return root;
+    if (scope === "+" || scope.startsWith("+ ")) {
+      const next = root.nextElementSibling;
+      const want = scope.slice(1).trim();
+      return next && (want === "" || next.matches(want)) ? next : null;
+    }
+    return root.closest(scope);
+  }
+
   function extractField(root: Element, f: DomFieldSpec): string | null {
-    const scope = f.sibling ? root.nextElementSibling : root;
+    const scope = fieldRoot(root, f);
     if (!scope) return null;
     const el = f.selector === ":self" ? scope : scope.querySelector(f.selector);
     if (!el) return null;

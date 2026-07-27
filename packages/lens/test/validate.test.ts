@@ -134,6 +134,26 @@ describe("specWarnings", () => {
     expect(warning).toContain('"hint" is the only key read from the declaration');
   });
 
+  it("steers a sibling field onto scope, naming what scope buys", () => {
+    const spec = validateSpec({
+      ...validSpec,
+      resolve: [
+        { kind: "dom", item: ".row", fields: { s: { selector: ".score", sibling: true } } },
+      ],
+    });
+    const [warning] = specWarnings(spec);
+    expect(warning).toContain('"scope": "+"');
+    expect(warning).toContain("also reaches ancestors");
+  });
+
+  it("says nothing about a field that already uses scope", () => {
+    const spec = validateSpec({
+      ...validSpec,
+      resolve: [{ kind: "dom", item: ".row", fields: { s: { selector: ".y", scope: ".panel" } } }],
+    });
+    expect(specWarnings(spec)).toEqual([]);
+  });
+
   it("flags a spec-level detect too", () => {
     const spec = validateSpec({ ...validSpec, detect: { rate_limited: "true" } });
     expect(specWarnings(spec)).toHaveLength(1);

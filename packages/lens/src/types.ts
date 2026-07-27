@@ -91,7 +91,14 @@ export interface DomFieldSpec {
   selector: string;
   /** read this attribute instead of textContent */
   attr?: string;
-  /** search in item.nextElementSibling instead of the item (e.g. HN's two-row layout) */
+  /**
+   * Move the root this field's selector runs from. "+" (or "+ sel") crosses to
+   * the next element sibling, for two-row layouts; anything else is an ancestor
+   * selector resolved with closest(), for context a row cannot see — a year on
+   * the tab panel enclosing the table.
+   */
+  scope?: string;
+  /** @deprecated the older spelling of `scope: "+"` */
   sibling?: boolean;
 }
 

@@ -55,11 +55,11 @@
         },
         "score": {
           "selector": ".score",
-          "sibling": true
+          "scope": "+"
         },
         "comments": {
           "selector": ".subline > a:last-child",
-          "sibling": true
+          "scope": "+"
         }
       },
       "post": "{ \"stories\": $map($, function($v) { $merge([$v, {\"item_url\": $v.id}]) }) }"

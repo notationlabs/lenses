@@ -30,6 +30,7 @@ const interceptSchema = z
 const domFieldSchema = z.strictObject({
   selector: z.string(),
   attr: z.string().optional(),
+  scope: z.string().optional(),
   sibling: z.boolean().optional(),
 });
 
@@ -115,6 +116,20 @@ const lensSpecSchema = z.strictObject({
  * strings, and the result looks correct in `lens list` either way.
  */
 export function specWarnings(spec: LensSpec): string[] {
+  const warnings: string[] = [];
+  for (const resolver of spec.resolve) {
+    if (resolver.kind !== "dom") continue;
+    for (const [name, field] of Object.entries(resolver.fields ?? {})) {
+      if (field.sibling && !field.scope) {
+        warnings.push(
+          `field "${name}" uses "sibling": true, which is the older spelling of ` +
+            `"scope": "+". Prefer "scope", which also reaches ancestors — ` +
+            `"scope": ".tab-panel" runs the selector from the enclosing panel.`
+        );
+      }
+    }
+  }
+
   const declared = new Set(Object.keys(spec.outcomes ?? {}));
   const detected = new Set(Object.keys(spec.detect ?? {}));
   for (const resolver of spec.resolve) {
@@ -122,15 +137,16 @@ export function specWarnings(spec: LensSpec): string[] {
       for (const name of Object.keys(resolver.detect)) detected.add(name);
     }
   }
-  return [...detected]
-    .filter((name) => !declared.has(name))
-    .map(
-      (name) =>
-        `detect names the outcome "${name}", which "outcomes" does not declare, ` +
+  for (const name of detected) {
+    if (declared.has(name)) continue;
+    warnings.push(
+      `detect names the outcome "${name}", which "outcomes" does not declare, ` +
         `so a caller that hits it is given no way to recover. Declare it as ` +
         `"outcomes": { "${name}": { "hint": "<how to recover>" } } — "hint" is the ` +
         `only key read from the declaration, so "description" and the like reach nobody.`
     );
+  }
+  return warnings;
 }
 
 function pointerOf(path: PropertyKey[]): string {
@@ -189,7 +205,9 @@ export function validateSpec(raw: unknown): LensSpec {
     if (resolver.kind !== "dom") continue;
     const selectors = [
       ...(resolver.item ? [resolver.item] : []),
-      ...Object.values(resolver.fields ?? {}).map((field) => field.selector),
+      ...Object.values(resolver.fields ?? {}).flatMap((field) =>
+        field.scope ? [field.selector, field.scope] : [field.selector]
+      ),
     ];
     for (const selector of selectors) {
       for (const hole of holesIn(selector)) {

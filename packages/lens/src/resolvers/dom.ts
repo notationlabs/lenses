@@ -13,7 +13,11 @@ export function expandSelectors(r: DomResolver, params: Record<string, unknown>)
     ? Object.fromEntries(
         Object.entries(r.fields).map(([name, f]) => [
           name,
-          { ...f, selector: expandTemplate(f.selector, params) },
+          {
+            ...f,
+            selector: expandTemplate(f.selector, params),
+            ...(f.scope ? { scope: expandTemplate(f.scope, params) } : {}),
+          },
         ])
       )
     : undefined;
