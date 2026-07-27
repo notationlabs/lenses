@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
-import { createLensClient } from "@djgrant/lens-client";
+import { createLensClient, errorMessage } from "@djgrant/lens-client";
 import { createLensMcpServer } from "./server.js";
 
 async function main(): Promise<void> {
@@ -36,6 +36,6 @@ function brokerPort(raw: string | undefined): number | undefined {
 }
 
 main().catch((error) => {
-  process.stderr.write(`${error instanceof Error ? error.stack : String(error)}\n`);
+  process.stderr.write(`${error instanceof Error ? error.stack : errorMessage(error)}\n`);
   process.exit(1);
 });
