@@ -8,6 +8,7 @@ import type { LensBridgeRequest } from "@djgrant/lens";
 import { createBrokerOrchestrator } from "./broker-orchestrator.js";
 import { createCdpBackend } from "./cdp-host.js";
 import { createExtensionBackend } from "./extension-backend.js";
+import { createIdleExitTimer, createShutdownSequence } from "./broker-lifecycle.js";
 import { brokerBuildStamp } from "./broker-stamp.js";
 import { SerialTaskQueue } from "./serial-task-queue.js";
 
@@ -33,23 +34,35 @@ const requestQueue = new SerialTaskQueue();
 // even after a rebuild replaces the files on disk.
 const buildStamp = brokerBuildStamp();
 const DRAIN_TIMEOUT_MS = 10_000;
+const DEFAULT_IDLE_EXIT_MS = 15 * 60_000;
 let shuttingDown = false;
 
 // Idle auto-release is opt-in (0 = hold the lease forever): releasing frees
 // Chrome's single debugging slot for other CDP tools, at the cost of a
 // reconnect (no re-consent — Chrome scopes the Allow dialog to the session).
 const idleReleaseMs = Number(process.env.LENS_BROKER_IDLE_RELEASE_MS ?? 0) || 0;
+// Idle self-exit is on by default: a broker nobody is using should not squat on
+// the port and the debugging slot. 0 disables it.
+const idleExitMs = Number(process.env.LENS_BROKER_IDLE_EXIT_MS ?? DEFAULT_IDLE_EXIT_MS) || 0;
 let inFlight = 0;
 let idleTimer: ReturnType<typeof setTimeout> | undefined;
+
+const idleExit = createIdleExitTimer({
+  idleMs: idleExitMs,
+  isIdle: () => clients.size === 0 && !extension.available() && inFlight === 0,
+  onExit: () => shutdown(`idle for ${idleExitMs}ms`),
+});
 
 function beginWork(): void {
   inFlight += 1;
   if (idleTimer) clearTimeout(idleTimer);
   idleTimer = undefined;
+  idleExit.reset();
 }
 
 function endWork(): void {
   inFlight -= 1;
+  idleExit.reset();
   if (idleReleaseMs <= 0 || inFlight > 0) return;
   idleTimer = setTimeout(() => {
     if (inFlight === 0) void cdp.release();
@@ -59,6 +72,7 @@ function endWork(): void {
 cdp.onStatusChange(broadcastStatus);
 extension.onStatusChange(() => {
   broadcastStatus();
+  idleExit.reset();
   if (extension.available()) {
     cdp.stop();
     void cdp.release();
@@ -69,6 +83,10 @@ extension.onStatusChange(() => {
 const fallbackStart = setTimeout(() => {
   if (!extension.available()) cdp.start();
 }, 2_000);
+
+// Arm the countdown at startup: a broker spawned by a client that then dies
+// before connecting must not linger.
+idleExit.reset();
 
 // A losing spawn race (another daemon already owns the port) must exit rather
 // than linger as a server-less process kept alive by the handlers above.
@@ -89,9 +107,13 @@ function identify(socket: WebSocket, raw: string): void {
   const message = parse(raw);
   if (message?.type === "client") {
     clients.add(socket);
+    idleExit.reset();
     sendStatus(socket);
     socket.on("message", (data) => onClientMessage(socket, data.toString()));
-    socket.on("close", () => clients.delete(socket));
+    socket.on("close", () => {
+      clients.delete(socket);
+      idleExit.reset();
+    });
     return;
   }
   if (message?.type === "extension-hello") {
@@ -169,26 +191,31 @@ async function handleClientMessage(client: WebSocket, message: LensBridgeRequest
 }
 
 /**
- * Retire this daemon: refuse new work, let in-flight calls finish (bounded, so a
- * wedged call cannot pin a stale broker forever), release the CDP lease, then
- * exit. Clients see the socket close and fail their pending calls cleanly.
+ * Retire this daemon: refuse new work, let in-flight calls finish, release the
+ * CDP lease, then exit. Clients see the socket close and fail their pending
+ * calls cleanly; the next client respawns the broker.
  */
-async function shutdown(reason: string): Promise<void> {
-  if (shuttingDown) return;
+function shutdown(reason: string): Promise<void> {
+  // Set before draining so no new call is queued onto a dying broker.
   shuttingDown = true;
-  console.error(`broker shutting down: ${reason}`);
-  const deadline = Date.now() + DRAIN_TIMEOUT_MS;
-  while (inFlight > 0 && Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
-  extension.stop();
-  await cdp.release().catch(() => {});
-  cdp.stop();
-  clearTimeout(fallbackStart);
-  for (const client of clients) client.close();
-  server.close();
-  process.exit(0);
+  return runShutdown(reason);
 }
+
+const runShutdown = createShutdownSequence({
+  inFlight: () => inFlight,
+  drainTimeoutMs: DRAIN_TIMEOUT_MS,
+  release: () => cdp.release(),
+  log: (message) => console.error(message),
+  stop() {
+    idleExit.stop();
+    extension.stop();
+    cdp.stop();
+    clearTimeout(fallbackStart);
+    for (const client of clients) client.close();
+    server.close();
+  },
+  exit: () => process.exit(0),
+});
 
 function sendStatus(socket: WebSocket): void {
   const preferred = extension.available() ? extension : cdp;

@@ -289,6 +289,21 @@ export class LensClient {
   }
 
   /**
+   * Retire the broker daemon: it drains in-flight work, releases the CDP lease
+   * and exits. The next client spawns a fresh one, which is also how a client
+   * running newer code replaces a stale broker.
+   */
+  async shutdownBroker(timeoutMs?: number): Promise<{ shuttingDown: boolean }> {
+    const transport = await this.transport();
+    if (!transport.control) {
+      throw new Error("this transport does not support broker control");
+    }
+    const result = await transport.control("shutdown", timeoutMs);
+    if (result.kind === "error") throw new Error(result.message);
+    return { shuttingDown: true };
+  }
+
+  /**
    * Control the broker's CDP lease on Chrome's single consented debugging slot.
    * "release" frees the slot for other CDP tools; "acquire" reconnects (Chrome
    * shows a fresh Allow dialog); "status" reports without side effects.
