@@ -186,11 +186,23 @@ A call result is one of:
    // in a resolver: "post": "$[[0..$limit - 1]]"
    ```
 
+   Selectors take the same `{name}` holes as `url`, so a page that keys its
+   markup by a parameter needs no post-hoc recovery of that value from row text:
+
+   ```jsonc
+   "params": { "year": "integer" },
+   // in a dom tier: "item": "#past-payments-{year} .row"
+   ```
+
+   The value is substituted verbatim — a selector is not a URL and must not be
+   percent-encoded — so declare such a param as `integer` where the page allows
+   it. An undeclared hole is rejected at validation, not at runtime.
+
 4. Call it by file path to test: `lens call ./my-lens.json --catalog .`
 
 `map`, `post`, and `detect` are sandboxed JSONata: no network or DOM
-access. Declared params are available as variables (`$id`) in URL templates
-and every expression.
+access. Declared params are available as variables (`$id`) in every
+expression, and as `{name}` holes in `url` and in selectors.
 
 ## Result types
 

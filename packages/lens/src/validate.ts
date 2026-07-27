@@ -176,12 +176,27 @@ export function validateSpec(raw: unknown): LensSpec {
     );
     throw new Error(`invalid lens spec:\n${[...new Set(lines)].join("\n")}`);
   }
-  const holes = [...result.data.url.matchAll(/\{([a-zA-Z_][a-zA-Z0-9_]*)\}/g)].map(
-    (match) => match[1]
-  );
-  for (const hole of holes) {
+  const holesIn = (template: string) =>
+    [...template.matchAll(/\{([a-zA-Z_][a-zA-Z0-9_]*)\}/g)].map((match) => match[1]);
+  for (const hole of holesIn(result.data.url)) {
     if (!result.data.params?.[hole]) {
       throw new Error(`invalid lens spec:\n  URL parameter "${hole}" is not declared`);
+    }
+  }
+  // Selectors take the same holes. Catching an undeclared one here beats a
+  // selector that silently keeps its braces and misses everything at runtime.
+  for (const resolver of result.data.resolve) {
+    if (resolver.kind !== "dom") continue;
+    const selectors = [
+      ...(resolver.item ? [resolver.item] : []),
+      ...Object.values(resolver.fields ?? {}).map((field) => field.selector),
+    ];
+    for (const selector of selectors) {
+      for (const hole of holesIn(selector)) {
+        if (!result.data.params?.[hole]) {
+          throw new Error(`invalid lens spec:\n  selector parameter "${hole}" is not declared`);
+        }
+      }
     }
   }
   for (const [name, declaration] of Object.entries(result.data.params ?? {})) {
