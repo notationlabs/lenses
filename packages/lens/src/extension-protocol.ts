@@ -163,6 +163,7 @@ const helloResultSchema = z.discriminatedUnion("accepted", [
 const domFieldSchema = z.strictObject({
   selector: z.string(),
   attr: z.string().optional(),
+  scope: z.string().optional(),
   sibling: z.boolean().optional(),
 });
 

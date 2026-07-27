@@ -99,16 +99,30 @@ A call result is one of:
      "fields": {
        "title": { "selector": ".titleline > a" },
        "url": { "selector": ".titleline > a", "attr": "href" },
-       "score": { "selector": ".score", "sibling": true } },
+       "score": { "selector": ".score", "scope": "+" } },
      "post": "$[[0..$limit - 1]]" }
    ```
 
    Field specs: `selector` (first match wins; `":self"` reads the item
    element itself), `attr` (read an attribute instead of text; `href`/`src`
-   are absolutised), `sibling: true` (search `item.nextElementSibling`, for
-   split-row layouts). A field matching nothing is `null`; declare it
-   `nullable` in `returns` or coerce to `null` in `map`, since `undefined`
-   fails a non-nullable field.
+   are absolutised), and `scope`, which moves the element the selector runs
+   from. A field matching nothing is `null`; declare it `nullable` in
+   `returns` or coerce to `null` in `map`, since `undefined` fails a
+   non-nullable field.
+
+   `scope` covers the two things a row cannot see. `"+"` (or `"+ sel"`, which
+   also requires the sibling to match) crosses to the next element sibling, for
+   split-row layouts: HN's story/subtext rows, or a definition list where
+   `"item": "dt"` zips each `dt` with its `dd`. Any other value is an ancestor
+   selector resolved with `closest()`, which is how a row reaches context that
+   lives above it — a tax year on the tab panel wrapping the table, rather than
+   recovered from row text:
+
+   ```jsonc
+   "fields": { "year": { "selector": ".year-heading", "scope": ".tab-panel" } }
+   ```
+
+   (`sibling: true` is the older spelling of `"scope": "+"` and still works.)
 
    A field without `attr` reads the element's **rendered text**, so a `<br>`
    separates its two sides instead of joining them. Whitespace runs — including

@@ -280,7 +280,7 @@ to that element; without it, fields are resolved once against the whole document
   "fields": {
     "title": { "selector": ".titleline > a" },
     "url": { "selector": ".titleline > a", "attr": "href" },
-    "score": { "selector": ".score", "sibling": true }
+    "score": { "selector": ".score", "scope": "+" }
   },
   "post": "[$.{ 'title': title, 'points': $number($substringBefore(score, ' ')) }]"
 }
@@ -292,9 +292,17 @@ Each field spec supports:
   selector `":self"` reads the item element itself rather than a descendant.
 - `attr` — read this attribute instead of the element's trimmed `textContent`.
   `href` and `src` values are resolved to absolute URLs against the page.
-- `sibling: true` — search inside `item.nextElementSibling` instead of the item.
-  This handles split-row layouts: HN's story/subtext table rows, or definition
-  lists, where `"item": "dt"` with a sibling field zips each `dt` with its `dd`.
+- `scope` — move the element the selector runs from, for context the item
+  itself does not contain. `"+"` (or `"+ sel"`, which also requires the sibling
+  to match) searches `item.nextElementSibling`, handling split-row layouts:
+  HN's story/subtext table rows, or definition lists, where `"item": "dt"` zips
+  each `dt` with its `dd`. Any other value is an ancestor selector resolved with
+  `closest()`, so a row can read a heading on the panel enclosing it:
+  `{ "selector": ".year-heading", "scope": ".tab-panel" }`. `sibling: true` is
+  the older spelling of `"scope": "+"` and still works.
+
+`url` and every selector — `item`, a field's `selector`, and its `scope` —
+expand `{name}` holes from declared params.
 
 A field that matches nothing is `null`. A tier that extracts nothing (or an empty
 item list) misses and falls through to the next tier. `detect` sees `{url, title}`,
