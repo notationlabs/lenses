@@ -6,14 +6,21 @@ export interface IdleExitTimer {
 }
 
 export interface IdleExitOptions {
-  /** 0 disables idle exit entirely. */
+  /** Window with a browser available but unused. 0 disables idle exit. */
   idleMs: number;
+  /**
+   * Window with no browser reachable at all. Short by design: a broker with
+   * nowhere to run lenses can do nothing but occupy memory, and respawning one
+   * costs ~200ms.
+   */
+  noBrowserMs: number;
   isIdle(): boolean;
-  onExit(): void | Promise<void>;
+  browserLive(): Promise<boolean>;
+  onExit(reason: string): void | Promise<void>;
 }
 
 /**
- * Exits the broker after a quiet window. "Quiet" deliberately includes "no
+ * Exits the broker once nothing needs it. "Quiet" deliberately includes "no
  * extension attached": exiting under an attached extension would drop its
  * socket and force the extension through rediscovery, which is a worse trade
  * than a resident process. The next client respawns the broker on demand.
@@ -26,20 +33,35 @@ export function createIdleExitTimer(options: IdleExitOptions): IdleExitTimer {
     timer = undefined;
   };
 
+  const arm = (delayMs: number, fire: () => void) => {
+    clear();
+    timer = setTimeout(() => {
+      timer = undefined;
+      // Re-check: work can arrive between the last reset and the deadline.
+      if (options.isIdle()) fire();
+    }, delayMs);
+    timer.unref?.();
+  };
+
+  const start = () => {
+    clear();
+    if (options.idleMs <= 0 || !options.isIdle()) return;
+    arm(Math.min(options.noBrowserMs, options.idleMs), async () => {
+      if (await options.browserLive()) {
+        // A browser is there, just unused: fall back to the long window.
+        const remaining = Math.max(options.idleMs - options.noBrowserMs, 1);
+        arm(remaining, () => void options.onExit(`idle for ${options.idleMs}ms`));
+        return;
+      }
+      void options.onExit("no browser is reachable");
+    });
+  };
+
   return {
     get armed() {
       return timer !== undefined;
     },
-    reset() {
-      clear();
-      if (options.idleMs <= 0 || !options.isIdle()) return;
-      timer = setTimeout(() => {
-        timer = undefined;
-        // Re-check: work can arrive between the last reset and the deadline.
-        if (options.isIdle()) void options.onExit();
-      }, options.idleMs);
-      timer.unref?.();
-    },
+    reset: start,
     stop: clear,
   };
 }

@@ -2,7 +2,7 @@
  * CDP browser backend: owns Chrome connection and page mechanics only.
  * Lens orchestration, caching, retries, and result policy live in the broker.
  */
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import puppeteer, { type Browser, type Page } from "puppeteer-core";
@@ -52,6 +52,12 @@ export type CdpLease = "held" | "released" | "disconnected";
 
 export interface CdpBackend extends BrowserBackend {
   lease(): CdpLease;
+  /**
+   * Whether a browser is actually reachable. Chrome leaves DevToolsActivePort
+   * behind when it quits, so file presence is stale-positive; this probes the
+   * endpoint.
+   */
+  browserLive(): Promise<boolean>;
   release(): Promise<void>;
   acquire(progress?: (message: string) => void): Promise<void>;
   start(): void;
@@ -275,6 +281,29 @@ export function createCdpBackend(
     info: () => ({ name: "cdp", detail: browserVersion || undefined }),
     lease: () =>
       available() ? "held" : released ? "released" : "disconnected",
+    async browserLive() {
+      if (available()) return true;
+      let endpointPort: number;
+      try {
+        const [first] = readFileSync(
+          join(defaultUserDataDir(), "DevToolsActivePort"),
+          "utf8"
+        ).split("\n");
+        endpointPort = Number(first);
+      } catch {
+        return false;
+      }
+      if (!Number.isSafeInteger(endpointPort) || endpointPort < 1) return false;
+      try {
+        const response = await fetch(
+          `http://127.0.0.1:${endpointPort}/json/version`,
+          { signal: AbortSignal.timeout(1_000) }
+        );
+        return response.ok;
+      } catch {
+        return false;
+      }
+    },
     async release() {
       released = true;
       if (connecting) await connecting.catch(() => {});
