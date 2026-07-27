@@ -118,8 +118,24 @@ export class LensClient {
 
   /** Bind the broker on first use, so constructing a client has no side effects. */
   private transport(): Promise<LensTransport> {
-    return (this.transportPromise ??=
-      typeof this.connect === "function" ? this.connect() : Promise.resolve(this.connect));
+    return (this.transportPromise ??= this.bind());
+  }
+
+  /**
+   * Brokers are disposable — they retire when idle or when a rebuild makes them
+   * stale — so a cached transport outlives its socket. Dropping it on close
+   * lets the next call rebind, which respawns a broker and gives a dormant
+   * extension a fresh chance to attach.
+   */
+  private async bind(): Promise<LensTransport> {
+    if (typeof this.connect !== "function") return this.connect;
+    const transport = await this.connect();
+    // Captured after the await, when transport() has stored the promise.
+    const bound = this.transportPromise;
+    transport.onClose?.(() => {
+      if (this.transportPromise === bound) this.transportPromise = undefined;
+    });
+    return transport;
   }
 
   async list(): Promise<LensSummary[]> {
