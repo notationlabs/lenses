@@ -35,6 +35,7 @@ const requestQueue = new SerialTaskQueue();
 const buildStamp = brokerBuildStamp();
 const DRAIN_TIMEOUT_MS = 10_000;
 const DEFAULT_IDLE_EXIT_MS = 15 * 60_000;
+const DEFAULT_NO_BROWSER_EXIT_MS = 10_000;
 let shuttingDown = false;
 
 // Idle auto-release is opt-in (0 = hold the lease forever): releasing frees
@@ -44,13 +45,18 @@ const idleReleaseMs = Number(process.env.LENS_BROKER_IDLE_RELEASE_MS ?? 0) || 0;
 // Idle self-exit is on by default: a broker nobody is using should not squat on
 // the port and the debugging slot. 0 disables it.
 const idleExitMs = Number(process.env.LENS_BROKER_IDLE_EXIT_MS ?? DEFAULT_IDLE_EXIT_MS) || 0;
+// With no browser reachable the broker cannot do anything, so it goes quickly.
+const noBrowserExitMs =
+  Number(process.env.LENS_BROKER_NO_BROWSER_EXIT_MS ?? DEFAULT_NO_BROWSER_EXIT_MS) || 0;
 let inFlight = 0;
 let idleTimer: ReturnType<typeof setTimeout> | undefined;
 
 const idleExit = createIdleExitTimer({
   idleMs: idleExitMs,
+  noBrowserMs: noBrowserExitMs,
   isIdle: () => clients.size === 0 && !extension.available() && inFlight === 0,
-  onExit: () => shutdown(`idle for ${idleExitMs}ms`),
+  browserLive: () => cdp.browserLive(),
+  onExit: (reason) => shutdown(reason),
 });
 
 function beginWork(): void {

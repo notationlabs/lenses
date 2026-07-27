@@ -182,9 +182,11 @@ Actions:
   shutdown                Retire the broker: it drains in-flight work,
                           releases the lease and exits. The next lens call
                           spawns a fresh one. Brokers also exit on their own
-                          after LENS_BROKER_IDLE_EXIT_MS (default 15m, 0
-                          disables) with no clients, no extension attached
-                          and nothing in flight.
+                          with no clients, no extension attached and nothing
+                          in flight: after LENS_BROKER_NO_BROWSER_EXIT_MS
+                          (default 10s) when no browser is reachable, or
+                          LENS_BROKER_IDLE_EXIT_MS (default 15m, 0 disables)
+                          when one is there but unused.
 
 Options:
   --timeout-ms <number>   Whole control-call timeout (default: 60000)

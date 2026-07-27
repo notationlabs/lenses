@@ -8,77 +8,100 @@ interface World {
   clients: number;
   extensionAttached: boolean;
   inFlight: number;
+  browserLive: boolean;
 }
 
-function idleWorld(idleMs: number) {
-  const world: World = { clients: 0, extensionAttached: false, inFlight: 0 };
+function idleWorld(idleMs: number, options: { browserLive?: boolean; noBrowserMs?: number } = {}) {
+  const world: World = {
+    clients: 0,
+    extensionAttached: false,
+    inFlight: 0,
+    browserLive: options.browserLive ?? true,
+  };
   const exits: string[] = [];
   const timer = createIdleExitTimer({
     idleMs,
+    noBrowserMs: options.noBrowserMs ?? 100,
     isIdle: () =>
       world.clients === 0 && !world.extensionAttached && world.inFlight === 0,
-    onExit: () => void exits.push("exit"),
+    browserLive: async () => world.browserLive,
+    onExit: (reason) => void exits.push(reason),
   });
   timer.reset();
   return { world, exits, timer };
 }
 
 describe("idle self-exit", () => {
-  it("exits after the idle window when nothing is using the broker", () => {
+  it("exits after the long window when a browser is there but unused", async () => {
     const { exits } = idleWorld(1_000);
-    vi.advanceTimersByTime(999);
+    await vi.advanceTimersByTimeAsync(999);
     expect(exits).toHaveLength(0);
-    vi.advanceTimersByTime(1);
-    expect(exits).toEqual(["exit"]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(exits).toEqual(["idle for 1000ms"]);
   });
 
-  it("stays resident while a client is connected", () => {
+  it("exits quickly when no browser is reachable at all", async () => {
+    const { exits } = idleWorld(15 * 60_000, { browserLive: false, noBrowserMs: 100 });
+    await vi.advanceTimersByTimeAsync(100);
+    // No waiting out the long window: the broker cannot run a lens anyway.
+    expect(exits).toEqual(["no browser is reachable"]);
+  });
+
+  it("stays resident while a client is connected", async () => {
     const { world, exits, timer } = idleWorld(1_000);
     world.clients = 1;
     timer.reset();
     expect(timer.armed).toBe(false);
-    vi.advanceTimersByTime(5_000);
+    await vi.advanceTimersByTimeAsync(5_000);
     expect(exits).toHaveLength(0);
   });
 
-  it("stays resident while the extension is attached, so its socket survives", () => {
+  it("stays resident with no browser while a client is connected", async () => {
+    const { world, exits, timer } = idleWorld(1_000, { browserLive: false });
+    world.clients = 1;
+    timer.reset();
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(exits).toHaveLength(0);
+  });
+
+  it("stays resident while the extension is attached, so its socket survives", async () => {
     const { world, exits, timer } = idleWorld(1_000);
     world.extensionAttached = true;
     timer.reset();
-    vi.advanceTimersByTime(5_000);
+    await vi.advanceTimersByTimeAsync(5_000);
     expect(exits).toHaveLength(0);
     // Detaching arms the countdown again.
     world.extensionAttached = false;
     timer.reset();
-    vi.advanceTimersByTime(1_000);
-    expect(exits).toEqual(["exit"]);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(exits).toEqual(["idle for 1000ms"]);
   });
 
-  it("restarts the countdown on each activity, rather than exiting mid-window", () => {
+  it("restarts the countdown on each activity, rather than exiting mid-window", async () => {
     const { world, exits, timer } = idleWorld(1_000);
     for (let tick = 0; tick < 5; tick += 1) {
-      vi.advanceTimersByTime(900);
+      await vi.advanceTimersByTimeAsync(900);
       world.clients = 1;
       timer.reset();
       world.clients = 0;
       timer.reset();
     }
     expect(exits).toHaveLength(0);
-    vi.advanceTimersByTime(1_000);
-    expect(exits).toEqual(["exit"]);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(exits).toEqual(["idle for 1000ms"]);
   });
 
-  it("does not exit when work arrives between the last reset and the deadline", () => {
+  it("does not exit when work arrives between the last reset and the deadline", async () => {
     const { world, exits } = idleWorld(1_000);
     world.inFlight = 1;
-    vi.advanceTimersByTime(1_000);
+    await vi.advanceTimersByTimeAsync(1_000);
     expect(exits).toHaveLength(0);
   });
 
-  it("never arms when the window is disabled", () => {
-    const { exits, timer } = idleWorld(0);
+  it("never arms when the window is disabled", async () => {
+    const { exits, timer } = idleWorld(0, { browserLive: false });
     expect(timer.armed).toBe(false);
-    vi.advanceTimersByTime(60 * 60_000);
+    await vi.advanceTimersByTimeAsync(60 * 60_000);
     expect(exits).toHaveLength(0);
   });
 });
