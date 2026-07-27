@@ -45,6 +45,13 @@ export function satisfiesReturns(value: unknown, schema: unknown): boolean {
   return value !== undefined;
 }
 
+/**
+ * Satisfaction is tested against the *materialised* value, so a declared $lens
+ * field that binds from its siblings is present by then and counts. One that
+ * cannot bind — hn/top's next_page, whose params read a URL a later tier still
+ * has to extract — is left absent by materialisation and correctly fails here,
+ * so the engine goes on to the tier that supplies it.
+ */
 function satisfiesFieldMap(value: unknown, fields: Record<string, unknown>): boolean {
   if (!isPlainObject(value)) return false;
   return Object.entries(fields).every(

@@ -100,7 +100,9 @@ describe("SKILL.md authoring examples", () => {
     expect(seen).toBe("#past-payments-2024 .row");
   });
 
-  it("materialises a declared $lens ref from a {} placeholder, and skips a null one", async () => {
+  // An explicit null is how a row opts out of a reference it could otherwise
+  // carry; the {} an author may still emit is materialised like an absent one.
+  it("lets a row suppress its declared $lens ref with an explicit null", async () => {
     const spec = validateSpec({
       name: "@scope/site/list",
       url: "https://site.com/list",
@@ -132,9 +134,12 @@ describe("SKILL.md authoring examples", () => {
     });
   });
 
-  it("leaves a declared ref unmaterialised when the resolver emits no placeholder", async () => {
-    // Why the documentation insists on the placeholder: without it the field
-    // is simply absent, and the failure reads as a broken selector.
+  it("materialises a declared ref the resolver never emitted", async () => {
+    // The ref needs nothing from the page: its params are expressions over the
+    // sibling fields, so the row alone builds it. This used to require a {}
+    // placeholder, and without one the field was simply absent — reported as
+    // "no resolver produced field /0/detail", which reads as a broken selector
+    // for a field no selector was ever meant to fill.
     const spec = validateSpec({
       name: "@scope/site/norefs",
       url: "https://site.com/list",
@@ -152,7 +157,33 @@ describe("SKILL.md authoring examples", () => {
     });
 
     const result = await executeLens(spec, {}, io([{ period: "26C1" }], null));
-    expect(result).toMatchObject({ kind: "value", partial: true, value: [{ period: "26C1" }] });
-    expect((result as { value: Record<string, unknown>[] }).value[0]).not.toHaveProperty("detail");
+    expect(result).toMatchObject({
+      kind: "value",
+      value: [
+        { period: "26C1", detail: { $lens: "@scope/site/detail", params: { period: "26C1" } } },
+      ],
+    });
+    // Complete, not partial: nothing was left for a later tier to supply.
+    expect(result).not.toHaveProperty("partial");
+  });
+
+  it("drops a ref to null when its params do not bind", async () => {
+    const spec = validateSpec({
+      name: "@scope/site/norefs",
+      url: "https://site.com/list",
+      effects: { reads: ["site.com"], writes: [] },
+      returns: {
+        type: "array",
+        items: {
+          period: { type: "string", nullable: true },
+          detail: { $lens: "@scope/site/detail", params: { period: "period" } },
+        },
+      },
+      resolve: [{ kind: "dom", item: ".row", fields: { period: { selector: ".period" } } }],
+    });
+
+    // A bare {} would be neither a callable ref nor null, and fails the schema.
+    const result = await executeLens(spec, {}, io([{ period: null }], null));
+    expect(result).toMatchObject({ kind: "value", value: [{ period: null, detail: null }] });
   });
 });
