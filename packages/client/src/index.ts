@@ -1,5 +1,6 @@
 import {
   deriveJsonSchema,
+  errorMessage,
   expandUrl,
   resolveParams,
   validateResult,
@@ -386,7 +387,7 @@ function validatePort(port: number): void {
   }
 }
 
-export { BrowserBridge, LensStore, parseCatalogSource, scanLensFiles };
+export { BrowserBridge, LensStore, parseCatalogSource, scanLensFiles, errorMessage };
 export type {
   BrokerControlAction,
   BrokerLease,

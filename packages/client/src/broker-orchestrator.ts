@@ -1,4 +1,5 @@
 import {
+  errorMessage,
   executeLens,
   expandUrl,
   type EngineIO,
@@ -140,10 +141,7 @@ export function createBrokerOrchestrator(
         emit({
           type: "result",
           id: message.id,
-          result: {
-            kind: "error",
-            message: error instanceof Error ? error.message : String(error),
-          },
+          result: { kind: "error", message: errorMessage(error) },
         });
       }
     },

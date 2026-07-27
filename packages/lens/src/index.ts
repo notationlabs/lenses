@@ -4,6 +4,7 @@ export { evaluate, evaluateBool } from "./expr.js";
 export { materialiseLenses } from "./materialise.js";
 export { expandUrl, matchRequestPattern } from "./url-pattern.js";
 export { validateSpec } from "./validate.js";
+export { errorMessage } from "./util.js";
 export { deriveJsonSchema, returnsSchema, validateResult } from "./schema.js";
 export { generateTsSdk } from "./generate.js";
 export { pageDomExtract, pageSnapshot, type PageSnapshot } from "./page-functions.js";

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { readFile, writeFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
-import { evaluate, generateTsSdk, type LensSpec } from "@djgrant/lens";
+import { errorMessage, evaluate, generateTsSdk, type LensSpec } from "@djgrant/lens";
 import { createLensClient, LensStore } from "@djgrant/lens-client";
 import { skillMarkdown } from "./skill.js";
 
@@ -395,6 +395,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((error) => {
-  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+  process.stderr.write(`${errorMessage(error)}\n`);
   process.exitCode = 1;
 });
