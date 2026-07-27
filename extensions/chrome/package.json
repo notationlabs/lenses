@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc --noEmit && node build.mjs"
+    "build": "tsc --noEmit && node build.mjs",
+    "test": "vitest run"
   },
   "dependencies": {
     "@djgrant/lens": "workspace:*"
@@ -12,6 +13,7 @@
   "devDependencies": {
     "@types/chrome": "^0.0.280",
     "esbuild": "^0.24.0",
-    "typescript": "^5.6.0"
+    "typescript": "^5.6.0",
+    "vitest": "^3.0.0"
   }
 }
