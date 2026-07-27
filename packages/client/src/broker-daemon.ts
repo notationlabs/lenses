@@ -206,8 +206,8 @@ const runShutdown = createShutdownSequence({
   drainTimeoutMs: DRAIN_TIMEOUT_MS,
   release: () => cdp.release(),
   log: (message) => console.error(message),
+  stopListening: () => server.close(),
   closeSockets() {
-    server.close();
     for (const client of clients) client.close();
   },
   stop() {
