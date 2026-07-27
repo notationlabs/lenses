@@ -47,8 +47,16 @@ export function createIdleExitTimer(options: IdleExitOptions): IdleExitTimer {
 export interface ShutdownSequenceOptions {
   inFlight(): number;
   drainTimeoutMs: number;
+  /**
+   * Stop listening and drop client sockets. Runs first: a client that is
+   * restarting a stale broker waits on the port, and releasing the CDP lease
+   * can take tens of seconds when Chrome is slow to answer.
+   */
+  closeSockets(): void;
   /** Release the CDP lease so Chrome's debugging slot is free for other tools. */
   release(): Promise<void>;
+  /** Bound on the release, so a stuck Chrome cannot keep the process alive. */
+  releaseTimeoutMs?: number;
   stop(): void;
   exit(): void;
   log?(message: string): void;
@@ -56,9 +64,9 @@ export interface ShutdownSequenceOptions {
 }
 
 /**
- * Retire the daemon: refuse nothing that is already running, let it drain
- * (bounded, so a wedged call cannot pin the process), release the CDP lease,
- * then exit. Runs at most once.
+ * Retire the daemon: stop listening, let in-flight work drain (bounded, so a
+ * wedged call cannot pin the process), release the CDP lease, then exit. Runs
+ * at most once.
  */
 export function createShutdownSequence(
   options: ShutdownSequenceOptions
@@ -69,16 +77,30 @@ export function createShutdownSequence(
     if (running) return;
     running = true;
     options.log?.(`broker shutting down: ${reason}`);
+    options.closeSockets();
     const deadline = Date.now() + options.drainTimeoutMs;
     while (options.inFlight() > 0 && Date.now() < deadline) {
       await sleep(25);
     }
     try {
-      await options.release();
+      await withTimeout(options.release(), options.releaseTimeoutMs ?? 5_000, sleep);
     } catch (error) {
       options.log?.(`broker lease release failed: ${String(error)}`);
     }
     options.stop();
     options.exit();
   };
+}
+
+async function withTimeout(
+  work: Promise<void>,
+  timeoutMs: number,
+  sleep: (ms: number) => Promise<void>
+): Promise<void> {
+  await Promise.race([
+    work,
+    sleep(timeoutMs).then(() => {
+      throw new Error(`timed out after ${timeoutMs}ms`);
+    }),
+  ]);
 }

@@ -206,13 +206,15 @@ const runShutdown = createShutdownSequence({
   drainTimeoutMs: DRAIN_TIMEOUT_MS,
   release: () => cdp.release(),
   log: (message) => console.error(message),
+  closeSockets() {
+    server.close();
+    for (const client of clients) client.close();
+  },
   stop() {
     idleExit.stop();
     extension.stop();
     cdp.stop();
     clearTimeout(fallbackStart);
-    for (const client of clients) client.close();
-    server.close();
   },
   exit: () => process.exit(0),
 });
