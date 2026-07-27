@@ -53,7 +53,10 @@ describe("LensStore", () => {
 describe("git catalog source", () => {
   it("clones a repository into the cache, loads it, and refreshes on update", async () => {
     const repo = await catalogDirectory({ "a.json": "@one/web/page" });
-    const git = (...args: string[]) => execFileSync("git", args, { cwd: repo });
+    // -c commit.gpgsign=false: a signing key in the developer's global config
+    // would otherwise drag an agent (1Password, gpg) into a fixture commit.
+    const git = (...args: string[]) =>
+      execFileSync("git", ["-c", "commit.gpgsign=false", ...args], { cwd: repo });
     git("init", "-b", "main");
     git("-c", "user.email=t@t", "-c", "user.name=t", "add", ".");
     git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "one");

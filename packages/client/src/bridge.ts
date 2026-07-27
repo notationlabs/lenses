@@ -32,6 +32,8 @@ export interface LensTransport {
   ): Promise<LensTransportResult>;
   waitForConnection(timeoutMs: number): Promise<boolean>;
   close(): Promise<void>;
+  /** Notifies when the transport's socket goes away, so callers can rebind. */
+  onClose?(listener: () => void): void;
   /** CDP lease state, when the transport reports it (the broker does). */
   readonly lease?: BrokerLease;
   /** Release/acquire the broker's CDP lease; optional for custom transports. */
@@ -59,6 +61,7 @@ export class BrowserBridge implements LensTransport {
     { resolve: (result: LensResult) => void; timer: NodeJS.Timeout; control?: boolean }
   >();
   private readonly connectionWaiters = new Set<() => void>();
+  private readonly closeListeners = new Set<() => void>();
   private sequence = 0;
   private closed = false;
 
@@ -75,6 +78,8 @@ export class BrowserBridge implements LensTransport {
     socket.on("close", () => {
       this.browserConnected = false;
       this.resolvePending({ kind: "error", message: "lens broker disconnected" });
+      for (const listener of this.closeListeners) listener();
+      this.closeListeners.clear();
     });
   }
 
@@ -165,6 +170,14 @@ export class BrowserBridge implements LensTransport {
       }, timeoutMs);
       this.connectionWaiters.add(connected);
     });
+  }
+
+  onClose(listener: () => void): void {
+    if (this.socket.readyState === WebSocket.CLOSED) {
+      listener();
+      return;
+    }
+    this.closeListeners.add(listener);
   }
 
   async close(): Promise<void> {
