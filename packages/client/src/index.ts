@@ -3,6 +3,7 @@ import {
   errorMessage,
   expandUrl,
   resolveParams,
+  specWarnings,
   validateResult,
   type LensResult,
   type LensSpec,
@@ -75,6 +76,8 @@ export interface LensSummary {
   params: LensSpec["params"];
   effects: LensSpec["effects"];
   outcomes: string[];
+  /** non-fatal problems with the document; absent when there are none */
+  warnings?: string[];
 }
 
 export type LensCallResult = LensResult & { cached?: boolean; warnings?: ValidationIssue[] };
@@ -143,15 +146,21 @@ export class LensClient {
     this.log("loading lens listing");
     const specs = await this.store.load();
     this.log(`loaded ${specs.length} lenses`);
-    return specs.map((spec) => ({
-      name: spec.name,
-      shortname: spec.name.slice(spec.name.indexOf("/") + 1),
-      url: spec.url,
-      description: spec.description,
-      params: spec.params,
-      effects: spec.effects,
-      outcomes: spec.outcomes ? Object.keys(spec.outcomes) : [],
-    }));
+    return specs.map((spec) => {
+      // The listing is where an undeclared outcome hides: it shows the outcomes
+      // the document declares, which is precisely the set that is wrong.
+      const warnings = specWarnings(spec);
+      return {
+        name: spec.name,
+        shortname: spec.name.slice(spec.name.indexOf("/") + 1),
+        url: spec.url,
+        description: spec.description,
+        params: spec.params,
+        effects: spec.effects,
+        outcomes: spec.outcomes ? Object.keys(spec.outcomes) : [],
+        ...(warnings.length > 0 ? { warnings } : {}),
+      };
+    });
   }
 
   async call(input: LensCall): Promise<LensCallResult> {

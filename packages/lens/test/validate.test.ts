@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { validateSpec } from "../src/validate.js";
+import { specWarnings, validateSpec } from "../src/validate.js";
 
 const validSpec = {
   name: "@example/web/page",
@@ -105,5 +105,46 @@ describe("validateSpec", () => {
         },
       })
     ).not.toThrow();
+  });
+});
+
+describe("specWarnings", () => {
+  const withDetect = (detect: Record<string, string>, outcomes?: Record<string, unknown>) =>
+    validateSpec({
+      ...validSpec,
+      ...(outcomes ? { outcomes } : {}),
+      resolve: [{ kind: "dom", detect, fields: { title: { selector: "h1" } } }],
+    });
+
+  it("says nothing when every detected outcome is declared", () => {
+    expect(specWarnings(withDetect({ needs_auth: "true" }, { needs_auth: { hint: "Sign in." } })))
+      .toEqual([]);
+  });
+
+  it("flags a resolver detect naming an outcome the document does not declare", () => {
+    const [warning] = specWarnings(withDetect({ needs_auth: "true" }));
+    expect(warning).toContain('detect names the outcome "needs_auth"');
+  });
+
+  // The author who hit this declared `description` and shipped 16 dead strings,
+  // so the remediation has to name the one key that is actually read.
+  it("names hint and shows a copyable declaration", () => {
+    const [warning] = specWarnings(withDetect({ needs_auth: "true" }));
+    expect(warning).toContain('"outcomes": { "needs_auth": { "hint": "<how to recover>" } }');
+    expect(warning).toContain('"hint" is the only key read from the declaration');
+  });
+
+  it("flags a spec-level detect too", () => {
+    const spec = validateSpec({ ...validSpec, detect: { rate_limited: "true" } });
+    expect(specWarnings(spec)).toHaveLength(1);
+  });
+
+  it("does not flag an outcome declared with a null body", () => {
+    const spec = validateSpec({
+      ...validSpec,
+      outcomes: { needs_auth: null },
+      detect: { needs_auth: "true" },
+    });
+    expect(specWarnings(spec)).toEqual([]);
   });
 });
