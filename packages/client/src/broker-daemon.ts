@@ -8,6 +8,16 @@ import type { LensBridgeRequest } from "@djgrant/lens";
 import { createBrokerOrchestrator } from "./broker-orchestrator.js";
 import { createCdpBackend } from "./cdp-host.js";
 import { createExtensionBackend } from "./extension-backend.js";
+import {
+  autoLaunchEnabled,
+  browserRunning,
+  launchBrowser,
+} from "./launch-browser.js";
+import {
+  extensionProfile,
+  extensionSeenRecently,
+  markExtensionSeen,
+} from "./extension-marker.js";
 import { createIdleExitTimer, createShutdownSequence } from "./broker-lifecycle.js";
 import { brokerBuildStamp } from "./broker-stamp.js";
 import { SerialTaskQueue } from "./serial-task-queue.js";
@@ -26,9 +36,22 @@ const server = new WebSocketServer({ port, host: "127.0.0.1" });
 const clients = new Set<WebSocket>();
 const cdp = createCdpBackend();
 const extension = createExtensionBackend();
+// An extension that has handshaked here before is worth waiting for: its
+// service worker may be dormant and needs its reconnect alarm to fire. Without
+// that history, CDP is the only hope and there is nothing to wait for.
+// Held in memory, never written back: the installed-extension evidence can be
+// stale (removed extension, unreadable profile), and one broker that waited in
+// vain is reason enough to stop waiting — but not to demote the next one.
+const installedProfile = extensionProfile();
+let extensionExpected = installedProfile !== undefined || extensionSeenRecently();
+const extensionGraceMs =
+  Number(process.env.LENS_BROKER_EXTENSION_GRACE_MS ?? "") ||
+  (extensionExpected ? 35_000 : 2_000);
 const orchestrator = createBrokerOrchestrator([extension, cdp], {
-  preferredWaitMs: 2_000,
+  preferredWaitMs: () => (extensionExpected ? extensionGraceMs : 0),
 });
+let launchAttempted = false;
+let browserPresent: boolean | undefined;
 const requestQueue = new SerialTaskQueue();
 // Stamped once at startup: this daemon reports the code it is actually running,
 // even after a rebuild replaces the files on disk.
@@ -55,9 +78,52 @@ const idleExit = createIdleExitTimer({
   idleMs: idleExitMs,
   noBrowserMs: noBrowserExitMs,
   isIdle: () => clients.size === 0 && !extension.available() && inFlight === 0,
-  browserLive: () => cdp.browserLive(),
+  // A known extension counts as a reachable browser even while its service
+  // worker sleeps: the fast no-browser exit would otherwise kill the broker
+  // before the worker can reconnect, and only a resident broker keeps it awake.
+  browserLive: async () => extensionExpected || (await cdp.browserLive()),
   onExit: (reason) => shutdown(reason),
 });
+
+/**
+ * Gives a dormant extension a way back. A running Chrome needs nothing — the
+ * worker's reconnect alarm attaches inside its 30s period — so this only ever
+ * starts a browser that is not there. Once per broker: repeating it per call
+ * would launch once per parallel request.
+ */
+async function ensureBrowser(): Promise<void> {
+  if (launchAttempted || !extensionExpected || extension.available()) return;
+  launchAttempted = true;
+  browserPresent = await browserRunning();
+  if (browserPresent) {
+    armExtensionStrike();
+    return;
+  }
+  // Launch the profile the extension was found in, so the picker never appears.
+  if (!autoLaunchEnabled() || !(await launchBrowser(installedProfile))) {
+    // Nothing is coming, so do not make the call wait out the grace for it.
+    concedeToCdp("no browser could be started");
+    return;
+  }
+  browserPresent = true;
+  console.error("started Chrome to reach the lens extension");
+  armExtensionStrike();
+}
+
+/** One strike: a grace spent without a handshake means stop expecting one. */
+function armExtensionStrike(): void {
+  setTimeout(() => {
+    if (!extension.available()) concedeToCdp("the extension did not attach");
+  }, extensionGraceMs).unref?.();
+}
+
+function concedeToCdp(reason: string): void {
+  if (!extensionExpected) return;
+  extensionExpected = false;
+  console.error(`falling back to CDP: ${reason}`);
+  if (!extension.available()) cdp.start();
+  broadcastStatus();
+}
 
 function beginWork(): void {
   inFlight += 1;
@@ -88,7 +154,7 @@ extension.onStatusChange(() => {
 });
 const fallbackStart = setTimeout(() => {
   if (!extension.available()) cdp.start();
-}, 2_000);
+}, extensionGraceMs);
 
 // Arm the countdown at startup: a broker spawned by a client that then dies
 // before connecting must not linger.
@@ -123,7 +189,9 @@ function identify(socket: WebSocket, raw: string): void {
     return;
   }
   if (message?.type === "extension-hello") {
-    extension.attach(socket, message);
+    if (extension.attach(socket, message)) {
+      markExtensionSeen(String(message.extensionVersion ?? ""), message.ua);
+    }
     return;
   }
   socket.close();
@@ -139,6 +207,8 @@ function onClientMessage(client: WebSocket, raw: string): void {
     return;
   }
   if (message.type !== "call" && message.type !== "observe") return;
+  // Only work that needs a browser triggers a launch; a status query must not.
+  void ensureBrowser();
   if (shuttingDown) {
     send(client, {
       type: "result",
@@ -233,7 +303,24 @@ function sendStatus(socket: WebSocket): void {
     connected: preferred.available(),
     lease: cdp.lease(),
     ua: preferred.available() ? preferred.info().detail : undefined,
+    advice: describeGap(),
   });
+}
+
+/**
+ * Says which backend is missing and what fixes it. cdp.browserLive() cannot
+ * answer this: it reads false both when Chrome is closed and when Chrome is up
+ * but its debugging endpoint is unconsented.
+ */
+function describeGap(): string | undefined {
+  if (extension.available() || cdp.available()) return undefined;
+  if (!extensionExpected) {
+    return "the lens extension is not installed; calls use the CDP fallback and Chrome will ask you to click Allow";
+  }
+  if (browserPresent === false) {
+    return "Chrome is not running; start it and the extension reconnects on its own";
+  }
+  return "the lens extension is installed but its service worker is asleep; it reconnects within about 30 seconds";
 }
 
 function broadcastStatus(): void {

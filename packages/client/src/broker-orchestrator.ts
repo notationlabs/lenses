@@ -26,7 +26,12 @@ export interface BrokerOrchestrator {
 
 export function createBrokerOrchestrator(
   backends: BrowserBackend[],
-  options: { preferredWaitMs?: number } = {}
+  /**
+   * preferredWaitMs may be a getter: the broker drops the wait to zero once it
+   * knows no preferred backend is coming, so a call concedes to the fallback
+   * immediately instead of paying the full grace.
+   */
+  options: { preferredWaitMs?: number | (() => number) } = {}
 ): BrokerOrchestrator {
   if (backends.length === 0) throw new Error("broker orchestrator requires a browser backend");
   const cache = new Map<string, { result: LensResult; expiresAt: number }>();
@@ -37,7 +42,10 @@ export function createBrokerOrchestrator(
 
   async function selectBackend(): Promise<BrowserBackend> {
     const selected = currentBackend();
-    const preferredWaitMs = options.preferredWaitMs ?? 0;
+    const preferredWaitMs =
+      (typeof options.preferredWaitMs === "function"
+        ? options.preferredWaitMs()
+        : options.preferredWaitMs) ?? 0;
     if (
       selected.available() ||
       selected !== backends[backends.length - 1] ||
