@@ -16,7 +16,10 @@ const cdpState = vi.hoisted(() => ({
   browser: undefined as FakeBrowser | undefined,
 }));
 
-vi.mock("node:fs", () => ({
+// existsSync is stubbed for the Chrome-binary probe; the rest must stay real,
+// since the extension backend hashes the page-functions module off disk.
+vi.mock("node:fs", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:fs")>()),
   existsSync: () => true,
 }));
 

@@ -23,6 +23,11 @@ export interface ExtensionHello {
   capabilities: string[];
   epoch: string;
   ua?: string;
+  /**
+   * Stamp of the page-functions module baked into this extension's bundle at
+   * build time. Absent from extensions built before the stamp existed.
+   */
+  pageStamp?: string;
 }
 
 export type ExtensionHelloResult =
@@ -142,6 +147,7 @@ const helloSchema = z.strictObject({
   extensionVersion: z.string().min(1),
   capabilities: z.array(z.string()),
   epoch: z.string().min(1),
+  pageStamp: z.string().min(1).optional(),
   ua: z.string().optional(),
 });
 

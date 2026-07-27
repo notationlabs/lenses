@@ -1,5 +1,12 @@
 import { build } from "esbuild";
 import { copyFile, mkdir } from "node:fs/promises";
+import { pageFunctionsStamp } from "@djgrant/lens/page-stamp";
+
+// The extension bundles the page functions, so it must be able to say which
+// copy it bundled. Injected as a constant, it ships inside the bundle and
+// therefore travels with the instance Chrome is running.
+const stamp = pageFunctionsStamp();
+const define = { PAGE_FUNCTIONS_STAMP: JSON.stringify(stamp) };
 
 await mkdir("dist", { recursive: true });
 
@@ -10,6 +17,7 @@ await build({
   format: "esm",
   outfile: "dist/sw.js",
   target: "chrome120",
+  define,
 });
 
 // content scripts: classic scripts, must be IIFE
@@ -20,8 +28,10 @@ for (const name of ["content", "page"]) {
     format: "iife",
     outfile: `dist/${name}.js`,
     target: "chrome120",
+    define,
   });
 }
 
 await copyFile("manifest.json", "dist/manifest.json");
-console.log("extension built → extensions/chrome/dist (load unpacked from there)");
+console.log(`extension built \u2192 extensions/chrome/dist (page functions ${stamp})`);
+console.log("load unpacked from there, and reload at chrome://extensions to pick this up");
