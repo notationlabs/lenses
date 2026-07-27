@@ -216,6 +216,20 @@ A call result is one of:
    percent-encoded — so declare such a param as `integer` where the page allows
    it. An undeclared hole is rejected at validation, not at runtime.
 
+   A repeated expression belongs in `helpers`, as a named JSONata lambda bound
+   as `$name` in every expression the document evaluates:
+
+   ```jsonc
+   "helpers": { "money": "function($s) { $number($replace($s, /[^0-9.]/, \"\")) }" },
+   // in a tier: "post": "{ 'amount': $money(raw) }"
+   ```
+
+   Put the same block in a `catalog.json` beside your documents and every
+   document in that directory gets it. That is the point: a helper pasted into
+   thirteen documents has to be fixed thirteen times and re-checked against
+   thirteen live pages. A document's own `helpers` entry overrides the
+   catalogue's, and a declared param of the same name shadows both.
+
 4. Call it by file path to test: `lens call ./my-lens.json --catalog .`
 
 `map`, `post`, and `detect` are sandboxed JSONata: no network or DOM

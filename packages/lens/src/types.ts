@@ -29,6 +29,14 @@ export interface LensSpec {
    * keep the tier-specific form on the resolver, which takes precedence here.
    */
   detect?: Record<string, ExprString>;
+  /**
+   * Named JSONata lambdas bound as `$name` in every expression this document
+   * evaluates — `"norm": "function($s) { ... }"` is called as `$norm(x)`.
+   * A catalogue supplies these to all its documents, so a fix to one is a fix
+   * everywhere rather than an edit per document; a document's own definition of
+   * the same name wins. Declared params shadow a helper of the same name.
+   */
+  helpers?: Record<string, ExprString>;
   effects: LensEffects;
   resolve: Resolver[];
 }

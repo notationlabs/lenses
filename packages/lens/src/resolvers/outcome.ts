@@ -29,12 +29,13 @@ export async function detectOutcome(
   ctx: unknown,
   params: Record<string, unknown>,
   outcomes: LensSpec["outcomes"],
-  resolver: Resolver["kind"]
+  resolver: Resolver["kind"],
+  helpers?: Record<string, string>
 ): Promise<LensResult | null> {
   if (!detect) return null;
   for (const [name, expr] of Object.entries(detect)) {
-    if (await evaluateBool(expr, ctx, params)) {
-      const value = await outcomeValue(name, ctx, params, outcomes);
+    if (await evaluateBool(expr, ctx, params, helpers)) {
+      const value = await outcomeValue(name, ctx, params, outcomes, helpers);
       return { kind: "outcome", name, value, resolver };
     }
   }
@@ -46,7 +47,8 @@ async function outcomeValue(
   name: string,
   ctx: unknown,
   params: Record<string, unknown>,
-  outcomes: LensSpec["outcomes"]
+  outcomes: LensSpec["outcomes"],
+  helpers?: Record<string, string>
 ): Promise<unknown> {
   const declared = outcomes?.[name];
   if (isPlainObject(declared) && typeof declared.$lens === "string") {
@@ -54,7 +56,7 @@ async function outcomeValue(
     const bound: Record<string, unknown> = {};
     if (isPlainObject(paramExpressions)) {
       for (const [key, expression] of Object.entries(paramExpressions)) {
-        if (typeof expression === "string") bound[key] = await evaluate(expression, ctx, params);
+        if (typeof expression === "string") bound[key] = await evaluate(expression, ctx, params, helpers);
       }
     }
     return Object.keys(bound).length > 0

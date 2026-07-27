@@ -1,7 +1,12 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { validateSpec, type LensSpec } from "@djgrant/lens";
-import { parseCatalogSource, type CatalogSource } from "./catalog.js";
+import {
+  applyCatalogHelpers,
+  catalogHelpersFor,
+  parseCatalogSource,
+  type CatalogSource,
+} from "./catalog.js";
 
 export interface CatalogUpdate {
   source: string;
@@ -79,7 +84,13 @@ export class LensStore {
       return validateSpec(await response.json());
     }
     if (ref.endsWith(".json")) {
-      return validateSpec(JSON.parse(await readFile(resolve(ref), "utf8")));
+      const path = resolve(ref);
+      // `lens call ./my-lens.json` is how SKILL.md says to test a document, so
+      // it has to see the same helpers a catalogue load would give it.
+      return applyCatalogHelpers(
+        validateSpec(JSON.parse(await readFile(path, "utf8"))),
+        await catalogHelpersFor(path)
+      );
     }
 
     await this.load();

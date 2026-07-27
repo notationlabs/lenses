@@ -41,8 +41,8 @@ export async function runIntercept(
   for (const n of names) metas[n] = responseContext(found.get(n)!);
   const detect = mergeDetect(spec.detect, r.detect);
   const outcome = r.sources
-    ? await detectOutcome(detect, { ...params, ...metas }, { ...params, ...metas }, spec.outcomes, "intercept")
-    : await detectOutcome(detect, metas[names[0]], params, spec.outcomes, "intercept");
+    ? await detectOutcome(detect, { ...params, ...metas }, { ...params, ...metas }, spec.outcomes, "intercept", spec.helpers)
+    : await detectOutcome(detect, metas[names[0]], params, spec.outcomes, "intercept", spec.helpers);
   if (outcome) return outcome;
 
   // A 401/302 here is the intercept-tier equivalent of a signed-out redirect.
@@ -57,7 +57,7 @@ export async function runIntercept(
   for (const n of names) {
     const parsed = tryParse(found.get(n)!.body);
     const items = sources[n].items;
-    bodies[n] = items ? await evaluate(items, parsed, params) : parsed;
+    bodies[n] = items ? await evaluate(items, parsed, params, spec.helpers) : parsed;
   }
 
   const sourceUrls = names.map((n) => found.get(n)!.url).join(", ");
@@ -67,7 +67,7 @@ export async function runIntercept(
 
   if (r.sources) {
     const vars = { ...params, ...bodies };
-    const value = r.map ? await project(r.map, vars, vars) : bodies;
+    const value = r.map ? await project(r.map, vars, vars, spec.helpers) : bodies;
     if (value === undefined || value === null) return drew;
     return { kind: "value", value, resolver: "intercept", observed: sourceUrls };
   }
@@ -78,9 +78,9 @@ export async function runIntercept(
   let value: unknown;
   if (r.map && Array.isArray(working)) {
     value = [];
-    for (const item of working) (value as unknown[]).push(await project(r.map, item, params));
+    for (const item of working) (value as unknown[]).push(await project(r.map, item, params, spec.helpers));
   } else if (r.map) {
-    value = await project(r.map, working, params);
+    value = await project(r.map, working, params, spec.helpers);
   } else {
     value = working;
   }
@@ -91,11 +91,14 @@ export async function runIntercept(
 async function project(
   map: MapSpec,
   data: unknown,
-  params: Record<string, unknown>
+  params: Record<string, unknown>,
+  helpers: Record<string, string> | undefined
 ): Promise<unknown> {
-  if (typeof map === "string") return plain(await evaluate(map, data, params));
+  if (typeof map === "string") return plain(await evaluate(map, data, params, helpers));
   const out: Record<string, unknown> = {};
-  for (const [field, expr] of Object.entries(map)) out[field] = plain(await evaluate(expr, data, params));
+  for (const [field, expr] of Object.entries(map)) {
+    out[field] = plain(await evaluate(expr, data, params, helpers));
+  }
   return out;
 }
 
