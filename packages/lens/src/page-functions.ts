@@ -18,6 +18,22 @@ export function pageDomExtract(spec: Pick<DomResolver, "item" | "fields">): {
   title: string;
   value: unknown;
 } {
+  /**
+   * `innerText` is what `pageSnapshot` reports and what the page renders, so a
+   * `<br>` reads as a line break rather than vanishing. It is undefined outside
+   * HTML elements (SVG, MathML), hence the `textContent` fallback.
+   *
+   * Runs of whitespace collapse to one space: `\s` covers the &nbsp; that
+   * content-managed markup is dense with, so lenses need no `$norm` helper of
+   * their own. An element that is present but blank stays "" — only a missed
+   * selector yields null.
+   */
+  function readText(el: Element): string {
+    const rendered = (el as HTMLElement).innerText;
+    const raw = typeof rendered === "string" ? rendered : (el.textContent ?? "");
+    return raw.replace(/\s+/g, " ").trim();
+  }
+
   function extractField(root: Element, f: DomFieldSpec): string | null {
     const scope = f.sibling ? root.nextElementSibling : root;
     if (!scope) return null;
@@ -34,7 +50,7 @@ export function pageDomExtract(spec: Pick<DomResolver, "item" | "fields">): {
       }
       return v;
     }
-    return (el.textContent ?? "").trim();
+    return readText(el);
   }
 
   let value: unknown = null;
