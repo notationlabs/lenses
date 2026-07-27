@@ -10,3 +10,14 @@
 - **Content-pin remote lenses.** A lens loaded by URL is fetched as-is on every
   call, so its author can change it after you started trusting it. An SRI-style
   hash in the ref would pin the content.
+- **Report the extension's build stamp.** The content script bundles the page
+  functions, so Chrome keeps extracting with the copy it loaded until the
+  extension is reloaded — and from outside, that is indistinguishable from a fix
+  that was never shipped. `broker-stamp.ts` already solves this for the daemon;
+  the extension should send the same kind of stamp in its `extension-hello`, and
+  `status` should report it. It has to travel with the running instance: when
+  this last bit, both `packages/lens/dist/page-functions.js` and
+  `extensions/chrome/dist/content.js` were current and only Chrome's in-memory
+  copy was stale, so any build-side or mtime comparison would have reported a
+  confident all-clear. The manifest version cannot serve either, since a local
+  rebuild never moves it.
