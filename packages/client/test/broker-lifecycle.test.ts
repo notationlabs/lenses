@@ -90,16 +90,20 @@ describe("shutdown sequence", () => {
     const shutdown = createShutdownSequence({
       inFlight: () => inFlight,
       drainTimeoutMs: 10_000,
+      closeSockets: () => order.push("close"),
       release: async () => void order.push("release"),
       stop: () => order.push("stop"),
       exit: () => order.push("exit"),
-      sleep: async () => {
+      // Only the drain poll ticks here; the release bound uses the same hook.
+      sleep: async (ms) => {
+        if (ms !== 25) return;
         inFlight = 0;
         order.push("drain");
       },
     });
     await shutdown("test");
-    expect(order).toEqual(["drain", "release", "stop", "exit"]);
+    // The port is freed first: a client restarting a stale broker waits on it.
+    expect(order).toEqual(["close", "drain", "release", "stop", "exit"]);
   });
 
   it("gives up draining a wedged call and still releases the lease", async () => {
@@ -109,6 +113,7 @@ describe("shutdown sequence", () => {
     const shutdown = createShutdownSequence({
       inFlight: () => 1,
       drainTimeoutMs: 100,
+      closeSockets: () => order.push("close"),
       release: async () => void order.push("release"),
       stop: () => order.push("stop"),
       exit: () => order.push("exit"),
@@ -118,7 +123,7 @@ describe("shutdown sequence", () => {
       },
     });
     await shutdown("test");
-    expect(order).toEqual(["release", "stop", "exit"]);
+    expect(order).toEqual(["close", "release", "stop", "exit"]);
   });
 
   it("still exits when releasing the lease fails, and runs only once", async () => {
@@ -126,6 +131,7 @@ describe("shutdown sequence", () => {
     const shutdown = createShutdownSequence({
       inFlight: () => 0,
       drainTimeoutMs: 10,
+      closeSockets: () => order.push("close"),
       release: async () => {
         throw new Error("cdp gone");
       },
@@ -134,6 +140,25 @@ describe("shutdown sequence", () => {
     });
     await shutdown("first");
     await shutdown("second");
-    expect(order).toEqual(["stop", "exit"]);
+    expect(order).toEqual(["close", "stop", "exit"]);
+  });
+
+  it("exits even when releasing the lease never settles", async () => {
+    const order: string[] = [];
+    const shutdown = createShutdownSequence({
+      inFlight: () => 0,
+      drainTimeoutMs: 10,
+      releaseTimeoutMs: 5_000,
+      closeSockets: () => order.push("close"),
+      // Chrome can leave a connect attempt outstanding for tens of seconds.
+      release: () => new Promise<void>(() => {}),
+      stop: () => order.push("stop"),
+      exit: () => order.push("exit"),
+      sleep: async (ms) => {
+        if (ms === 5_000) order.push("release timeout");
+      },
+    });
+    await shutdown("test");
+    expect(order).toEqual(["close", "release timeout", "stop", "exit"]);
   });
 });
