@@ -52,6 +52,27 @@ describe("SKILL.md authoring examples", () => {
     });
   });
 
+  it("runs a spec-level detect against each tier's own context", async () => {
+    const spec = validateSpec({
+      name: "@scope/site/thing",
+      url: "https://site.com/thing",
+      effects: { reads: ["site.com"], writes: [] },
+      outcomes: { needs_auth: { hint: "Sign in at https://site.com, then retry." } },
+      detect: { needs_auth: "$contains(url, '/sign-in') or status = 401" },
+      resolve: [{ kind: "dom", fields: { total: { selector: ".total" } } }],
+    });
+
+    const signedOut: EngineIO = {
+      ...io(null, null),
+      domExtract: async () => ({ url: "https://site.com/sign-in", title: "Sign in", value: null }),
+    };
+    expect(await executeLens(spec, {}, signedOut)).toMatchObject({
+      kind: "outcome",
+      name: "needs_auth",
+      resolver: "dom",
+    });
+  });
+
   it("materialises a declared $lens ref from a {} placeholder, and skips a null one", async () => {
     const spec = validateSpec({
       name: "@scope/site/list",
