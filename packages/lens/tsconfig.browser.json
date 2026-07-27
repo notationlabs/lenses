@@ -1,0 +1,14 @@
+{
+  // The page functions are serialised into a browser tab, so they must not
+  // reach for anything Node supplies. `page-stamp.ts` pulled @types/node into
+  // the package, which made `process` and friends typecheck everywhere —
+  // including here, where they would fail only at runtime, in a page. This
+  // config typechecks the browser-only modules with no ambient Node types.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": [],
+    "lib": ["ES2022", "DOM", "DOM.Iterable"]
+  },
+  "include": ["src/page-functions.ts"]
+}
