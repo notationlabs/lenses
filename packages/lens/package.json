@@ -9,6 +9,11 @@
       "types": "./dist/index.d.ts",
       "bun": "./src/index.ts",
       "import": "./dist/index.js"
+    },
+    "./page-stamp": {
+      "types": "./dist/page-stamp.d.ts",
+      "bun": "./src/page-stamp.ts",
+      "import": "./dist/page-stamp.js"
     }
   },
   "scripts": {
@@ -20,6 +25,7 @@
     "zod": "^4.0.0"
   },
   "devDependencies": {
+    "@types/node": "^22.0.0",
     "typescript": "^5.6.0",
     "vitest": "^3.0.0"
   }

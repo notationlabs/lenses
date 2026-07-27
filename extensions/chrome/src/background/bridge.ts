@@ -93,6 +93,9 @@ function connectPort(port: number, persistent = false): void {
         extensionVersion: chrome.runtime.getManifest().version,
         capabilities: [...REQUIRED_EXTENSION_CAPABILITIES],
         epoch,
+        // Baked in at build time, so it names the bundle Chrome actually
+        // loaded rather than whatever is on disk now.
+        pageStamp: PAGE_FUNCTIONS_STAMP,
         ua: navigator.userAgent,
       })
     );

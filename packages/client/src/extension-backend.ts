@@ -10,6 +10,7 @@ import {
   type ExtensionRpcResponse,
   type ExtensionRpcResult,
 } from "@djgrant/lens";
+import { pageFunctionsStamp } from "@djgrant/lens/page-stamp";
 import type {
   BindRequest,
   BrowserBackend,
@@ -154,7 +155,7 @@ export function createExtensionBackend(
     info: () => ({
       name: "extension",
       detail: hello
-        ? `${hello.extensionVersion}${hello.ua ? ` ${hello.ua}` : ""}`
+        ? `${hello.extensionVersion}${hello.ua ? ` ${hello.ua}` : ""}${pageStampNote(hello)}`
         : undefined,
     }),
     onStatusChange(listener) {
@@ -308,4 +309,20 @@ function assertResult<Name extends ExtensionRpcResult["name"]>(
   if (result.name !== name) {
     throw new Error(`extension returned ${result.name} for ${name}`);
   }
+}
+
+/**
+ * Compare the page functions the extension bundled against the ones the broker
+ * holds. A mismatch means Chrome is still running the copy it loaded — the
+ * failure that had a shipped extraction fix verified as absent against correct
+ * code, because from outside a stale extension and an unshipped fix look alike.
+ */
+export function pageStampNote(hello: ExtensionHello): string {
+  const expected = pageFunctionsStamp();
+  if (!hello.pageStamp) return " [page functions unknown: extension predates the stamp]";
+  if (hello.pageStamp === expected) return ` [page functions ${expected}]`;
+  return (
+    ` [STALE page functions ${hello.pageStamp}, broker has ${expected}` +
+    " — rebuild and reload the extension at chrome://extensions]"
+  );
 }
