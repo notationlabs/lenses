@@ -33,10 +33,10 @@ export async function executeLens(
     let result: LensResult | ResolverMiss;
     switch (resolver.kind) {
       case "intercept":
-        result = await runIntercept(resolver, params, io, spec.outcomes);
+        result = await runIntercept(resolver, params, io, spec);
         break;
       case "dom":
-        result = await runDom(resolver, params, io, spec.outcomes);
+        result = await runDom(resolver, params, io, spec);
         break;
       case "llm":
         result = await runLlm(resolver, io);

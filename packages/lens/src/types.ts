@@ -21,6 +21,14 @@ export interface LensSpec {
   returns?: unknown;
   /** Named failure modes. Value is either null, a plain schema, or a $lens ref. */
   outcomes?: Record<string, unknown>;
+  /**
+   * Detection that applies to every tier, so a lens does not paste the same
+   * expired-session check into each one. Each tier evaluates it against its own
+   * context — `{url, title}` for dom, `{status, url, body}` for intercept — so
+   * write one expression per outcome only if it makes sense in both; otherwise
+   * keep the tier-specific form on the resolver, which takes precedence here.
+   */
+  detect?: Record<string, ExprString>;
   effects: LensEffects;
   resolve: Resolver[];
 }

@@ -162,6 +162,60 @@ describe("executeLens", () => {
     });
   });
 
+  // Detection was per-resolver, so an expired-session check had to be pasted
+  // into every tier. A spec-level detect is evaluated against each tier's own
+  // context instead.
+  describe("spec-level detect", () => {
+    const shared = {
+      name: "@example/web/things",
+      url: "https://example.com/things",
+      effects: { reads: ["example.com"], writes: [] },
+      outcomes: { needs_auth: { hint: "Sign in and retry." } },
+      detect: { needs_auth: "$contains(url, '/sign-in') or status = 401" },
+    };
+
+    it("fires from a dom tier's {url, title} context", async () => {
+      const s = validateSpec({
+        ...shared,
+        resolve: [{ kind: "dom", item: ".thing", fields: { title: { selector: ".t" } } }],
+      });
+      const r = await executeLens(s, {}, io({
+        domExtract: async () => ({ url: "https://example.com/sign-in", title: "Sign in", value: null }),
+      }));
+      expect(r).toMatchObject({ kind: "outcome", name: "needs_auth", resolver: "dom" });
+    });
+
+    it("fires from an intercept tier's {status, url, body} context", async () => {
+      const s = validateSpec({
+        ...shared,
+        resolve: [{ kind: "intercept", request: "GET https://api.example.com/things*", items: "things" }],
+      });
+      const r = await executeLens(s, {}, io({
+        getIntercepted: async () => [captured({ status: 401, body: "{}" })],
+      }));
+      expect(r).toMatchObject({ kind: "outcome", name: "needs_auth", resolver: "intercept" });
+    });
+
+    it("lets a resolver's own detect override the spec's for the same outcome", async () => {
+      const s = validateSpec({
+        ...shared,
+        resolve: [
+          {
+            kind: "dom",
+            // narrower than the spec's: this page's sign-in lives elsewhere
+            detect: { needs_auth: "$contains(url, '/login')" },
+            item: ".thing",
+            fields: { title: { selector: ".t" } },
+          },
+        ],
+      });
+      const r = await executeLens(s, {}, io({
+        domExtract: async () => ({ url: "https://example.com/sign-in", title: "Sign in", value: null }),
+      }));
+      expect(r).toMatchObject({ kind: "error" });
+    });
+  });
+
   it("binds declared parameters in JSONata", async () => {
     const s = validateSpec({
       name: "@example/web/echo",

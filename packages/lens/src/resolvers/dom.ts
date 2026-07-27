@@ -1,15 +1,16 @@
 import type { DomResolver, EngineIO, LensResult, LensSpec, ResolverMiss } from "../types.js";
 import { evaluate } from "../expr.js";
-import { detectOutcome } from "./outcome.js";
+import { detectOutcome, mergeDetect } from "./outcome.js";
 
 export async function runDom(
   r: DomResolver,
   params: Record<string, unknown>,
   io: EngineIO,
-  outcomes: LensSpec["outcomes"]
+  spec: LensSpec
 ): Promise<LensResult | ResolverMiss> {
   const extracted = await io.domExtract(r);
-  const outcome = await detectOutcome(r.detect, { url: extracted.url, title: extracted.title }, params, outcomes, "dom");
+  const detect = mergeDetect(spec.detect, r.detect);
+  const outcome = await detectOutcome(detect, { url: extracted.url, title: extracted.title }, params, spec.outcomes, "dom");
   if (outcome) return outcome;
 
   // The landed URL is the one piece of evidence the tier holds; carry it into

@@ -10,14 +10,14 @@ import type {
 } from "../types.js";
 import { evaluate } from "../expr.js";
 import { matchRequestPattern } from "../url-pattern.js";
-import { detectOutcome } from "./outcome.js";
+import { detectOutcome, mergeDetect } from "./outcome.js";
 
 // Normalise a single request as one source; named sources become JSONata variables.
 export async function runIntercept(
   r: InterceptResolver,
   params: Record<string, unknown>,
   io: EngineIO,
-  outcomes: LensSpec["outcomes"]
+  spec: LensSpec
 ): Promise<LensResult | ResolverMiss> {
   const sources = r.sources ?? { body: { request: r.request!, items: r.items } };
   const names = Object.keys(sources);
@@ -39,9 +39,10 @@ export async function runIntercept(
   // Detection sees one response directly or named responses as `$name`.
   const metas: Record<string, unknown> = {};
   for (const n of names) metas[n] = responseContext(found.get(n)!);
+  const detect = mergeDetect(spec.detect, r.detect);
   const outcome = r.sources
-    ? await detectOutcome(r.detect, { ...params, ...metas }, { ...params, ...metas }, outcomes, "intercept")
-    : await detectOutcome(r.detect, metas[names[0]], params, outcomes, "intercept");
+    ? await detectOutcome(detect, { ...params, ...metas }, { ...params, ...metas }, spec.outcomes, "intercept")
+    : await detectOutcome(detect, metas[names[0]], params, spec.outcomes, "intercept");
   if (outcome) return outcome;
 
   // A 401/302 here is the intercept-tier equivalent of a signed-out redirect.

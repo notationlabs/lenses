@@ -2,6 +2,28 @@ import type { LensResult, LensSpec, Resolver } from "../types.js";
 import { evaluate, evaluateBool } from "../expr.js";
 import { isPlainObject } from "../util.js";
 
+/**
+ * A tier's detection is its own, then the spec's. Resolver entries come first
+ * so the more specific expression wins when both would fire, and a resolver
+ * entry of the same name replaces the spec's outright.
+ */
+export function mergeDetect(
+  specDetect: Record<string, string> | undefined,
+  resolverDetect: Record<string, string> | undefined
+): Record<string, string> | undefined {
+  if (!specDetect) return resolverDetect;
+  if (!resolverDetect) return specDetect;
+  return { ...resolverDetect, ...omit(specDetect, Object.keys(resolverDetect)) };
+}
+
+function omit(source: Record<string, string>, keys: string[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(source)) {
+    if (!keys.includes(key)) out[key] = value;
+  }
+  return out;
+}
+
 export async function detectOutcome(
   detect: Record<string, string> | undefined,
   ctx: unknown,

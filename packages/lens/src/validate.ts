@@ -95,6 +95,7 @@ const lensSpecSchema = z.strictObject({
   loadTimeoutMs: z.number().int().positive().optional(),
   returns: returnSchema.optional(),
   outcomes: z.record(z.string(), z.unknown()).optional(),
+  detect: detect.optional(),
   effects: z.strictObject({
     reads: z.array(z.string()),
     writes: z.array(z.string()),

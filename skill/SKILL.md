@@ -153,6 +153,17 @@ A call result is one of:
    "detect": { "needs_auth": "$contains(url, '/sign-in') or $contains(title, 'Sign in')" }
    ```
 
+   Put `detect` beside `resolve` rather than inside a resolver and every tier
+   runs it against its own context — `{url, title}` for `dom`, `{status, url,
+   body}` for `intercept` — so one expression covers a lens whose tiers would
+   otherwise repeat it. Write it to suit both, or leave a tier's own `detect` to
+   override the shared one for that outcome:
+
+   ```jsonc
+   "detect": { "needs_auth": "$contains(url, '/sign-in') or status = 401" },
+   "resolve": [ /* ... */ ]
+   ```
+
    A `returns` field may itself declare a `$lens` reference, so a row carries a
    ready-made follow-up call. The resolver must still emit the key or the
    declaration is skipped: emit `{}` as a placeholder for rows that can be
