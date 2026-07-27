@@ -2,13 +2,18 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { WebSocket } from "ws";
 import type { LensBridgeRequest, LensResult, LensSpec } from "@djgrant/lens";
+import { coordinateRespawn } from "./broker-respawn.js";
+import { brokerBuildStamp } from "./broker-stamp.js";
 
 const BROKER_START_WAIT_MS = 3_000;
+const BROKER_SHUTDOWN_WAIT_MS = 12_000;
+/** Bounded so a stamp that never converges reports an error instead of looping. */
+const BROKER_BIND_ATTEMPTS = 3;
 
 export type LensLogger = (message: string) => void;
 export type LensTransportResult = LensResult & { cached?: boolean };
 export type BrokerLease = "held" | "released" | "disconnected";
-export type BrokerControlAction = "release" | "acquire" | "status";
+export type BrokerControlAction = "release" | "acquire" | "status" | "shutdown";
 
 export interface LensTransport {
   readonly connected: boolean;
@@ -34,7 +39,14 @@ export interface LensTransport {
 }
 
 type BrokerMessage =
-  | { type: "status"; connected: boolean; lease?: BrokerLease; ua?: string }
+  | {
+      type: "status";
+      connected: boolean;
+      lease?: BrokerLease;
+      ua?: string;
+      /** Build stamp of the daemon's code; absent on brokers older than this. */
+      stamp?: string;
+    }
   | { type: "result"; id: string; result: LensTransportResult }
   | { type: "progress"; id: string; message: string };
 
@@ -72,12 +84,24 @@ export class BrowserBridge implements LensTransport {
     log: LensLogger = () => {}
   ): Promise<BrowserBridge> {
     if (host !== "127.0.0.1") throw new Error("the lens broker only listens on 127.0.0.1");
-    const connection = (await connectBroker(port, 150)) ?? (await startBroker(port, log));
-    log(`connected to lens broker on ws://${host}:${port}`);
-    if (connection.status.connected) {
-      log(`browser connected through broker port ${port}`);
+    const expected = brokerBuildStamp();
+    for (let attempt = 1; attempt <= BROKER_BIND_ATTEMPTS; attempt += 1) {
+      const connection = (await connectBroker(port, 150)) ?? (await startBroker(port, log));
+      const stamp = connection.status.stamp;
+      if (stamp !== undefined && stamp !== expected) {
+        log(`lens broker on port ${port} runs build ${stamp}, expected ${expected}`);
+        await retireStaleBroker(connection, port, log);
+        continue;
+      }
+      log(`connected to lens broker on ws://${host}:${port}`);
+      if (connection.status.connected) {
+        log(`browser connected through broker port ${port}`);
+      }
+      return new BrowserBridge(connection.socket, port, log, connection.status);
     }
-    return new BrowserBridge(connection.socket, port, log, connection.status);
+    throw new Error(
+      `lens broker on port ${port} still reports a stale build after ${BROKER_BIND_ATTEMPTS} restart attempts`
+    );
   }
 
   get connected(): boolean {
@@ -225,6 +249,46 @@ export class BrowserBridge implements LensTransport {
 interface BrokerConnection {
   socket: WebSocket;
   status: Extract<BrokerMessage, { type: "status" }>;
+}
+
+/**
+ * Ask a stale broker to retire. Only one client does the asking — the others
+ * wait on the same lock and then simply reconnect to whatever is listening.
+ */
+async function retireStaleBroker(
+  connection: BrokerConnection,
+  port: number,
+  log: LensLogger
+): Promise<void> {
+  const outcome = await coordinateRespawn(port, {
+    respawn: () => requestShutdown(connection, log),
+    waitMs: BROKER_SHUTDOWN_WAIT_MS,
+  });
+  connection.socket.close();
+  if (outcome === "waited") log(`another client is restarting the lens broker on port ${port}`);
+}
+
+function requestShutdown(connection: BrokerConnection, log: LensLogger): Promise<void> {
+  log("asking the stale lens broker to shut down");
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve();
+    };
+    // The daemon drains in-flight work before exiting, so the close event — not
+    // the ack — is the signal that the port is free for a fresh spawn.
+    const timer = setTimeout(finish, BROKER_SHUTDOWN_WAIT_MS);
+    connection.socket.once("close", finish);
+    connection.socket.send(
+      JSON.stringify({ type: "control", id: "shutdown", action: "shutdown" }),
+      (error) => {
+        if (error) finish();
+      }
+    );
+  });
 }
 
 async function startBroker(port: number, log: LensLogger): Promise<BrokerConnection> {
