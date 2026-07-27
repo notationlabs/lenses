@@ -179,17 +179,21 @@ A call result is one of:
    ```
 
    A `returns` field may itself declare a `$lens` reference, so a row carries a
-   ready-made follow-up call. The resolver must still emit the key or the
-   declaration is skipped: emit `{}` as a placeholder for rows that can be
-   followed and `null` for rows that cannot. `null` alone is inert — it is
-   valid against the schema and the materialiser leaves it untouched.
+   ready-made follow-up call. Declaring it is enough — no resolver needs to emit
+   the key, because the reference is built from the row's other fields:
 
    ```jsonc
    "returns": { "type": "array", "items": {
      "period": "string",
      "detail": { "$lens": "@scope/site/detail", "params": { "period": "period" } } } },
-   // in the tier: "post": "$.{ 'period': period, 'detail': period ? {} : null }"
+   // the tier extracts `period` only; `detail` materialises from it
    ```
+
+   A row whose `params` do not bind — `period` is null, so there is nothing to
+   follow — gets `detail: null`, which is valid against the field. Emit the key
+   yourself only to override that per row: an explicit `null` suppresses the
+   reference, and a `{$lens, params}` object you build in `post` is kept as
+   written.
 
    Return only what the caller needs — a lens that emits every row bloats every
    call. Declare a `limit` param and slice in `post` (or `map`), since params

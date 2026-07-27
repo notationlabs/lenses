@@ -73,11 +73,15 @@ export async function executeLens(
     contributors.push(resolver.kind);
     observed = result.observed ?? observed;
     io.log?.(`${resolver.kind} resolver contributed a value`);
-    if (satisfiesReturns(gathered, spec.returns)) {
+    // Materialise before testing the contract: a declared $lens ref is supplied
+    // by materialisation, not by a resolver, so a value missing only refs is
+    // complete. Refs that cannot bind yet stay absent and still fail this.
+    const materialised = await materialiseLenses(gathered, spec.returns, params, false);
+    if (satisfiesReturns(materialised, spec.returns)) {
       io.log?.("return contract satisfied");
       return {
         kind: "value",
-        value: await materialiseLenses(gathered, spec.returns, params),
+        value: materialised,
         resolver: settledResolver(contributors),
         observed,
       };
