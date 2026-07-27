@@ -146,6 +146,7 @@ for (const [name, createFixture] of [
         kind: "value",
         value: { title: "Shared" },
         resolver: "dom",
+        observed: "https://example.com/shared",
       });
 
       const observation = await orchestrate(orchestrator, {

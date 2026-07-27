@@ -6,6 +6,7 @@ import type {
   LensResult,
   LensSpec,
   MapSpec,
+  ResolverMiss,
 } from "../types.js";
 import { evaluate } from "../expr.js";
 import { matchRequestPattern } from "../url-pattern.js";
@@ -17,7 +18,7 @@ export async function runIntercept(
   params: Record<string, unknown>,
   io: EngineIO,
   outcomes: LensSpec["outcomes"]
-): Promise<LensResult | null> {
+): Promise<LensResult | ResolverMiss> {
   const sources = r.sources ?? { body: { request: r.request!, items: r.items } };
   const names = Object.keys(sources);
 
@@ -30,7 +31,10 @@ export async function runIntercept(
       found = await findMatches(sources, io);
     }
   }
-  if (found.size < names.length) return null;
+  if (found.size < names.length) {
+    const unmatched = names.filter((n) => !found.has(n)).map((n) => sources[n].request);
+    return { kind: "miss", observed: `no response matched ${unmatched.join(", ")}` };
+  }
 
   // Detection sees one response directly or named responses as `$name`.
   const metas: Record<string, unknown> = {};
@@ -40,9 +44,12 @@ export async function runIntercept(
     : await detectOutcome(r.detect, metas[names[0]], params, outcomes, "intercept");
   if (outcome) return outcome;
 
+  // A 401/302 here is the intercept-tier equivalent of a signed-out redirect.
   for (const n of names) {
-    const status = found.get(n)!.status;
-    if (status < 200 || status >= 300) return null;
+    const response = found.get(n)!;
+    if (response.status < 200 || response.status >= 300) {
+      return { kind: "miss", observed: `HTTP ${response.status} from ${response.url}` };
+    }
   }
 
   const bodies: Record<string, unknown> = {};
@@ -52,16 +59,21 @@ export async function runIntercept(
     bodies[n] = items ? await evaluate(items, parsed, params) : parsed;
   }
 
+  const sourceUrls = names.map((n) => found.get(n)!.url).join(", ");
+  // The responses arrived; the expressions drew nothing out of them. Name the
+  // responses so this is not confused with a request that never matched.
+  const drew: ResolverMiss = { kind: "miss", observed: `no value from ${sourceUrls}` };
+
   if (r.sources) {
     const vars = { ...params, ...bodies };
     const value = r.map ? await project(r.map, vars, vars) : bodies;
-    if (value === undefined || value === null) return null;
-    return { kind: "value", value, resolver: "intercept" };
+    if (value === undefined || value === null) return drew;
+    return { kind: "value", value, resolver: "intercept", observed: sourceUrls };
   }
 
   // Map array items individually for a single source.
   const working = bodies[names[0]];
-  if (working === undefined || working === null) return null;
+  if (working === undefined || working === null) return drew;
   let value: unknown;
   if (r.map && Array.isArray(working)) {
     value = [];
@@ -71,7 +83,7 @@ export async function runIntercept(
   } else {
     value = working;
   }
-  return { kind: "value", value, resolver: "intercept" };
+  return { kind: "value", value, resolver: "intercept", observed: sourceUrls };
 }
 
 /** Evaluate a whole-value or per-field projection. */

@@ -191,7 +191,12 @@ describe("shipped lens documents", () => {
       }),
     }));
 
-    expect(result).toEqual({ kind: "value", value: [], resolver: "dom" });
+    expect(result).toEqual({
+      kind: "value",
+      value: [],
+      resolver: "dom",
+      observed: "https://github.com/notifications?query=is%3Aunread",
+    });
   });
 
   it("extracts a Hacker News story, windows its comments, and materialises the next page", async () => {

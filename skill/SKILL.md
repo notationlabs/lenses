@@ -143,10 +143,11 @@ A call result is one of:
    "outcomes": { "needs_auth": { "hint": "Ask the user to sign in at https://site.com, then retry." } },
    ```
 
-   For a signed-in page, an expired session is the likeliest runtime failure and
-   the worst-reported one: the page redirects to a login form, every selector
-   misses, and you get "dom resolver missed", which reads as a broken selector.
-   Give each tier a `detect` — a `dom` tier's context is `{url, title}`:
+   For a signed-in page, an expired session is the likeliest runtime failure:
+   the page redirects to a login form and every selector misses. The error names
+   the URL it landed on, so you can see the redirect — but only a `detect` turns
+   that into an outcome the caller can act on. A `dom` tier's context is
+   `{url, title}`:
 
    ```jsonc
    "detect": { "needs_auth": "$contains(url, '/sign-in') or $contains(title, 'Sign in')" }

@@ -125,8 +125,26 @@ export interface ValidationIssue {
   missing?: boolean;
 }
 
+/**
+ * A tier that produced nothing. `observed` names what the tier actually saw, so
+ * the exhausted-resolvers error can distinguish a broken selector from a page
+ * that was never the page asked for — a signed-out redirect misses every
+ * selector, and a bare miss reads identically to a typo.
+ */
+export interface ResolverMiss {
+  kind: "miss";
+  observed?: string;
+}
+
 export type LensResult =
-  | { kind: "value"; value: unknown; resolver: Resolver["kind"] | "reconciled"; partial?: boolean }
+  | {
+      kind: "value";
+      value: unknown;
+      resolver: Resolver["kind"] | "reconciled";
+      partial?: boolean;
+      /** where the value was read from — the landed URL, not the requested one */
+      observed?: string;
+    }
   | { kind: "outcome"; name: string; value: unknown; resolver: Resolver["kind"] }
   | {
       kind: "error";
