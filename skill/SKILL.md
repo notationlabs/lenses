@@ -110,6 +110,61 @@ A call result is one of:
    `nullable` in `returns` or coerce to `null` in `map`, since `undefined`
    fails a non-nullable field.
 
+   A field without `attr` reads the element's **rendered text**, so a `<br>`
+   separates its two sides instead of joining them. Whitespace runs — including
+   the `&nbsp;` that content-managed markup is dense with — are collapsed to
+   single spaces and the result is trimmed. Do not write your own normalising
+   helper; it is already done. Note the two empty cases are different: `""`
+   means the element is there and blank, `null` means the selector matched
+   nothing.
+
+   Tiers accumulate, so a page with a summary *and* a list is one lens, not
+   two. A tier with `item` yields an array as its whole value — name it in
+   `post`, and the fields-only tier merges alongside it:
+
+   ```jsonc
+   "returns": { "type": "object", "fields": {
+     "total": "number",
+     "rows": { "type": "array", "items": { "period": "string" } } } },
+   "resolve": [
+     { "kind": "dom", "fields": { "total": { "selector": ".total" } },
+       "post": "{ 'total': $number(total) }" },
+     { "kind": "dom", "item": ".row", "fields": { "period": { "selector": ".period" } },
+       "post": "{ 'rows': $ }" }
+   ]
+   ```
+
+   Declare every outcome your resolvers `detect`, or `lens list` will advertise
+   none while calls return one. An outcome's `hint` is the remediation text the
+   caller is shown — it is the only key read from the declaration, so
+   `description` and the like reach nobody:
+
+   ```jsonc
+   "outcomes": { "needs_auth": { "hint": "Ask the user to sign in at https://site.com, then retry." } },
+   ```
+
+   For a signed-in page, an expired session is the likeliest runtime failure and
+   the worst-reported one: the page redirects to a login form, every selector
+   misses, and you get "dom resolver missed", which reads as a broken selector.
+   Give each tier a `detect` — a `dom` tier's context is `{url, title}`:
+
+   ```jsonc
+   "detect": { "needs_auth": "$contains(url, '/sign-in') or $contains(title, 'Sign in')" }
+   ```
+
+   A `returns` field may itself declare a `$lens` reference, so a row carries a
+   ready-made follow-up call. The resolver must still emit the key or the
+   declaration is skipped: emit `{}` as a placeholder for rows that can be
+   followed and `null` for rows that cannot. `null` alone is inert — it is
+   valid against the schema and the materialiser leaves it untouched.
+
+   ```jsonc
+   "returns": { "type": "array", "items": {
+     "period": "string",
+     "detail": { "$lens": "@scope/site/detail", "params": { "period": "period" } } } },
+   // in the tier: "post": "$.{ 'period': period, 'detail': period ? {} : null }"
+   ```
+
    Return only what the caller needs — a lens that emits every row bloats every
    call. Declare a `limit` param and slice in `post` (or `map`), since params
    are JSONata variables:
