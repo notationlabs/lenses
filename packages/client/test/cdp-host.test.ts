@@ -7,6 +7,7 @@ const state = vi.hoisted(() => ({
 
 vi.mock("node:fs", () => ({
   existsSync: () => state.endpointAvailable,
+  readFileSync: () => "9222\n/devtools/browser/fake",
 }));
 
 vi.mock("puppeteer-core", () => ({

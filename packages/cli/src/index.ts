@@ -13,7 +13,7 @@ const globalHelp = `Usage:
   lens eval <expression> [--input <file>] [--params <json>]
   lens observe <target> [--request <index|pattern>] [--wait-ms <number>] [--timeout-ms <number>] [--html]
   lens status [--wait-ms <number>]
-  lens broker <status|release|acquire>
+  lens broker <status|release|acquire|shutdown>
   lens update [--catalog <source>]
   lens skill
 
@@ -179,6 +179,14 @@ Actions:
                           debugging slot for other tools — it is not a hard
                           stop. Set LENS_BROKER_IDLE_RELEASE_MS in the
                           broker's environment to opt in to idle auto-release.
+  shutdown                Retire the broker: it drains in-flight work,
+                          releases the lease and exits. The next lens call
+                          spawns a fresh one. Brokers also exit on their own
+                          with no clients, no extension attached and nothing
+                          in flight: after LENS_BROKER_NO_BROWSER_EXIT_MS
+                          (default 10s) when no browser is reachable, or
+                          LENS_BROKER_IDLE_EXIT_MS (default 15m, 0 disables)
+                          when one is there but unused.
 
 Options:
   --timeout-ms <number>   Whole control-call timeout (default: 60000)
@@ -359,8 +367,14 @@ async function main(): Promise<void> {
         break;
       case "broker": {
         const [action] = operands;
+        if (action === "shutdown") {
+          output = await client.shutdownBroker(timeoutMs);
+          break;
+        }
         if (action !== "status" && action !== "release" && action !== "acquire") {
-          throw new Error('broker requires an action: "status", "release", or "acquire"');
+          throw new Error(
+            'broker requires an action: "status", "release", "acquire", or "shutdown"'
+          );
         }
         output = await client.broker(action, timeoutMs);
         break;

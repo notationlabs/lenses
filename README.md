@@ -212,6 +212,17 @@ lens MCP ────┘                                │             └─ C
 
 The broker hosts the resolver engine, caching, retry policy, and page-retention policy once. It pins each call to one session backend: the extension is preferred when its protocol and capabilities are compatible, while the CDP backend supplies the same page lifecycle, network capture, and in-page extraction primitives as a fallback.
 
+### Broker lifecycle
+
+The first client to need the broker spawns it as a detached process on port 4319 and every later client shares it. Because it outlives the command that started it, the daemon stamps itself at startup with a content hash of its own module directory and reports that stamp in its status frame. A client whose own stamp differs — the normal state after a rebuild or a pull — asks the broker to shut down and reconnects to a freshly spawned one, so nobody keeps talking to yesterday's code. Concurrent clients coordinate through a lock file, so exactly one restarts the broker while the rest wait and reconnect; a stamp that never converges fails the bind after three attempts rather than looping. A retiring broker stops listening first — freeing the port for the replacement — then drains in-flight calls (bounded at 10s) so a call already running still receives its result, then releases the CDP lease under a 5s bound and exits. The replacement binds the port while the old process is still draining.
+
+The broker also retires itself when nobody needs it. Two windows govern this, and any connected client, attached extension or in-flight call restarts both:
+
+- **No browser reachable** — `LENS_BROKER_NO_BROWSER_EXIT_MS`, default 10s. A broker with nowhere to run a lens can only occupy memory (~56MB), and respawning one costs ~200ms, so it goes almost immediately. Chrome leaves its `DevToolsActivePort` file behind when it quits, so the check is an HTTP probe of the endpoint rather than the file's presence.
+- **Browser present but unused** — `LENS_BROKER_IDLE_EXIT_MS`, default 15m (`0` disables both). Longer, because exiting here throws away a working CDP lease: consent is session-scoped, so reacquiring is silent while Chrome keeps running but costs an **Allow** dialog once Chrome restarts.
+
+The extension guard matters: exiting while the extension is attached would drop its socket and push it back through broker rediscovery (~7s, longer on a port it has not seen), which costs more than the resident process saves. In practice that means a broker stays up while you have Chrome open with the extension, and is reclaimed shortly after you quit Chrome. `lens broker shutdown` retires it immediately.
+
 ## Lens spec reference
 
 A lens is a JSON file in a catalog source — a local directory such as `examples/`, a git

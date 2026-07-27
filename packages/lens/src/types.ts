@@ -168,5 +168,11 @@ export type LensBridgeRequest =
    * Broker lease control. "release" drops the CDP connection so other tools can
    * use Chrome's single consented debugging slot; "acquire" reconnects (Chrome
    * shows a fresh Allow dialog); "status" reports the lease without side effects.
+   * "shutdown" retires the broker itself: it drains in-flight work, releases the
+   * lease and exits, so a client running newer code can respawn it.
    */
-  | { type: "control"; id: string; action: "release" | "acquire" | "status" };
+  | {
+      type: "control";
+      id: string;
+      action: "release" | "acquire" | "status" | "shutdown";
+    };
