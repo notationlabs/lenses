@@ -72,6 +72,34 @@ describe("LensClient", () => {
     ]);
   });
 
+  // Undeclared outcomes are invisible in a listing whose whole outcome column
+  // is derived from the declarations that are missing.
+  it("warns in the listing when a detect names an undeclared outcome", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "lens-client-"));
+    await writeFile(
+      join(directory, "example.json"),
+      JSON.stringify({
+        name: "@example/web/page",
+        url: "https://example.com/home",
+        effects: { reads: ["example.com"], writes: [] },
+        detect: { needs_auth: "$contains(url, '/sign-in')" },
+        resolve: [{ kind: "dom", fields: { title: { selector: "title" } } }],
+      })
+    );
+    const client = new LensClient(new LensStore(directory), new FakeTransport());
+
+    const [summary] = await client.list();
+    expect(summary.outcomes).toEqual([]);
+    expect(summary.warnings?.[0]).toContain(
+      '"outcomes": { "needs_auth": { "hint": "<how to recover>" } }'
+    );
+  });
+
+  it("leaves warnings off a listing with nothing to report", async () => {
+    const client = new LensClient(new LensStore(await fixtureDirectory()), new FakeTransport());
+    expect((await client.list())[0]).not.toHaveProperty("warnings");
+  });
+
   it("owns call caching for every adapter", async () => {
     const transport = new FakeTransport();
     const client = new LensClient(new LensStore(await fixtureDirectory()), transport);

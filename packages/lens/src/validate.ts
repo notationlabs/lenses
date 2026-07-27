@@ -105,6 +105,34 @@ const lensSpecSchema = z.strictObject({
   resolve: z.array(z.discriminatedUnion("kind", [interceptSchema, domSchema, llmSchema])).min(1),
 });
 
+/**
+ * Non-fatal problems with an otherwise valid document.
+ *
+ * A `detect` naming an outcome the document does not declare still fires, so
+ * the call returns that outcome and the caller is handed nothing to do about
+ * it. The remediation has to name `hint` explicitly: it is the only key read
+ * from a declaration, an author who writes `description` instead ships dead
+ * strings, and the result looks correct in `lens list` either way.
+ */
+export function specWarnings(spec: LensSpec): string[] {
+  const declared = new Set(Object.keys(spec.outcomes ?? {}));
+  const detected = new Set(Object.keys(spec.detect ?? {}));
+  for (const resolver of spec.resolve) {
+    if ("detect" in resolver && resolver.detect) {
+      for (const name of Object.keys(resolver.detect)) detected.add(name);
+    }
+  }
+  return [...detected]
+    .filter((name) => !declared.has(name))
+    .map(
+      (name) =>
+        `detect names the outcome "${name}", which "outcomes" does not declare, ` +
+        `so a caller that hits it is given no way to recover. Declare it as ` +
+        `"outcomes": { "${name}": { "hint": "<how to recover>" } } — "hint" is the ` +
+        `only key read from the declaration, so "description" and the like reach nobody.`
+    );
+}
+
 function pointerOf(path: PropertyKey[]): string {
   if (path.length === 0) return "/";
   return `/${path
