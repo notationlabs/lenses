@@ -50,6 +50,52 @@ describe("LensStore", () => {
   });
 });
 
+describe("catalog helpers", () => {
+  const norm = 'function($s) { $trim($s) }';
+
+  async function withCatalog(helpers: Record<string, string>, extra: Record<string, unknown> = {}) {
+    const directory = await catalogDirectory({ "a.json": "@one/web/page" });
+    await writeFile(join(directory, "catalog.json"), JSON.stringify({ helpers, ...extra }));
+    return directory;
+  }
+
+  it("gives every document in the directory the catalogue's helpers", async () => {
+    const directory = await withCatalog({ norm });
+    const [spec] = await new LensStore([directory]).load();
+    expect(spec.helpers).toEqual({ norm });
+  });
+
+  // catalog.json is settings, not a lens; loading it as one would throw.
+  it("does not read catalog.json as a lens document", async () => {
+    const directory = await withCatalog({ norm });
+    expect((await new LensStore([directory]).load()).map((s) => s.name)).toEqual(["@one/web/page"]);
+  });
+
+  it("lets a document's own helper of the same name win", async () => {
+    const directory = await withCatalog({ norm });
+    await writeFile(
+      join(directory, "a.json"),
+      JSON.stringify({
+        name: "@one/web/page",
+        url: "https://example.com/home",
+        effects: { reads: ["example.com"], writes: [] },
+        helpers: { norm: "function($s) { $uppercase($s) }" },
+        resolve: [{ kind: "dom", fields: { title: { selector: "title" } } }],
+      })
+    );
+    const [spec] = await new LensStore([directory]).load();
+    expect(spec.helpers?.norm).toBe("function($s) { $uppercase($s) }");
+  });
+
+  // `lens call ./my-lens.json` is the documented way to test a document, so it
+  // must see the same helpers a catalogue load would supply.
+  it("applies them to a document resolved by file path", async () => {
+    const directory = await withCatalog({ norm });
+    const spec = await new LensStore([]).resolve(join(directory, "a.json"));
+    expect(spec.helpers).toEqual({ norm });
+  });
+});
+
 describe("git catalog source", () => {
   it("clones a repository into the cache, loads it, and refreshes on update", async () => {
     const repo = await catalogDirectory({ "a.json": "@one/web/page" });

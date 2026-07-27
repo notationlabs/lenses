@@ -259,7 +259,28 @@ repository, or an HTTP catalog index — or at a direct HTTP URL.
   Materialised results carry the lens name and evaluated parameters needed for a follow-up
   call.
 
+  A field declaring a `$lens` reference materialises from the row's other fields;
+  no resolver needs to emit the key. A row whose parameters do not bind gets
+  `null`, and an explicit `null` from a resolver suppresses the reference.
+
 - `outcomes` — named non-happy paths, optionally carrying the lens that resolves them.
+  `hint` is the only key read from a declaration; it is the remediation text the
+  caller is shown.
+- `detect` — outcome detection shared by every tier, each evaluating it against
+  its own context (`{url, title}` for DOM, `{status, url, body}` for intercept).
+  A resolver's own `detect` overrides it for that outcome.
+- `helpers` — named JSONata lambdas bound as `$name` in every expression the
+  document evaluates:
+
+  ```jsonc
+  "helpers": { "money": "function($s) { $number($replace($s, /[^0-9.]/, \"\")) }" }
+  ```
+
+  A `catalog.json` beside the documents may declare the same block for all of
+  them, so fixing a helper is one edit rather than one per document. A
+  document's own entry overrides the catalogue's, and a declared param of the
+  same name shadows both.
+
 - `effects` — `{ "reads": [...], "writes": [...], "idempotent": true, "cache": 60 }`.
 - `loadTimeoutMs` — optional page-load timeout; the default is 30 seconds.
 - `resolve` — ordered intercept, DOM, and LLM resolver definitions.

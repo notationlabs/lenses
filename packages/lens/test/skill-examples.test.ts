@@ -73,6 +73,25 @@ describe("SKILL.md authoring examples", () => {
     });
   });
 
+  it("binds a shared helper lambda as $name", async () => {
+    const spec = validateSpec({
+      name: "@scope/site/thing",
+      url: "https://site.com/thing",
+      effects: { reads: ["site.com"], writes: [] },
+      helpers: { money: 'function($s) { $number($replace($s, /[^0-9.]/, "")) }' },
+      resolve: [
+        {
+          kind: "dom",
+          fields: { raw: { selector: ".total" } },
+          post: "{ 'amount': $money(raw) }",
+        },
+      ],
+    });
+
+    const result = await executeLens(spec, {}, io(null, { raw: "\u00a31,234.50" }));
+    expect(result).toMatchObject({ kind: "value", value: { amount: 1234.5 } });
+  });
+
   it("substitutes a declared param into a selector", async () => {
     const spec = validateSpec({
       name: "@scope/site/payments",

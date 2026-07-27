@@ -665,3 +665,55 @@ describe("llm tier", () => {
     await expect(execution).rejects.toThrow("tab closed");
   });
 });
+
+describe("shared JSONata helpers", () => {
+  const withHelpers = (helpers: Record<string, string>, post: string, params?: unknown) =>
+    validateSpec({
+      name: "@example/web/things",
+      url: "https://example.com/things",
+      ...(params ? { params } : {}),
+      effects: { reads: ["example.com"], writes: [] },
+      helpers,
+      resolve: [{ kind: "dom", fields: { raw: { selector: ".raw" } }, post }],
+    });
+
+  const domValue = (value: unknown) =>
+    io({ domExtract: async () => ({ url: "u", title: "t", value }) });
+
+  it("binds a helper lambda as $name in an expression", async () => {
+    const spec = withHelpers(
+      { money: 'function($s) { $number($replace($s, /[^0-9.]/, "")) }' },
+      "{ 'amount': $money(raw) }"
+    );
+    const r = await executeLens(spec, {}, domValue({ raw: "£1,234.50" }));
+    expect(r).toMatchObject({ kind: "value", value: { amount: 1234.5 } });
+  });
+
+  // A catalogue must not be able to change what an expression means by adding a
+  // helper whose name a document already declares as a param.
+  it("lets a declared param shadow a helper of the same name", async () => {
+    const spec = withHelpers(
+      { limit: "function() { 99 }" },
+      "{ 'v': $limit }",
+      { limit: { type: "integer", default: 5 } }
+    );
+    const r = await executeLens(spec, {}, domValue({ raw: "x" }));
+    expect(r).toMatchObject({ kind: "value", value: { v: 5 } });
+  });
+
+  it("makes helpers available to detect as well as post", async () => {
+    const spec = validateSpec({
+      name: "@example/web/things",
+      url: "https://example.com/things",
+      effects: { reads: ["example.com"], writes: [] },
+      outcomes: { needs_auth: { hint: "Sign in." } },
+      helpers: { isLogin: "function($u) { $contains($u, '/sign-in') }" },
+      detect: { needs_auth: "$isLogin(url)" },
+      resolve: [{ kind: "dom", fields: { raw: { selector: ".raw" } } }],
+    });
+    const r = await executeLens(spec, {}, io({
+      domExtract: async () => ({ url: "https://example.com/sign-in", title: "t", value: null }),
+    }));
+    expect(r).toMatchObject({ kind: "outcome", name: "needs_auth" });
+  });
+});

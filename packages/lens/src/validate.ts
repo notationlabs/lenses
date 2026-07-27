@@ -97,6 +97,7 @@ const lensSpecSchema = z.strictObject({
   returns: returnSchema.optional(),
   outcomes: z.record(z.string(), z.unknown()).optional(),
   detect: detect.optional(),
+  helpers: z.record(z.string(), expression).optional(),
   effects: z.strictObject({
     reads: z.array(z.string()),
     writes: z.array(z.string()),

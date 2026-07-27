@@ -11,6 +11,7 @@ const ABSENT = Symbol("absent");
 
 interface Ctx {
   callParams: Record<string, unknown>;
+  helpers?: Record<string, string>;
   /**
    * True on the pass whose result is returned. Until then an unbindable ref
    * that no resolver emitted stays absent, so the return contract reads as
@@ -26,10 +27,11 @@ export async function materialiseLenses(
   value: unknown,
   returns: unknown,
   callParams: Record<string, unknown> = {},
-  final = true
+  final = true,
+  helpers?: Record<string, string>
 ): Promise<unknown> {
   if (!isPlainObject(returns)) return value;
-  return materialiseField(value, returns, {}, { callParams, final });
+  return materialiseField(value, returns, {}, { callParams, final, helpers });
 }
 
 /** Apply field schemas to one object. */
@@ -95,7 +97,7 @@ async function materialiseRef(
   let bound = true;
   for (const [key, expression] of Object.entries(schema.params ?? {})) {
     try {
-      params[key] = await evaluate(expression, contextObj, ctx.callParams);
+      params[key] = await evaluate(expression, contextObj, ctx.callParams, ctx.helpers);
     } catch {
       bound = false;
       break;

@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { validateSpec, type LensSpec } from "@djgrant/lens";
@@ -45,6 +45,59 @@ function refHash(ref: string): string {
   return createHash("sha256").update(ref).digest("hex").slice(0, 16);
 }
 
+/**
+ * Catalogue-level settings, held in a `catalog.json` beside the documents (or
+ * in the index document, for an HTTP catalogue). It is not itself a lens.
+ */
+export const CATALOG_DOCUMENT = "catalog.json";
+
+interface CatalogDocument {
+  helpers?: Record<string, string>;
+}
+
+/**
+ * Give every document the catalogue's helpers, with its own winning by name.
+ *
+ * The point is blast radius, not typing. A helper copy-pasted into thirteen
+ * documents has to be fixed thirteen times and re-verified against thirteen
+ * live pages; bound here, a fix is proportional to the change instead.
+ */
+function withCatalogHelpers(spec: LensSpec, catalog: CatalogDocument): LensSpec {
+  if (!catalog.helpers) return spec;
+  return { ...spec, helpers: { ...catalog.helpers, ...spec.helpers } };
+}
+
+/** `withCatalogHelpers` for a caller holding helpers rather than a document. */
+export function applyCatalogHelpers(
+  spec: LensSpec,
+  helpers: Record<string, string> | undefined
+): LensSpec {
+  return withCatalogHelpers(spec, { helpers });
+}
+
+/** The helpers a lens document at `path` inherits from its own directory. */
+export async function catalogHelpersFor(path: string): Promise<Record<string, string> | undefined> {
+  return (await readCatalogDocument(dirname(path))).helpers;
+}
+
+async function readCatalogDocument(directory: string): Promise<CatalogDocument> {
+  let text: string;
+  try {
+    text = await readFile(join(directory, CATALOG_DOCUMENT), "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
+    throw error;
+  }
+  try {
+    const parsed = JSON.parse(text) as CatalogDocument;
+    return { helpers: parsed.helpers };
+  } catch (error) {
+    throw new Error(
+      `invalid catalog document ${join(directory, CATALOG_DOCUMENT)}: ${(error as Error).message}`
+    );
+  }
+}
+
 /** Read every *.json in a directory as a validated lens document. */
 export async function readLensDirectory(directory: string): Promise<LensSpec[]> {
   let entries: string[];
@@ -54,10 +107,17 @@ export async function readLensDirectory(directory: string): Promise<LensSpec[]> 
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw error;
   }
+  const catalog = await readCatalogDocument(directory);
   const specs: LensSpec[] = [];
   for (const file of entries.filter((entry) => entry.endsWith(".json")).sort()) {
+    if (file === CATALOG_DOCUMENT) continue;
     try {
-      specs.push(validateSpec(JSON.parse(await readFile(join(directory, file), "utf8"))));
+      specs.push(
+        withCatalogHelpers(
+          validateSpec(JSON.parse(await readFile(join(directory, file), "utf8"))),
+          catalog
+        )
+      );
     } catch (error) {
       throw new Error(`invalid lens document ${join(directory, file)}: ${(error as Error).message}`);
     }
@@ -95,6 +155,7 @@ export async function scanLensFiles(root: string, maxDepth = 2): Promise<LensFil
         continue;
       }
       if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+      if (entry.name === CATALOG_DOCUMENT) continue;
       try {
         const spec = validateSpec(JSON.parse(await readFile(path, "utf8")));
         found.push({ path: relative(root, path), spec });
@@ -233,10 +294,13 @@ class HttpCatalogSource implements CatalogSource {
     }
     if (!response.ok) throw new Error(`http catalog ${this.id}: HTTP ${response.status}`);
 
-    const index = (await response.json()) as { lenses?: unknown };
+    const index = (await response.json()) as { lenses?: unknown; helpers?: Record<string, string> };
     if (!Array.isArray(index.lenses)) {
       throw new Error(`http catalog ${this.id}: index must declare a "lenses" array`);
     }
+    // Helpers are folded in before caching, so the 304 and offline paths below
+    // serve documents that already carry them.
+    const catalog = { helpers: index.helpers };
     const specs = await Promise.all(
       index.lenses.map(async (entry) => {
         if (typeof entry === "string") {
@@ -245,9 +309,9 @@ class HttpCatalogSource implements CatalogSource {
           if (!documentResponse.ok) {
             throw new Error(`http catalog ${this.id}: ${documentUrl} HTTP ${documentResponse.status}`);
           }
-          return validateSpec(await documentResponse.json());
+          return withCatalogHelpers(validateSpec(await documentResponse.json()), catalog);
         }
-        return validateSpec(entry); // an index may inline whole documents
+        return withCatalogHelpers(validateSpec(entry), catalog); // an index may inline documents
       })
     );
     await mkdir(join(cacheRoot(), "http"), { recursive: true });

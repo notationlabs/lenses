@@ -36,7 +36,7 @@ export async function runDom(
 ): Promise<LensResult | ResolverMiss> {
   const extracted = await io.domExtract(expandSelectors(r, params));
   const detect = mergeDetect(spec.detect, r.detect);
-  const outcome = await detectOutcome(detect, { url: extracted.url, title: extracted.title }, params, spec.outcomes, "dom");
+  const outcome = await detectOutcome(detect, { url: extracted.url, title: extracted.title }, params, spec.outcomes, "dom", spec.helpers);
   if (outcome) return outcome;
 
   // The landed URL is the one piece of evidence the tier holds; carry it into
@@ -46,7 +46,7 @@ export async function runDom(
   let value = extracted.value;
   if (value === undefined || value === null) return miss;
   if (Array.isArray(value) && value.length === 0) return miss;
-  if (r.post) value = await evaluate(r.post, value, params);
+  if (r.post) value = await evaluate(r.post, value, params, spec.helpers);
   if (value === undefined || value === null) return miss;
   return { kind: "value", value, resolver: "dom", observed: extracted.url };
 }
