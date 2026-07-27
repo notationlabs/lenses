@@ -15,6 +15,7 @@ import {
 const PORT_RANGE_START = 4319;
 const PORT_RANGE_END = 4329;
 const KNOWN_PORTS_KEY = "knownPorts";
+const RECONNECT_ALARM = "lens-bridge-reconnect";
 const DISCOVER_COOLDOWN_MS = 10_000;
 const epoch = crypto.randomUUID();
 
@@ -23,12 +24,20 @@ let lastDiscover = 0;
 let portUpdate = Promise.resolve();
 
 export function startBridgeConnections(): void {
-  chrome.alarms.create("lens-bridge-reconnect", {
-    periodInMinutes: 0.5,
+  // Re-creating the alarm on every worker start would push its next firing out
+  // by another period, so a worker that keeps waking never gets its reconnect.
+  void chrome.alarms.get(RECONNECT_ALARM).then((existing) => {
+    if (!existing) {
+      chrome.alarms.create(RECONNECT_ALARM, { periodInMinutes: 0.5 });
+    }
   });
   chrome.alarms.onAlarm.addListener((alarm) => {
-    if (alarm.name === "lens-bridge-reconnect") discover(true);
+    if (alarm.name === RECONNECT_ALARM) discover(true);
   });
+  // A dormant worker only revives on a registered event; browser start and
+  // install are the two that follow a broker outage.
+  chrome.runtime.onStartup.addListener(() => discover(true));
+  chrome.runtime.onInstalled.addListener(() => discover(true));
   chrome.tabs.onUpdated.addListener((_id, info, tab) => {
     if (info.status === "complete" && tab.url?.startsWith("http")) {
       discover();
