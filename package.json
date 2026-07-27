@@ -10,7 +10,9 @@
   "packageManager": "pnpm@11.6.0",
   "devDependencies": {
     "@djgrant/lens": "workspace:*",
-    "@pokit/core": "^0.3.1",
-    "@pokit/terminal": "^0.3.1"
+    "@pokit/core": "^0.6.0",
+    "@pokit/terminal": "^0.6.0",
+    "pok-plugins": "github:djgrant/pok-plugins",
+    "pokit": "^0.3.2"
   }
 }
