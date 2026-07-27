@@ -13,6 +13,24 @@ export function expandUrl(template: string, params: Record<string, unknown>): st
   });
 }
 
+/**
+ * Expand the same named holes outside a URL, substituting the value verbatim.
+ * Percent-encoding is a URL's escape and means nothing to a CSS selector:
+ * `#row-{year}` wants `#row-2024`, not `#row-2024` via encodeURIComponent's
+ * rules for a different grammar. There is no one correct escape for a selector
+ * either — an identifier position and a quoted attribute position want
+ * different things — so the value goes in as written, and a lens that
+ * interpolates a caller-supplied string should declare it as an integer where
+ * it can.
+ */
+export function expandTemplate(template: string, params: Record<string, unknown>): string {
+  return template.replace(HOLE, (_, name: string) => {
+    const value = params[name];
+    if (value === undefined) throw new Error(`missing parameter "${name}"`);
+    return String(value);
+  });
+}
+
 /** Match "METHOD urlglob" request patterns against a captured response. */
 export function matchRequestPattern(pattern: string, method: string, url: string): boolean {
   const space = pattern.indexOf(" ");

@@ -216,6 +216,66 @@ describe("executeLens", () => {
     });
   });
 
+  // Templating stopped at spec.url, so a lens wanting "#past-payments-{year}"
+  // had to read every panel and recover the year from row text.
+  describe("param-templated selectors", () => {
+    const yearly = validateSpec({
+      name: "@example/web/payments",
+      url: "https://example.com/payments",
+      params: { year: "integer" },
+      effects: { reads: ["example.com"], writes: [] },
+      resolve: [
+        {
+          kind: "dom",
+          item: "#past-payments-{year} .row",
+          fields: { amount: { selector: ".amount-{year}" } },
+        },
+      ],
+    });
+
+    it("substitutes params into item and field selectors", async () => {
+      const seen: DomResolver[] = [];
+      await executeLens(yearly, { year: 2024 }, io({
+        domExtract: async (r) => {
+          seen.push(r);
+          return { url: "u", title: "t", value: [{ amount: "1" }] };
+        },
+      }));
+      expect(seen[0].item).toBe("#past-payments-2024 .row");
+      expect(seen[0].fields?.amount.selector).toBe(".amount-2024");
+    });
+
+    // Percent-encoding is a URL's escape and would corrupt a selector.
+    it("substitutes verbatim rather than percent-encoding", async () => {
+      const spaced = validateSpec({
+        name: "@example/web/payments",
+        url: "https://example.com/payments",
+        params: { label: "string" },
+        effects: { reads: ["example.com"], writes: [] },
+        resolve: [{ kind: "dom", fields: { v: { selector: "[aria-label='{label}']" } } }],
+      });
+      const seen: DomResolver[] = [];
+      await executeLens(spaced, { label: "Tax year" }, io({
+        domExtract: async (r) => {
+          seen.push(r);
+          return { url: "u", title: "t", value: { v: "1" } };
+        },
+      }));
+      expect(seen[0].fields?.v.selector).toBe("[aria-label='Tax year']");
+    });
+
+    it("rejects a selector hole that names no declared param", () => {
+      expect(() =>
+        validateSpec({
+          name: "@example/web/payments",
+          url: "https://example.com/payments",
+          effects: { reads: ["example.com"], writes: [] },
+          resolve: [{ kind: "dom", fields: { v: { selector: "#row-{year}" } } }],
+        })
+      ).toThrow(/selector parameter "year" is not declared/);
+    });
+  });
+
   it("binds declared parameters in JSONata", async () => {
     const s = validateSpec({
       name: "@example/web/echo",

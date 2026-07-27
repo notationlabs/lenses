@@ -73,6 +73,33 @@ describe("SKILL.md authoring examples", () => {
     });
   });
 
+  it("substitutes a declared param into a selector", async () => {
+    const spec = validateSpec({
+      name: "@scope/site/payments",
+      url: "https://site.com/payments",
+      params: { year: "integer" },
+      effects: { reads: ["site.com"], writes: [] },
+      resolve: [
+        {
+          kind: "dom",
+          item: "#past-payments-{year} .row",
+          fields: { amount: { selector: ".amount" } },
+        },
+      ],
+    });
+
+    let seen: string | undefined;
+    const capture: EngineIO = {
+      ...io([{ amount: "1" }], null),
+      domExtract: async (r: DomResolver) => {
+        seen = r.item;
+        return { url: "https://site.com/payments", title: "t", value: [{ amount: "1" }] };
+      },
+    };
+    await executeLens(spec, { year: 2024 }, capture);
+    expect(seen).toBe("#past-payments-2024 .row");
+  });
+
   it("materialises a declared $lens ref from a {} placeholder, and skips a null one", async () => {
     const spec = validateSpec({
       name: "@scope/site/list",

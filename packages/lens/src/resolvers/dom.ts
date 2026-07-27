@@ -1,6 +1,28 @@
 import type { DomResolver, EngineIO, LensResult, LensSpec, ResolverMiss } from "../types.js";
 import { evaluate } from "../expr.js";
+import { expandTemplate } from "../url-pattern.js";
 import { detectOutcome, mergeDetect } from "./outcome.js";
+
+/**
+ * Substitute declared params into every selector before the spec crosses into
+ * the page. Doing it here keeps the page functions free of params — they see
+ * concrete selectors — and covers both browser backends at once.
+ */
+export function expandSelectors(r: DomResolver, params: Record<string, unknown>): DomResolver {
+  const fields = r.fields
+    ? Object.fromEntries(
+        Object.entries(r.fields).map(([name, f]) => [
+          name,
+          { ...f, selector: expandTemplate(f.selector, params) },
+        ])
+      )
+    : undefined;
+  return {
+    ...r,
+    ...(r.item ? { item: expandTemplate(r.item, params) } : {}),
+    ...(fields ? { fields } : {}),
+  };
+}
 
 export async function runDom(
   r: DomResolver,
@@ -8,7 +30,7 @@ export async function runDom(
   io: EngineIO,
   spec: LensSpec
 ): Promise<LensResult | ResolverMiss> {
-  const extracted = await io.domExtract(r);
+  const extracted = await io.domExtract(expandSelectors(r, params));
   const detect = mergeDetect(spec.detect, r.detect);
   const outcome = await detectOutcome(detect, { url: extracted.url, title: extracted.title }, params, spec.outcomes, "dom");
   if (outcome) return outcome;
