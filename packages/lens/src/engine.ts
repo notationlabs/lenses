@@ -1,4 +1,4 @@
-import type { EngineIO, LensResult, LensSpec, Resolver } from "./types.js";
+import type { EngineIO, LensResult, LensSpec, Resolver, ResolverMiss } from "./types.js";
 import { materialiseLenses } from "./materialise.js";
 import { runIntercept } from "./resolvers/intercept.js";
 import { runDom } from "./resolvers/dom.js";
@@ -24,10 +24,13 @@ export async function executeLens(
 
   let lastMiss = "no resolvers defined";
   let gathered: unknown;
+  // Where the tiers that contributed were actually reading. A tier that missed
+  // says nothing about the value, so only contributors update it.
+  let observed: string | undefined;
   const contributors: Resolver["kind"][] = [];
   for (const resolver of spec.resolve) {
     io.log?.(`trying ${resolver.kind} resolver`);
-    let result: LensResult | null;
+    let result: LensResult | ResolverMiss;
     switch (resolver.kind) {
       case "intercept":
         result = await runIntercept(resolver, params, io, spec.outcomes);
@@ -39,9 +42,9 @@ export async function executeLens(
         result = await runLlm(resolver, io);
         break;
     }
-    if (!result) {
-      io.log?.(`${resolver.kind} resolver missed`);
-      lastMiss = `${resolver.kind} resolver missed`;
+    if (result.kind === "miss") {
+      lastMiss = `${resolver.kind} resolver missed${result.observed ? ` at ${result.observed}` : ""}`;
+      io.log?.(lastMiss);
       continue;
     }
     // Outcomes and errors are terminal; agent extraction includes gathered fields.
@@ -68,6 +71,7 @@ export async function executeLens(
         ? fillAbsent(gathered, result.value)
         : result.value;
     contributors.push(resolver.kind);
+    observed = result.observed ?? observed;
     io.log?.(`${resolver.kind} resolver contributed a value`);
     if (satisfiesReturns(gathered, spec.returns)) {
       io.log?.("return contract satisfied");
@@ -75,6 +79,7 @@ export async function executeLens(
         kind: "value",
         value: await materialiseLenses(gathered, spec.returns, params),
         resolver: settledResolver(contributors),
+        observed,
       };
     }
   }
@@ -86,6 +91,7 @@ export async function executeLens(
       value: await materialiseLenses(gathered, spec.returns, params),
       resolver: settledResolver(contributors),
       partial: true,
+      observed,
     };
   }
   io.log?.("all resolvers exhausted without a value");

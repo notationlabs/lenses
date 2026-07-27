@@ -47,6 +47,7 @@ describe("SKILL.md authoring examples", () => {
     expect(result).toEqual({
       kind: "value",
       resolver: "reconciled",
+      observed: "https://site.com/",
       value: { total: 4, rows: [{ period: "Q1" }] },
     });
   });

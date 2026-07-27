@@ -73,6 +73,7 @@ describe("executeLens", () => {
     expect(r).toEqual({
       kind: "value",
       resolver: "intercept",
+      observed: "https://api.example.com/things",
       value: [
         { title: "a", count: 1 },
         { title: "b", count: 2 },
@@ -108,6 +109,56 @@ describe("executeLens", () => {
       name: "agent_extract",
       resolver: "llm",
       value: { prompt: "Extract the things.", text: "thing a" },
+    });
+  });
+
+  // A signed-out redirect misses every selector. Without the landed URL the
+  // error is indistinguishable from a typo in the selector.
+  it("names the landed URL when a DOM tier misses", async () => {
+    const domOnly = validateSpec({
+      name: "@example/web/things",
+      url: "https://example.com/things",
+      effects: { reads: ["example.com"], writes: [] },
+      resolve: [{ kind: "dom", item: ".thing", fields: { title: { selector: ".t" } } }],
+    });
+    const r = await executeLens(domOnly, {}, io({
+      domExtract: async () => ({ url: "https://example.com/sign-in", title: "Sign in", value: null }),
+    }));
+    expect(r).toEqual({
+      kind: "error",
+      message: "all resolvers exhausted (dom resolver missed at https://example.com/sign-in)",
+    });
+  });
+
+  it("names the unmatched request when an intercept tier captures nothing", async () => {
+    const interceptOnly = validateSpec({
+      name: "@example/web/things",
+      url: "https://example.com/things",
+      effects: { reads: ["example.com"], writes: [] },
+      resolve: [{ kind: "intercept", request: "GET https://api.example.com/things*", items: "things" }],
+    });
+    const r = await executeLens(interceptOnly, {}, io());
+    expect(r).toMatchObject({
+      kind: "error",
+      message:
+        "all resolvers exhausted (intercept resolver missed at no response matched GET https://api.example.com/things*)",
+    });
+  });
+
+  it("names the status when an intercept tier captures a non-2xx response", async () => {
+    const interceptOnly = validateSpec({
+      name: "@example/web/things",
+      url: "https://example.com/things",
+      effects: { reads: ["example.com"], writes: [] },
+      resolve: [{ kind: "intercept", request: "GET https://api.example.com/things*", items: "things" }],
+    });
+    const r = await executeLens(interceptOnly, {}, io({
+      getIntercepted: async () => [captured({ status: 401, body: "{}" })],
+    }));
+    expect(r).toMatchObject({
+      kind: "error",
+      message:
+        "all resolvers exhausted (intercept resolver missed at HTTP 401 from https://api.example.com/things)",
     });
   });
 
@@ -299,6 +350,7 @@ describe("intercept sources composition", () => {
     expect(r).toEqual({
       kind: "value",
       resolver: "intercept",
+      observed: "https://api.example.com/usage, https://api.example.com/subscription_details",
       value: {
         plan: "Max (20x)",
         limits: [
@@ -384,6 +436,8 @@ describe("cross-tier reconciliation", () => {
     expect(r).toEqual({
       kind: "value",
       resolver: "reconciled",
+      // the last contributing tier, i.e. the dom one that supplied `plan`
+      observed: "u",
       value: { renews_at: "2026-08-06", limits: [{ kind: "session" }], plan: "Max (20x)" },
     });
   });

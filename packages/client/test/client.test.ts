@@ -172,6 +172,28 @@ describe("LensClient", () => {
     });
   });
 
+  // The cost of omitting this was a debugging cycle: a signed-out redirect
+  // fails every field and reads exactly like a broken selector.
+  it("names the URL the value was read from in a schema failure", async () => {
+    const transport = new FakeTransport();
+    transport.result = {
+      kind: "value",
+      value: { title: "Sign in" },
+      resolver: "dom",
+      observed: "https://example.com/sign-in",
+    };
+    const client = new LensClient(
+      new LensStore(await fixtureDirectory(false, titledReturns)),
+      transport
+    );
+
+    expect(await client.call({ lens: "web/page" })).toMatchObject({
+      kind: "error",
+      message:
+        "@example/web/page: no resolver produced field /score (read from https://example.com/sign-in)",
+    });
+  });
+
   it("demotes result schema violations to warnings when strict is off", async () => {
     const transport = new FakeTransport();
     transport.result = { kind: "value", value: { title: "Home" }, resolver: "dom" };

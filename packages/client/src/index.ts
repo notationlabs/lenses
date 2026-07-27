@@ -210,13 +210,17 @@ export class LensClient {
     if (issues.length === 0) return result;
     if (strict) {
       const missing = issues.filter((issue) => issue.missing);
+      // Name where the value was actually read from. A signed-out redirect
+      // lands somewhere else and fails every field, which is indistinguishable
+      // from a broken selector until you can see the URL.
+      const where = result.observed ? ` (read from ${result.observed})` : "";
       const message = missing.length
         ? `${spec.name}: no resolver produced field ${missing
             .map((issue) => issue.path)
-            .join(", ")}`
+            .join(", ")}${where}`
         : `${spec.name} result failed its schema at ${issues
             .map((issue) => issue.path)
-            .join(", ")}`;
+            .join(", ")}${where}`;
       return { kind: "error", message, issues };
     }
     this.log(`${spec.name} result has ${issues.length} schema warning(s)`);
