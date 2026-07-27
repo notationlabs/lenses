@@ -48,9 +48,14 @@ export interface ShutdownSequenceOptions {
   inFlight(): number;
   drainTimeoutMs: number;
   /**
-   * Stop listening and drop client sockets. Runs first: a client that is
-   * restarting a stale broker waits on the port, and releasing the CDP lease
-   * can take tens of seconds when Chrome is slow to answer.
+   * Stop accepting connections, freeing the port. Runs first: a client that is
+   * restarting a stale broker waits on the port, and both the drain and the
+   * lease release can take seconds.
+   */
+  stopListening(): void;
+  /**
+   * Drop client sockets. Runs after the drain, so a call that was already in
+   * flight still gets its result frame instead of a "broker disconnected".
    */
   closeSockets(): void;
   /** Release the CDP lease so Chrome's debugging slot is free for other tools. */
@@ -77,11 +82,12 @@ export function createShutdownSequence(
     if (running) return;
     running = true;
     options.log?.(`broker shutting down: ${reason}`);
-    options.closeSockets();
+    options.stopListening();
     const deadline = Date.now() + options.drainTimeoutMs;
     while (options.inFlight() > 0 && Date.now() < deadline) {
       await sleep(25);
     }
+    options.closeSockets();
     try {
       await withTimeout(options.release(), options.releaseTimeoutMs ?? 5_000, sleep);
     } catch (error) {

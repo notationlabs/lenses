@@ -90,7 +90,8 @@ describe("shutdown sequence", () => {
     const shutdown = createShutdownSequence({
       inFlight: () => inFlight,
       drainTimeoutMs: 10_000,
-      closeSockets: () => order.push("close"),
+      stopListening: () => order.push("stop listening"),
+      closeSockets: () => order.push("close sockets"),
       release: async () => void order.push("release"),
       stop: () => order.push("stop"),
       exit: () => order.push("exit"),
@@ -102,8 +103,16 @@ describe("shutdown sequence", () => {
       },
     });
     await shutdown("test");
-    // The port is freed first: a client restarting a stale broker waits on it.
-    expect(order).toEqual(["close", "drain", "release", "stop", "exit"]);
+    // The port is freed first (a restarting client waits on it), but client
+    // sockets outlive the drain so an in-flight call still gets its result.
+    expect(order).toEqual([
+      "stop listening",
+      "drain",
+      "close sockets",
+      "release",
+      "stop",
+      "exit",
+    ]);
   });
 
   it("gives up draining a wedged call and still releases the lease", async () => {
@@ -113,7 +122,8 @@ describe("shutdown sequence", () => {
     const shutdown = createShutdownSequence({
       inFlight: () => 1,
       drainTimeoutMs: 100,
-      closeSockets: () => order.push("close"),
+      stopListening: () => order.push("stop listening"),
+      closeSockets: () => order.push("close sockets"),
       release: async () => void order.push("release"),
       stop: () => order.push("stop"),
       exit: () => order.push("exit"),
@@ -123,7 +133,7 @@ describe("shutdown sequence", () => {
       },
     });
     await shutdown("test");
-    expect(order).toEqual(["close", "release", "stop", "exit"]);
+    expect(order).toEqual(["stop listening", "close sockets", "release", "stop", "exit"]);
   });
 
   it("still exits when releasing the lease fails, and runs only once", async () => {
@@ -131,7 +141,8 @@ describe("shutdown sequence", () => {
     const shutdown = createShutdownSequence({
       inFlight: () => 0,
       drainTimeoutMs: 10,
-      closeSockets: () => order.push("close"),
+      stopListening: () => order.push("stop listening"),
+      closeSockets: () => order.push("close sockets"),
       release: async () => {
         throw new Error("cdp gone");
       },
@@ -140,7 +151,7 @@ describe("shutdown sequence", () => {
     });
     await shutdown("first");
     await shutdown("second");
-    expect(order).toEqual(["close", "stop", "exit"]);
+    expect(order).toEqual(["stop listening", "close sockets", "stop", "exit"]);
   });
 
   it("exits even when releasing the lease never settles", async () => {
@@ -149,7 +160,8 @@ describe("shutdown sequence", () => {
       inFlight: () => 0,
       drainTimeoutMs: 10,
       releaseTimeoutMs: 5_000,
-      closeSockets: () => order.push("close"),
+      stopListening: () => order.push("stop listening"),
+      closeSockets: () => order.push("close sockets"),
       // Chrome can leave a connect attempt outstanding for tens of seconds.
       release: () => new Promise<void>(() => {}),
       stop: () => order.push("stop"),
@@ -159,6 +171,6 @@ describe("shutdown sequence", () => {
       },
     });
     await shutdown("test");
-    expect(order).toEqual(["close", "release timeout", "stop", "exit"]);
+    expect(order).toEqual(["stop listening", "close sockets", "release timeout", "stop", "exit"]);
   });
 });
