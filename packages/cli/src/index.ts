@@ -225,7 +225,9 @@ document's hint; response extensions list the lens calls each operation made
 (resolver tier, cache state, ttl, landed URL, duration).
 
 Options:
-  --listen <number>       HTTP port to serve on (default: 4381)
+  --listen <number>       HTTP port to serve on (default: the first free port
+                          from 4381 upward, so servers for several catalogs
+                          can run side by side)
   --max-calls <number>    Lens call budget per operation (default: 25);
                           exhaustion is a GraphQL error naming the lens
   --catalog, -c <source>  Lens catalog source; repeatable, tried in order (required)
@@ -407,7 +409,7 @@ async function main(): Promise<void> {
         await serveGraphql({
           catalogs: requireCatalogs(values.catalog),
           client,
-          listen: numberOption(values.listen, "listen") ?? 4381,
+          listen: numberOption(values.listen, "listen"),
           maxCalls: numberOption(values["max-calls"], "max-calls") ?? 25,
           playground: action === "playground",
           log: log ?? (() => {}),
