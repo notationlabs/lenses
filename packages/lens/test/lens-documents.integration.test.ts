@@ -70,7 +70,7 @@ describe("shipped lens documents", () => {
       sleep: async () => {},
     };
 
-    const result = await executeLens(spec, { p: 1 }, io);
+    const result = await executeLens(spec, { page: 1 }, io);
     expect(result).toMatchObject({
       kind: "value",
       resolver: "reconciled",
@@ -83,14 +83,14 @@ describe("shipped lens documents", () => {
             item_url: { $lens: "@djgrant/hn/item", params: { id: "43" } },
           },
         ],
-        next_page: { $lens: "@djgrant/hn/top", params: { p: 2 } },
+        next_page: { $lens: "@djgrant/hn/top", params: { page: 2 } },
       },
     });
   });
 
   it("keeps a hiring post's null score and comments within the hn/top contract", async () => {
     const spec = await loadLens("hn.top.json");
-    const result = await executeLens(spec, { p: 2 }, io({
+    const result = await executeLens(spec, { page: 2 }, io({
       domExtract: async (resolver) =>
         resolver.item
           ? {
@@ -135,7 +135,7 @@ describe("shipped lens documents", () => {
             item_url: { $lens: "@djgrant/hn/item", params: { id: "44" } },
           },
         ],
-        next_page: { $lens: "@djgrant/hn/top", params: { p: 3 } },
+        next_page: { $lens: "@djgrant/hn/top", params: { page: 3 } },
       },
     });
   });
@@ -279,7 +279,7 @@ describe("shipped lens documents", () => {
         story: { title: "A story", url: "https://example.com/story", score: "10 points" },
         next_page: {
           $lens: "@djgrant/hn/item",
-          params: { id: "42", p: 2, limit: 30 },
+          params: { id: "42", page: 2, limit: 30 },
         },
       },
     });

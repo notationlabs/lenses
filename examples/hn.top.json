@@ -1,8 +1,13 @@
 {
   "name": "@djgrant/hn/top",
   "description": "Front-page stories on Hacker News. Each story links onward to hn/item via item_url. Hiring posts carry no score or comments (null). Paginated: next_page is the following page of stories (null on the last page).",
-  "url": "https://news.ycombinator.com/news?p={p}",
-  "params": { "p": { "type": "integer", "default": 1 } },
+  "url": "https://news.ycombinator.com/news?p={page}",
+  "params": {
+    "page": {
+      "type": "integer",
+      "default": 1
+    }
+  },
   "returns": {
     "type": "object",
     "fields": {
@@ -12,17 +17,27 @@
           "title": "string",
           "url": "string",
           "id": "string",
-          "score": { "type": "string", "nullable": true },
-          "comments": { "type": "string", "nullable": true },
+          "score": {
+            "type": "string",
+            "nullable": true
+          },
+          "comments": {
+            "type": "string",
+            "nullable": true
+          },
           "item_url": {
             "$lens": "@djgrant/hn/item",
-            "params": { "id": "id" }
+            "params": {
+              "id": "id"
+            }
           }
         }
       },
       "next_page": {
         "$lens": "@djgrant/hn/top",
-        "params": { "p": "$number($substringAfter(next_page, 'p='))" }
+        "params": {
+          "page": "$number($substringAfter(next_page, 'p='))"
+        }
       }
     }
   },

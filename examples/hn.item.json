@@ -1,26 +1,44 @@
 {
   "name": "@djgrant/hn/item",
-  "description": "A Hacker News story page: the story plus a page of its comment thread. HN serves the whole thread in one document, so the lens windows it client-side (default 30 comments/page); next_page is the same lens at the next window (null on the last page). Pass params {p, limit} to control the window.",
+  "description": "A Hacker News story page: the story plus a page of its comment thread. HN serves the whole thread in one document, so the lens windows it client-side (default 30 comments/page); next_page is the same lens at the next window (null on the last page). Pass params {page, limit} to control the window.",
   "url": "https://news.ycombinator.com/item?id={id}",
   "params": {
     "id": "string",
-    "p": { "type": "integer", "default": 1 },
-    "limit": { "type": "integer", "default": 30 }
+    "page": {
+      "type": "integer",
+      "default": 1
+    },
+    "limit": {
+      "type": "integer",
+      "default": 30
+    }
   },
   "returns": {
     "type": "object",
     "fields": {
       "story": {
         "type": "object",
-        "fields": { "title": "string", "url": "string", "score": "string" }
+        "fields": {
+          "title": "string",
+          "url": "string",
+          "score": "string"
+        }
       },
       "comments": {
         "type": "array",
-        "items": { "author": "string", "age": "string", "text": "string" }
+        "items": {
+          "author": "string",
+          "age": "string",
+          "text": "string"
+        }
       },
       "next_page": {
         "$lens": "@djgrant/hn/item",
-        "params": { "id": "$id", "p": "$p + 1", "limit": "$limit" }
+        "params": {
+          "id": "$id",
+          "page": "$page + 1",
+          "limit": "$limit"
+        }
       }
     }
   },
@@ -28,7 +46,9 @@
     "not_found": null
   },
   "effects": {
-    "reads": ["news.ycombinator.com"],
+    "reads": [
+      "news.ycombinator.com"
+    ],
     "writes": [],
     "idempotent": true,
     "cache": 120
@@ -38,19 +58,35 @@
       "kind": "dom",
       "item": ".comtr",
       "fields": {
-        "author": { "selector": ".hnuser" },
-        "age": { "selector": ".age" },
-        "text": { "selector": ".commtext" },
-        "indent": { "selector": ".ind", "attr": "indent" }
+        "author": {
+          "selector": ".hnuser"
+        },
+        "age": {
+          "selector": ".age"
+        },
+        "text": {
+          "selector": ".commtext"
+        },
+        "indent": {
+          "selector": ".ind",
+          "attr": "indent"
+        }
       },
-      "post": "($all := $[text != null]; $size := $number($limit ? $limit : 30); $pg := $number($p ? $p : 1); $start := ($pg - 1) * $size; { \"story\": { \"id\": $id }, \"comments\": [$all#$i[$i >= $start and $i < $start + $size]], \"next_page\": ($count($all) > $start + $size) ? \"https://news.ycombinator.com/item?id=\" & $id & \"&p=\" & ($pg + 1) : null })"
+      "post": "($all := $[text != null]; $size := $number($limit ? $limit : 30); $pg := $number($page ? $page : 1); $start := ($pg - 1) * $size; { \"story\": { \"id\": $id }, \"comments\": [$all#$i[$i >= $start and $i < $start + $size]], \"next_page\": ($count($all) > $start + $size) ? \"https://news.ycombinator.com/item?id=\" & $id & \"&p=\" & ($pg + 1) : null })"
     },
     {
       "kind": "dom",
       "fields": {
-        "title": { "selector": ".titleline > a" },
-        "url": { "selector": ".titleline > a", "attr": "href" },
-        "score": { "selector": ".score" }
+        "title": {
+          "selector": ".titleline > a"
+        },
+        "url": {
+          "selector": ".titleline > a",
+          "attr": "href"
+        },
+        "score": {
+          "selector": ".score"
+        }
       },
       "post": "{ 'story': $ }"
     },
