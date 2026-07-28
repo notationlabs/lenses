@@ -8,3 +8,4 @@ apps/extension/dist/
 packages/cli/SKILL.md
 benchmarks
 web
+.playwright-mcp/
