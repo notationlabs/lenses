@@ -20,18 +20,24 @@ export const Drag = S.Struct({
 })
 export type Drag = typeof Drag.Type
 
-export const Samples = S.Record(S.String, S.Record(S.String, S.String))
+export const PaneResize = S.Struct({
+  startClientX: S.Number,
+  startWidth: S.Number,
+})
+export type PaneResize = typeof PaneResize.Type
 
 export const Model = S.Struct({
   route: AppRoute,
   catalog: CatalogAsyncData.schema,
   selections: Selections,
   paramValues: ParamValues,
-  maybeEntry: S.Option(S.String),
+  /** Entry override from the "entry" button; honoured only while that lens has ticks. */
+  maybePreferredEntry: S.Option(S.String),
   positions: Positions,
   maybeDrag: S.Option(Drag),
   run: RunAsyncData.schema,
-  samples: Samples,
   resultView: ResultView,
+  resultPaneWidth: S.Number,
+  maybePaneResize: S.Option(PaneResize),
 })
 export type Model = typeof Model.Type

@@ -2,6 +2,7 @@ import { Array, Option, Record, pipe } from 'effect'
 import { AsyncData } from 'foldkit'
 import { Html, html } from 'foldkit/html'
 
+import { currentEntry } from '../derive'
 import { LensNode, Nodes, hostsOf, nodesForHost } from '../domain/catalog'
 import { Message } from '../message'
 import { Model } from '../model'
@@ -20,7 +21,7 @@ const siteTileView = (
       selection === undefined
         ? 0
         : selection.fields.length + Record.size(selection.follows)
-    const isEntry = Option.contains(model.maybeEntry, node.name)
+    const isEntry = Option.contains(currentEntry(model), node.name)
     return [
       ...(isEntry ? [`entry: ${node.shortname}`] : []),
       ...(pickedCount > 0 ? [`${node.shortname}: ${pickedCount} picked`] : []),

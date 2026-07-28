@@ -10,22 +10,20 @@ import {
   NavigateInternal,
   RunSelect,
 } from './command'
-import { Nodes } from './domain/catalog'
+import { catalogNodes, currentPlan } from './derive'
 import { initialPositions } from './domain/layout'
-import { collectSamples } from './domain/result'
 import {
-  Select,
   estimateCalls,
-  planFor,
   setFollowLimit,
   toggleField,
   toggleFollow,
+  unreachedLenses,
 } from './domain/select'
 import { Message } from './message'
 import { CatalogAsyncData, Model, RunAsyncData } from './model'
 import { urlToAppRoute } from './route'
 import { siteGraphView } from './view/graph'
-import { queryPaneView, resultPaneView } from './view/panes'
+import { Plan, queryPaneView, resultPaneView } from './view/panes'
 import { sitesIndexView } from './view/sites'
 
 export { Message } from './message'
@@ -41,40 +39,24 @@ export const init: Runtime.RoutingApplicationInit<Model, Message> = (
     catalog: CatalogAsyncData.Loading(),
     selections: {},
     paramValues: {},
-    maybeEntry: Option.none(),
+    maybePreferredEntry: Option.none(),
     positions: {},
     maybeDrag: Option.none(),
     run: RunAsyncData.Idle(),
-    samples: {},
     resultView: 'JoinTable',
+    resultPaneWidth: 620,
+    maybePaneResize: Option.none(),
   },
   [FetchCatalog()],
 ]
-
-// DERIVED STATE
-
-const catalogNodes = (model: Model): Option.Option<Nodes> =>
-  AsyncData.match(model.catalog, {
-    onIdle: () => Option.none(),
-    onLoading: () => Option.none(),
-    onFailure: () => Option.none(),
-    onRefreshing: nodes => Option.some(nodes),
-    onSuccess: nodes => Option.some(nodes),
-    onStale: ({ data }) => Option.some(data),
-  })
-
-const currentPlan = (model: Model): Option.Option<Select> =>
-  Option.flatMap(catalogNodes(model), nodes =>
-    planFor(nodes, model.selections, model.paramValues, model.maybeEntry),
-  )
 
 // UPDATE
 
 type UpdateReturn = readonly [Model, ReadonlyArray<Command.Command<Message>>]
 const withUpdateReturn = M.withReturnType<UpdateReturn>()
 
-const entryFallback = (model: Model, lens: string) =>
-  Option.orElse(model.maybeEntry, () => Option.some(lens))
+const clampPaneWidth = (width: number): number =>
+  Math.min(Math.max(width, 320), 1200)
 
 export const update = (model: Model, message: Message): UpdateReturn =>
   M.value(message).pipe(
@@ -116,7 +98,6 @@ export const update = (model: Model, message: Message): UpdateReturn =>
       ToggledField: ({ lens, path }) => [
         evo(model, {
           selections: () => toggleField(model.selections, lens, path),
-          maybeEntry: () => entryFallback(model, lens),
         }),
         [],
       ],
@@ -124,7 +105,6 @@ export const update = (model: Model, message: Message): UpdateReturn =>
       ToggledFollow: ({ lens, path }) => [
         evo(model, {
           selections: () => toggleFollow(model.selections, lens, path),
-          maybeEntry: () => entryFallback(model, lens),
         }),
         [],
       ],
@@ -155,16 +135,15 @@ export const update = (model: Model, message: Message): UpdateReturn =>
       ],
 
       ClickedSetEntry: ({ lens }) => [
-        evo(model, { maybeEntry: () => Option.some(lens) }),
+        evo(model, { maybePreferredEntry: () => Option.some(lens) }),
         [],
       ],
 
       ClickedClear: () => [
         evo(model, {
           selections: () => ({}),
-          maybeEntry: () => Option.none(),
+          maybePreferredEntry: () => Option.none(),
           run: () => RunAsyncData.Idle(),
-          samples: () => ({}),
         }),
         [],
       ],
@@ -183,14 +162,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
       },
 
       SucceededRunSelect: ({ data }) => [
-        evo(model, {
-          run: () => RunAsyncData.Success({ data }),
-          samples: () =>
-            Option.match(currentPlan(model), {
-              onNone: () => model.samples,
-              onSome: select => collectSamples(select, data),
-            }),
-        }),
+        evo(model, { run: () => RunAsyncData.Success({ data }) }),
         [],
       ],
 
@@ -226,9 +198,19 @@ export const update = (model: Model, message: Message): UpdateReturn =>
           }),
         ),
 
+      PressedPaneDivider: ({ clientX }) => [
+        evo(model, {
+          maybePaneResize: () =>
+            Option.some({
+              startClientX: clientX,
+              startWidth: model.resultPaneWidth,
+            }),
+        }),
+        [],
+      ],
+
       MovedPointer: ({ clientX, clientY }) =>
         Option.match(model.maybeDrag, {
-          onNone: () => [model, []] as const,
           onSome: drag => [
             evo(model, {
               positions: () => ({
@@ -244,10 +226,27 @@ export const update = (model: Model, message: Message): UpdateReturn =>
             }),
             [],
           ],
+          onNone: () =>
+            Option.match(model.maybePaneResize, {
+              onNone: () => [model, []] as const,
+              onSome: resize => [
+                evo(model, {
+                  // the divider sits on the pane's left edge, so dragging left widens it
+                  resultPaneWidth: () =>
+                    clampPaneWidth(
+                      resize.startWidth + resize.startClientX - clientX,
+                    ),
+                }),
+                [],
+              ],
+            }),
         }),
 
       ReleasedPointer: () => [
-        evo(model, { maybeDrag: () => Option.none() }),
+        evo(model, {
+          maybeDrag: () => Option.none(),
+          maybePaneResize: () => Option.none(),
+        }),
         [],
       ],
     }),
@@ -270,11 +269,12 @@ const routeContentView = (model: Model): Html => {
 export const view = (model: Model): Document => {
   const h = html<Message>()
 
-  const maybePlan = pipe(
+  const maybePlan: Option.Option<Plan> = pipe(
     Option.all({ nodes: catalogNodes(model), select: currentPlan(model) }),
     Option.map(({ nodes, select }) => ({
       select,
       estimatedCalls: estimateCalls(nodes, select),
+      unreached: unreachedLenses(model.selections, select),
     })),
   )
 

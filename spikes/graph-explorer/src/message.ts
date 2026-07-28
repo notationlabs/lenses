@@ -46,6 +46,9 @@ export const PressedCardTitle = m('PressedCardTitle', {
   clientX: S.Number,
   clientY: S.Number,
 })
+export const PressedPaneDivider = m('PressedPaneDivider', {
+  clientX: S.Number,
+})
 export const MovedPointer = m('MovedPointer', {
   clientX: S.Number,
   clientY: S.Number,
@@ -70,6 +73,7 @@ export const Message = S.Union([
   FailedRunSelect,
   SelectedResultView,
   PressedCardTitle,
+  PressedPaneDivider,
   MovedPointer,
   ReleasedPointer,
 ])

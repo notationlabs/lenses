@@ -3,6 +3,7 @@ import { Array, Match as M, Option, Record, pipe } from 'effect'
 import { AsyncData } from 'foldkit'
 import { Html, html } from 'foldkit/html'
 
+import { currentEntry, currentSamples } from '../derive'
 import {
   EdgeRow,
   FieldRow,
@@ -14,7 +15,8 @@ import {
   shortName,
 } from '../domain/catalog'
 import { Position, cardNodes, edgeLines, portalNodes } from '../domain/layout'
-import { DEFAULT_FOLLOW_LIMIT, Selection } from '../domain/select'
+import { Samples } from '../domain/result'
+import { Selection } from '../domain/select'
 import {
   ClickedSetEntry,
   Message,
@@ -32,9 +34,9 @@ const cssId = (value: string): string => value.replace(/[^a-zA-Z0-9]/g, '_')
 const ROW_INDENT_BASE = 10
 const ROW_INDENT_STEP = 12
 
-const sampleView = (model: Model, lens: string, path: string): Html => {
+const sampleView = (samples: Samples, lens: string, path: string): Html => {
   const h = html<Message>()
-  const maybeSample = Option.fromNullishOr(model.samples[lens]?.[path])
+  const maybeSample = Option.fromNullishOr(samples[lens]?.[path])
   return Option.match(maybeSample, {
     onNone: () => h.empty,
     onSome: sample =>
@@ -46,7 +48,7 @@ const sampleView = (model: Model, lens: string, path: string): Html => {
 }
 
 const fieldRowView = (
-  model: Model,
+  samples: Samples,
   node: LensNode,
   selection: Option.Option<Selection>,
   row: typeof FieldRow.Type,
@@ -74,13 +76,14 @@ const fieldRowView = (
       ]),
       h.label([h.For(inputId)], [row.label]),
       h.span([h.Class('type')], [row.fieldType]),
-      sampleView(model, node.name, row.path),
+      sampleView(samples, node.name, row.path),
     ],
   )
 }
 
 const edgeRowView = (
-  model: Model,
+  nodes: Nodes,
+  samples: Samples,
   node: LensNode,
   selection: Option.Option<Selection>,
   row: typeof EdgeRow.Type,
@@ -90,6 +93,10 @@ const edgeRowView = (
   const maybeLimit = pipe(
     selection,
     Option.flatMap(current => Option.fromNullishOr(current.follows[row.path])),
+  )
+  const isFollowable = pipe(
+    Option.fromNullishOr(nodes[row.target]),
+    Option.match({ onNone: () => false, onSome: target => !target.isGhost }),
   )
 
   return h.div(
@@ -104,28 +111,37 @@ const edgeRowView = (
         h.Type('checkbox'),
         h.Id(inputId),
         h.Checked(Option.isSome(maybeLimit)),
-        h.OnClick(ToggledFollow({ lens: node.name, path: row.path })),
+        h.Disabled(!isFollowable),
+        ...(isFollowable
+          ? [h.OnClick(ToggledFollow({ lens: node.name, path: row.path }))]
+          : [h.Title('target lens is not in the catalog')]),
       ]),
       h.label([h.For(inputId)], [row.label]),
       h.span(
         [h.Class('type'), h.Title(row.paramsSummary)],
         [`→ ${shortName(row.target)}`],
       ),
-      row.isInArray
-        ? h.input([
-            h.Class('limit'),
-            h.Type('number'),
-            h.Min('1'),
-            h.Title('max refs to expand'),
-            h.Value(
-              String(Option.getOrElse(maybeLimit, () => DEFAULT_FOLLOW_LIMIT)),
-            ),
-            h.OnInput(value =>
-              UpdatedFollowLimit({ lens: node.name, path: row.path, value }),
-            ),
-          ])
-        : h.empty,
-      sampleView(model, node.name, row.path),
+      Option.match(maybeLimit, {
+        onNone: () => h.empty,
+        onSome: limit =>
+          row.isInArray
+            ? h.input([
+                h.Class('limit'),
+                h.Type('number'),
+                h.Min('1'),
+                h.Title('max refs to expand'),
+                h.Value(String(limit)),
+                h.OnInput(value =>
+                  UpdatedFollowLimit({
+                    lens: node.name,
+                    path: row.path,
+                    value,
+                  }),
+                ),
+              ])
+            : h.empty,
+      }),
+      sampleView(samples, node.name, row.path),
     ],
   )
 }
@@ -172,12 +188,15 @@ const paramsView = (model: Model, node: LensNode): Html => {
 
 const cardView = (
   model: Model,
+  nodes: Nodes,
   host: string,
+  entry: Option.Option<string>,
+  samples: Samples,
   node: LensNode,
   position: Position,
 ): Html => {
   const h = html<Message>()
-  const isEntry = Option.contains(model.maybeEntry, node.name)
+  const isEntry = Option.contains(entry, node.name)
   const selection = Option.fromNullishOr(model.selections[node.name])
 
   return h.keyed('div')(
@@ -232,8 +251,9 @@ const cardView = (
           M.value(row).pipe(
             M.tagsExhaustive({
               FieldRow: fieldRow =>
-                fieldRowView(model, node, selection, fieldRow),
-              EdgeRow: edgeRow => edgeRowView(model, node, selection, edgeRow),
+                fieldRowView(samples, node, selection, fieldRow),
+              EdgeRow: edgeRow =>
+                edgeRowView(nodes, samples, node, selection, edgeRow),
               GroupRow: groupRowView,
             }),
           ),
@@ -310,6 +330,8 @@ const canvasView = (model: Model, nodes: Nodes, host: string): Html => {
   const h = html<Message>()
   const byName = model.positions[host] ?? {}
   const positionOf = (name: string) => byName[name] ?? { x: 40, y: 64 }
+  const entry = currentEntry(model)
+  const samples = currentSamples(model)
 
   return h.div(
     [h.Class('canvas-inner')],
@@ -324,7 +346,15 @@ const canvasView = (model: Model, nodes: Nodes, host: string): Html => {
       ),
       edgesView(model, nodes, host),
       ...Array.map(cardNodes(nodes, host), node =>
-        cardView(model, host, node, positionOf(node.name)),
+        cardView(
+          model,
+          nodes,
+          host,
+          entry,
+          samples,
+          node,
+          positionOf(node.name),
+        ),
       ),
       ...Array.map(portalNodes(nodes, host), node =>
         portalView(node, positionOf(node.name)),

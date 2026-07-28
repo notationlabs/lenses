@@ -25,19 +25,27 @@ export const itemDoc = {
   returns: { type: 'object', fields: { title: 'string', text: 'string' } },
 }
 
-export const catalogNodes = buildNodes([storiesDoc, itemDoc])
+export const blogDoc = {
+  name: 'blog/posts',
+  url: 'https://blog.example.com/',
+  params: {},
+  returns: { type: 'array', items: { heading: 'string' } },
+}
+
+export const catalogNodes = buildNodes([storiesDoc, itemDoc, blogDoc])
 
 export const loadingModel: Model = {
   route: SitesRoute(),
   catalog: CatalogAsyncData.Loading(),
   selections: {},
   paramValues: {},
-  maybeEntry: Option.none(),
+  maybePreferredEntry: Option.none(),
   positions: {},
   maybeDrag: Option.none(),
   run: RunAsyncData.Idle(),
-  samples: {},
   resultView: 'JoinTable',
+  resultPaneWidth: 620,
+  maybePaneResize: Option.none(),
 }
 
 export const loadedModel: Model = {

@@ -1,4 +1,3 @@
-import { Option } from 'effect'
 import { Scene } from 'foldkit'
 import { describe, test } from 'vitest'
 
@@ -43,7 +42,6 @@ describe('result pane', () => {
   const modelWithData: Model = {
     ...siteModel,
     selections: { 'news/stories': { fields: ['title'], follows: {} } },
-    maybeEntry: Option.some('news/stories'),
     run: RunAsyncData.Success({
       data: [{ title: 'First story' }, { title: 'Second story' }],
     }),
