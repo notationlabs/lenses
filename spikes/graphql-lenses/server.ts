@@ -41,16 +41,18 @@ async function loadCatalog() {
 
 const schema = buildSchema(await loadCatalog())
 
-const DEFAULT_QUERY = `# Lenses compiled to GraphQL: each top-level field is a lens,
-# each ref field a lens call made only if you select into it.
+const DEFAULT_QUERY = `# Lenses compiled to GraphQL: sites are entities, lenses their
+# fields, and each ref field a lens call made only if you select into it.
 {
-  hn_top(p: 1) {
-    stories(first: 3) {
-      title
-      score
-      item_url {
-        story { title }
-        comments { author text }
+  hn {
+    top(page: 1) {
+      stories(first: 3) {
+        title
+        score
+        item {
+          story { title }
+          comments(first: 2) { author text }
+        }
       }
     }
   }
