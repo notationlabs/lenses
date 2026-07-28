@@ -9,7 +9,9 @@ export const subscriptions = Subscription.make<Model, Message>()(entry => ({
     { isDragging: S.Boolean },
     {
       modelToDependencies: model => ({
-        isDragging: Option.isSome(model.maybeDrag),
+        isDragging:
+          Option.isSome(model.maybeDrag) ||
+          Option.isSome(model.maybePaneResize),
       }),
       dependenciesToStream: ({ isDragging }) =>
         isDragging

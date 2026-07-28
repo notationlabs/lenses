@@ -17,6 +17,7 @@ import {
   ClickedClear,
   ClickedRun,
   Message,
+  PressedPaneDivider,
   ResultView,
   SelectedResultView,
 } from '../message'
@@ -26,9 +27,16 @@ import { Model } from '../model'
 
 const SELECTION_HINT = 'tick fields on a site graph…'
 
+export interface Plan {
+  readonly select: Select
+  readonly estimatedCalls: number
+  /** Ticked lenses the entry cannot reach via ticked follows. */
+  readonly unreached: ReadonlyArray<string>
+}
+
 export const queryPaneView = (
   model: Model,
-  maybePlan: Option.Option<{ select: Select; estimatedCalls: number }>,
+  maybePlan: Option.Option<Plan>,
 ): Html => {
   const h = html<Message>()
 
@@ -55,6 +63,20 @@ export const queryPaneView = (
             onSome: ({ select }) => JSON.stringify(select, null, 2),
           }),
         ],
+      ),
+      pipe(
+        Option.map(maybePlan, plan => plan.unreached),
+        Option.filter(unreached => unreached.length > 0),
+        Option.match({
+          onNone: () => h.empty,
+          onSome: unreached =>
+            h.div(
+              [h.Class('unreached')],
+              [
+                `not in plan: ${Array.join(unreached, ', ')} — no ticked follow reaches it from the entry`,
+              ],
+            ),
+        }),
       ),
       h.div(
         [h.Class('pane-foot')],
@@ -226,8 +248,28 @@ export const resultPaneView = (model: Model): Html => {
   })
 
   return h.div(
-    [h.Class('pane result')],
+    [h.Class('pane result'), h.Style({ width: `${model.resultPaneWidth}px` })],
     [
+      h.div(
+        [
+          h.Class('pane-divider'),
+          h.OnPointerDown(
+            (
+              _pointerType,
+              button,
+              _screenX,
+              _screenY,
+              _timeStamp,
+              clientX,
+              _clientY,
+            ) =>
+              button === 0
+                ? Option.some(PressedPaneDivider({ clientX }))
+                : Option.none(),
+          ),
+        ],
+        [],
+      ),
       h.div(
         [h.Class('pane-head')],
         [

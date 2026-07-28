@@ -244,7 +244,22 @@ svg.edges {
   width: 330px;
 }
 .pane.result {
-  width: 470px;
+  /* width comes from the Model (resultPaneWidth); this is the pre-init fallback */
+  width: 620px;
+  position: relative;
+  flex-shrink: 0;
+}
+.pane-divider {
+  position: absolute;
+  left: -4px;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  cursor: col-resize;
+  z-index: 5;
+}
+.pane-divider:hover {
+  background: var(--line);
 }
 .pane .pane-head {
   display: flex;
@@ -267,6 +282,11 @@ svg.edges {
   font-size: 11px;
   color: var(--dim);
   white-space: pre-wrap;
+}
+.unreached {
+  padding: 6px 14px;
+  font-size: 11px;
+  color: var(--warn);
 }
 .pane-foot {
   border-top: 1px solid var(--line);
