@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { WebSocket, WebSocketServer } from "ws";
 import {
+  EXTENSION_CAPABILITIES,
   EXTENSION_PROTOCOL_MAJOR,
-  REQUIRED_EXTENSION_CAPABILITIES,
   decodeBrokerExtensionMessage,
   decodeExtensionRpcRequest,
   pageDomExtract,
@@ -132,6 +132,25 @@ for (const [name, createFixture] of [
       );
       await fixture.backend.finish(session, "close-if-created");
       expect(fixture.closed()).toBe(true);
+    });
+
+    it("reports open pages for the auth gate", async () => {
+      fixture = await createFixture();
+      const target = "https://example.com/shared";
+
+      await expect(fixture.backend.hasPage(target)).resolves.toBe(false);
+      const session = await fixture.backend.bind({
+        target,
+        loadTimeoutMs: 1000,
+        navigation: "fresh",
+      });
+      await expect(fixture.backend.hasPage(target)).resolves.toBe(true);
+      await expect(
+        fixture.backend.hasPage("https://example.com/elsewhere")
+      ).resolves.toBe(false);
+
+      await fixture.backend.finish(session, "close-if-created");
+      await expect(fixture.backend.hasPage(target)).resolves.toBe(false);
     });
 
     it("runs shared call and observe orchestration over the backend", async () => {
@@ -377,7 +396,7 @@ async function createExtensionFixture(): Promise<BackendFixture> {
       type: "extension-hello",
       protocolMajor: EXTENSION_PROTOCOL_MAJOR,
       extensionVersion: "0.1.0",
-      capabilities: [...REQUIRED_EXTENSION_CAPABILITIES],
+      capabilities: [...EXTENSION_CAPABILITIES],
       epoch,
       ua: "Chrome/144",
     })
@@ -459,6 +478,7 @@ function createChromeMock() {
   const tabRemovals = new ChromeEvent();
   const runtimeMessages = new ChromeEvent();
   const storage = new Map<string, unknown>();
+  const tabs = new Map<number, { id: number; url: string; status: string }>();
   const removedTabs: number[] = [];
   let reloadCount = 0;
 
@@ -476,13 +496,15 @@ function createChromeMock() {
         onUpdated: tabUpdates,
         onRemoved: tabRemovals,
         async query() {
-          return [];
+          return [...tabs.values()].map((tab) => ({ ...tab }));
         },
-        async create() {
-          return { id: 1, status: "complete" };
+        async create({ url }: { url: string }) {
+          const tab = { id: 1, url, status: "complete" };
+          tabs.set(tab.id, tab);
+          return { ...tab };
         },
-        async get() {
-          return { id: 1, status: "complete" };
+        async get(tabId: number) {
+          return { ...(tabs.get(tabId) ?? { id: tabId, status: "complete" }) };
         },
         async reload(tabId: number) {
           reloadCount += 1;
@@ -492,6 +514,7 @@ function createChromeMock() {
         },
         async remove(tabId: number) {
           removedTabs.push(tabId);
+          tabs.delete(tabId);
           tabRemovals.emit(tabId);
         },
         async sendMessage(_tabId: number, message: any) {

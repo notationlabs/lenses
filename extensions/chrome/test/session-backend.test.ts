@@ -112,6 +112,21 @@ describe("created-tab leases", () => {
   });
 });
 
+describe("find-page", () => {
+  it("reports whether any tab is showing the url", async () => {
+    chrome.addTab(SIGN_IN);
+
+    await expect(run({ name: "find-page", url: SIGN_IN })).resolves.toEqual({
+      name: "find-page",
+      found: true,
+    });
+    await expect(run({ name: "find-page", url: TARGET })).resolves.toEqual({
+      name: "find-page",
+      found: false,
+    });
+  });
+});
+
 describe("reapAbandonedTabLeases", () => {
   it("collects a kept tab left by a previous run", async () => {
     const kept = chrome.addTab(SIGN_IN);

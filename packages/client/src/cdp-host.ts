@@ -336,6 +336,11 @@ export function createCdpBackend(
       statusListeners.add(listener);
       return () => statusListeners.delete(listener);
     },
+    async hasPage(url: string) {
+      const current = browser;
+      if (!current?.connected) return false;
+      return (await findPage(current, url)) !== undefined;
+    },
     async bind(request: BindRequest) {
       const current = await ensureBrowser(() => {});
       const existing = await findPage(current, request.target);

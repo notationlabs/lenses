@@ -50,6 +50,11 @@ export interface BrowserBackend {
   available(): boolean;
   info(): BackendInfo;
   onStatusChange(listener: () => void): () => void;
+  /**
+   * Whether any open tab is currently showing this URL. Must not launch a
+   * browser or open a tab; an unreachable browser reports false.
+   */
+  hasPage(url: string): Promise<boolean>;
   bind(request: BindRequest): Promise<BrowserSession>;
   finish(session: BrowserSession, disposition: FinishDisposition): Promise<void>;
 }

@@ -12,9 +12,17 @@ export const REQUIRED_EXTENSION_CAPABILITIES = [
   "dom-extract",
   "snapshot-html",
 ] as const;
+/**
+ * Capabilities the broker uses when present but can work without. find-page
+ * backs the auth-gate short circuit; without it every gated call binds a tab.
+ */
+export const OPTIONAL_EXTENSION_CAPABILITIES = ["find-page"] as const;
+export const EXTENSION_CAPABILITIES = [
+  ...REQUIRED_EXTENSION_CAPABILITIES,
+  ...OPTIONAL_EXTENSION_CAPABILITIES,
+] as const;
 
-export type ExtensionCapability =
-  (typeof REQUIRED_EXTENSION_CAPABILITIES)[number];
+export type ExtensionCapability = (typeof EXTENSION_CAPABILITIES)[number];
 
 export interface ExtensionHello {
   type: "extension-hello";
@@ -71,7 +79,8 @@ export type ExtensionRpcOperation =
       name: "finish";
       sessionId: string;
       disposition: "close-if-created" | "keep";
-    };
+    }
+  | { name: "find-page"; url: string };
 
 export interface ExtensionRpcRequest {
   type: "extension-rpc";
@@ -106,7 +115,8 @@ export type ExtensionRpcResult =
       extraction: { url: string; title: string; value: unknown };
     }
   | { name: "snapshot"; snapshot: PageSnapshot }
-  | { name: "finish" };
+  | { name: "finish" }
+  | { name: "find-page"; found: boolean };
 
 export type ExtensionRpcErrorCode =
   | "invalid-request"
@@ -216,6 +226,10 @@ const operationSchema = z.discriminatedUnion("name", [
     sessionId: z.string().min(1),
     disposition: z.enum(["close-if-created", "keep"]),
   }),
+  z.strictObject({
+    name: z.literal("find-page"),
+    url: z.string().url(),
+  }),
 ]);
 
 const rpcRequestSchema = z.strictObject({
@@ -270,6 +284,10 @@ const rpcResultSchema = z.discriminatedUnion("name", [
     snapshot: snapshotSchema,
   }),
   z.strictObject({ name: z.literal("finish") }),
+  z.strictObject({
+    name: z.literal("find-page"),
+    found: z.boolean(),
+  }),
 ]);
 
 const rpcResponseSchema = z.discriminatedUnion("ok", [

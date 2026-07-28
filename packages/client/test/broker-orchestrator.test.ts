@@ -69,6 +69,7 @@ class FakeBackend implements BrowserBackend {
   readonly session: FakeSession;
   binds: BindRequest[] = [];
   finishes: FinishDisposition[] = [];
+  openPages = new Set<string>();
   onBind?: () => void;
 
   constructor(name: string, available = true, session = new FakeSession()) {
@@ -87,6 +88,10 @@ class FakeBackend implements BrowserBackend {
 
   onStatusChange(): () => void {
     return () => {};
+  }
+
+  async hasPage(url: string): Promise<boolean> {
+    return this.openPages.has(url);
   }
 
   async bind(request: BindRequest): Promise<BrowserSession> {
@@ -177,6 +182,111 @@ describe("broker orchestration", () => {
       })
     ).toMatchObject({ kind: "outcome", name: "needs_auth" });
     expect(backend.finishes).toEqual(["keep"]);
+  });
+
+  it("short-circuits calls to a gated site while its sign-in tab stays open", async () => {
+    const loginUrl = "https://example.com/login?next=/orders";
+    const session = new FakeSession();
+    session.domResult = { url: loginUrl, title: "Login", value: null };
+    session.snapshotResult = { url: loginUrl, title: "Login", text: "" };
+    const backend = new FakeBackend("cdp", true, session);
+    const orchestrator = createBrokerOrchestrator([backend]);
+    const gatedSpec = (url: string) =>
+      domSpec({
+        url,
+        outcomes: { needs_auth: null },
+        resolve: [
+          {
+            kind: "dom",
+            detect: { needs_auth: "title = 'Login'" },
+            fields: { title: { selector: "h1" } },
+          },
+        ],
+      });
+
+    expect(
+      await request(orchestrator, {
+        type: "call",
+        id: "first",
+        spec: gatedSpec("https://example.com/orders"),
+        params: {},
+        timeoutMs: 1000,
+      })
+    ).toMatchObject({ kind: "outcome", name: "needs_auth" });
+    // The keep disposition left the sign-in tab open.
+    backend.openPages.add(loginUrl);
+
+    const second = await request(orchestrator, {
+      type: "call",
+      id: "second",
+      spec: gatedSpec("https://example.com/invoices"),
+      params: {},
+      timeoutMs: 1000,
+    });
+
+    expect(second).toMatchObject({ kind: "outcome", name: "needs_auth" });
+    expect(backend.binds).toHaveLength(1);
+
+    // Completing (or closing) the sign-in dissolves the gate.
+    backend.openPages.delete(loginUrl);
+    session.domResult = {
+      url: "https://example.com/invoices",
+      title: "Invoices",
+      value: { title: "Invoices" },
+    };
+    const third = await request(orchestrator, {
+      type: "call",
+      id: "third",
+      spec: gatedSpec("https://example.com/invoices"),
+      params: {},
+      timeoutMs: 1000,
+    });
+
+    expect(third).toMatchObject({ kind: "value" });
+    expect(backend.binds).toHaveLength(2);
+  });
+
+  it("gates only the sign-in tab's own site", async () => {
+    const loginUrl = "https://example.com/login";
+    const session = new FakeSession();
+    session.domResult = { url: loginUrl, title: "Login", value: null };
+    session.snapshotResult = { url: loginUrl, title: "Login", text: "" };
+    const backend = new FakeBackend("cdp", true, session);
+    const orchestrator = createBrokerOrchestrator([backend]);
+
+    await request(orchestrator, {
+      type: "call",
+      id: "gated",
+      spec: domSpec({
+        outcomes: { needs_auth: null },
+        resolve: [
+          {
+            kind: "dom",
+            detect: { needs_auth: "title = 'Login'" },
+            fields: { title: { selector: "h1" } },
+          },
+        ],
+      }),
+      params: {},
+      timeoutMs: 1000,
+    });
+    backend.openPages.add(loginUrl);
+    session.domResult = {
+      url: "https://other.com",
+      title: "Other",
+      value: { title: "Other" },
+    };
+
+    const other = await request(orchestrator, {
+      type: "call",
+      id: "other",
+      spec: domSpec({ url: "https://other.com" }),
+      params: {},
+      timeoutMs: 1000,
+    });
+
+    expect(other).toMatchObject({ kind: "value" });
+    expect(backend.binds).toHaveLength(2);
   });
 
   it("observes through a fresh session and includes HTML snapshots", async () => {
