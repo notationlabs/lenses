@@ -16,6 +16,8 @@ export interface GraphQLServeOptions {
   client: LensClient;
   listen: number;
   maxCalls: number;
+  /** serve the GraphiQL page at / (playground); otherwise the endpoint only */
+  playground: boolean;
   log: (message: string) => void;
 }
 
@@ -101,7 +103,7 @@ async function readBody(request: import("node:http").IncomingMessage): Promise<s
 }
 
 export async function serveGraphql(options: GraphQLServeOptions): Promise<void> {
-  const { catalogs, client, listen, maxCalls, log } = options;
+  const { catalogs, client, listen, maxCalls, playground, log } = options;
   const specs = await new LensStore(catalogs).load();
   // an empty catalog would serve a fieldless Query type, which GraphiQL
   // reports opaquely as "Error fetching schema" — fail here instead
@@ -120,6 +122,11 @@ export async function serveGraphql(options: GraphQLServeOptions): Promise<void> 
     };
     try {
       if (request.method === "GET" && request.url === "/") {
+        if (!playground) {
+          response.writeHead(404, { "content-type": "text/plain" });
+          response.end("endpoint-only mode; POST /graphql (lens graphql playground serves a UI)\n");
+          return;
+        }
         response.writeHead(200, { "content-type": "text/html" });
         response.end(graphiqlHtml);
         return;
@@ -164,7 +171,11 @@ export async function serveGraphql(options: GraphQLServeOptions): Promise<void> 
     server.once("error", reject);
     server.listen(listen, "127.0.0.1", resolvePromise);
   });
-  process.stdout.write(`lens graphql at http://localhost:${listen} (budget: ${maxCalls} calls/query)\n`);
+  process.stdout.write(
+    playground
+      ? `graphql playground at http://localhost:${listen} (budget: ${maxCalls} calls/query)\n`
+      : `graphql endpoint at http://localhost:${listen}/graphql (budget: ${maxCalls} calls/query)\n`
+  );
 
   // Runs until interrupted; close the broker connection cleanly on the way out.
   await new Promise<void>((resolvePromise) => {

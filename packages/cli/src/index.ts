@@ -16,7 +16,7 @@ const globalHelp = `Usage:
   lens status [--wait-ms <number>]
   lens broker <status|release|acquire|shutdown>
   lens update [--catalog <source>]
-  lens graphql [--catalog <source>] [--listen <port>] [--max-calls <number>]
+  lens graphql <playground|serve> [--catalog <source>] [--listen <port>] [--max-calls <number>]
   lens skill
 
 Run lens <command> --help for command-specific help.
@@ -207,12 +207,15 @@ Options:
   --verbose, -v           Write timestamped diagnostics to stderr
   --help, -h              Show this help
 `,
-  graphql: `Usage: lens graphql [options]
+  graphql: `Usage: lens graphql <action> [options]
 
-Serve the catalog compiled to a GraphQL schema. GraphiQL is at / and the
-endpoint at /graphql, on loopback only — queries drive real lens calls
-through the signed-in browser, so the port is never exposed beyond this
-machine and cross-origin requests are refused.
+Serve the catalog compiled to a GraphQL schema, on loopback only — queries
+drive real lens calls through the signed-in browser, so the port is never
+exposed beyond this machine and cross-origin requests are refused.
+
+Actions:
+  playground              Serve the /graphql endpoint with GraphiQL at /
+  serve                   Serve the /graphql endpoint only
 
 Each lens is a Query field grouped by site, its params the field args. Each
 $lens ref in a returns contract is an object field resolved by calling the
@@ -231,8 +234,8 @@ Options:
   --help, -h              Show this help
 
 Example:
-  lens graphql -c ./lenses
-  lens graphql -c ./lenses --listen 4400 --max-calls 50
+  lens graphql playground -c ./lenses
+  lens graphql serve -c ./lenses --listen 4400 --max-calls 50
 `,
   skill: `Usage: lens skill
 
@@ -396,15 +399,21 @@ async function main(): Promise<void> {
         if (waitMs !== undefined) await client.waitForConnection(waitMs);
         output = await client.status();
         break;
-      case "graphql":
+      case "graphql": {
+        const [action] = operands;
+        if (action !== "playground" && action !== "serve") {
+          throw new Error('graphql requires an action: "playground" or "serve"');
+        }
         await serveGraphql({
           catalogs: requireCatalogs(values.catalog),
           client,
           listen: numberOption(values.listen, "listen") ?? 4381,
           maxCalls: numberOption(values["max-calls"], "max-calls") ?? 25,
+          playground: action === "playground",
           log: log ?? (() => {}),
         });
         return;
+      }
       case "broker": {
         const [action] = operands;
         if (action === "shutdown") {
