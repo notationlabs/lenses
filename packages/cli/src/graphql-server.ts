@@ -14,7 +14,8 @@ import { graphql } from "graphql";
 export interface GraphQLServeOptions {
   catalogs: string[];
   client: LensClient;
-  listen: number;
+  /** port to bind; when omitted, the first free port from 4381 upward */
+  listen?: number;
   maxCalls: number;
   /** serve the GraphiQL page at / (playground); otherwise the endpoint only */
   playground: boolean;
@@ -83,6 +84,9 @@ const graphiqlHtml = `<!doctype html>
   </body>
 </html>`;
 
+const DEFAULT_LISTEN_START = 4381;
+const LISTEN_SCAN_LIMIT = 20;
+
 function sameOrigin(origin: string | undefined, port: number): boolean {
   if (origin === undefined) return true; // GraphiQL itself, curl, native clients
   try {
@@ -132,7 +136,7 @@ export async function serveGraphql(options: GraphQLServeOptions): Promise<void> 
         return;
       }
       if (request.method === "POST" && request.url === "/graphql") {
-        if (!sameOrigin(request.headers.origin, listen)) {
+        if (!sameOrigin(request.headers.origin, boundPort)) {
           json(403, { errors: [{ message: "cross-origin requests are not allowed" }] });
           return;
         }
@@ -167,14 +171,38 @@ export async function serveGraphql(options: GraphQLServeOptions): Promise<void> 
   });
 
   // Lens calls drive a signed-in browser; never listen beyond loopback.
-  await new Promise<void>((resolvePromise, reject) => {
-    server.once("error", reject);
-    server.listen(listen, "127.0.0.1", resolvePromise);
-  });
+  // Without an explicit --listen, scan upward from the default so several
+  // servers (one per catalog) can run side by side; an explicit port that
+  // is taken stays an error, since it was asked for.
+  const bind = (port: number) =>
+    new Promise<void>((resolvePromise, reject) => {
+      const onError = (error: Error) => reject(error);
+      server.once("error", onError);
+      server.listen(port, "127.0.0.1", () => {
+        server.removeListener("error", onError);
+        resolvePromise();
+      });
+    });
+  let boundPort = listen ?? DEFAULT_LISTEN_START;
+  for (;;) {
+    try {
+      await bind(boundPort);
+      break;
+    } catch (error) {
+      const taken = (error as NodeJS.ErrnoException).code === "EADDRINUSE";
+      if (!taken || listen !== undefined) throw error;
+      boundPort += 1;
+      if (boundPort >= DEFAULT_LISTEN_START + LISTEN_SCAN_LIMIT) {
+        throw new Error(
+          `no free port between ${DEFAULT_LISTEN_START} and ${boundPort - 1}; pass --listen`
+        );
+      }
+    }
+  }
   process.stdout.write(
     playground
-      ? `graphql playground at http://localhost:${listen} (budget: ${maxCalls} calls/query)\n`
-      : `graphql endpoint at http://localhost:${listen}/graphql (budget: ${maxCalls} calls/query)\n`
+      ? `graphql playground at http://localhost:${boundPort} (budget: ${maxCalls} calls/query)\n`
+      : `graphql endpoint at http://localhost:${boundPort}/graphql (budget: ${maxCalls} calls/query)\n`
   );
 
   // Runs until interrupted; close the broker connection cleanly on the way out.
