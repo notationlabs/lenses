@@ -151,13 +151,16 @@ describe("rebinding a kept tab", () => {
     const second = await bind();
 
     expect(chrome.createdUrls).toEqual([TARGET]);
-    expect(second).toMatchObject({ created: true, navigated: true });
+    expect(second).toMatchObject({ created: false, navigated: true });
     expect(chrome.navigations).toEqual([[1, TARGET]]);
     expect(chrome.tabs.size).toBe(1);
 
+    // The lease belongs to the call that kept the tab. This one borrowed it,
+    // so it may not close it, even on a disposition that closes its own tabs.
     await finish(second.id, "close-if-created");
-    expect(chrome.removed).toEqual([1]);
-    expect(leases()).toEqual([]);
+    expect(chrome.removed).toEqual([]);
+    expect(chrome.tabs.has(1)).toBe(true);
+    expect(leases()).toEqual([{ tabId: 1, target: TARGET }]);
   });
 
   it("does not accumulate a tab per call across a run of signed-out calls", async () => {
@@ -205,7 +208,7 @@ describe("rebinding a kept tab", () => {
     const second = await bind(TARGET, "reuse");
 
     expect(chrome.createdUrls).toEqual([TARGET]);
-    expect(second).toMatchObject({ created: true, navigated: false });
+    expect(second).toMatchObject({ created: false, navigated: false });
     expect(chrome.navigations).toEqual([]);
   });
 });
