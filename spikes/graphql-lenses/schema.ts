@@ -1,11 +1,12 @@
 /**
  * Compile lens documents into a GraphQL schema.
  *
- * Each lens becomes a Query field whose args are the lens params. Each $lens
- * ref in a returns contract becomes an object field of the target lens's
- * type, resolved by calling the lens client — so refs are only followed when
- * the query selects into them, and array fields take `first` to bound how
- * many rows resolve onward.
+ * Lenses group by site: `{ hn { top(page: 1) {…} } }`. Each lens becomes a
+ * field on its group whose args are the lens params. Each $lens ref in a
+ * returns contract becomes an object field of the target lens's type — named
+ * without url-ish suffixes (item_url → item) — resolved by calling the lens
+ * client, so refs are only followed when the query selects into them, and
+ * array fields take `first` to bound how many rows resolve onward.
  */
 import {
   GraphQLBoolean,
@@ -62,6 +63,21 @@ const segmentsOf = (lens: string): string[] =>
 const capitalise = (word: string): string =>
   word.charAt(0).toUpperCase() + word.slice(1)
 
+/** A ref field is named for what it joins to, not the url it came from. */
+const refFieldName = (key: string, siblings: Record<string, unknown>): string => {
+  const stripped = key.replace(/_?(url|link|href)$/i, '')
+  return stripped !== '' && !(stripped in siblings) ? stripped : key
+}
+
+const hostOf = (url: unknown): string | undefined => {
+  if (typeof url !== 'string') return undefined
+  try {
+    return new URL(url.replace(/\{[^}]+\}/g, 'x')).host
+  } catch {
+    return undefined
+  }
+}
+
 async function callLens(
   client: LensClient,
   lens: string,
@@ -100,7 +116,7 @@ export function buildSchema(docs: Doc[]): GraphQLSchema {
     key: string,
   ): GraphQLFieldConfig<any, Context> => ({
     type: typeForLens(target),
-    description: `follows the ${target} ref`,
+    description: `joins to ${target}${refFieldName(key, {}) === key ? '' : ` (via ${key})`}`,
     resolve: async (parent, _args, context) => {
       const ref = parent?.[key]
       if (!isRecord(ref) || typeof ref.$lens !== 'string') return null
@@ -169,10 +185,11 @@ export function buildSchema(docs: Doc[]): GraphQLSchema {
       name,
       fields: () =>
         Object.fromEntries(
-          Object.entries(fields).map(([key, sub]) => [
-            key,
-            fieldConfig(sub, key, name),
-          ]),
+          Object.entries(fields).map(([key, sub]) =>
+            isRecord(sub) && typeof sub.$lens === 'string'
+              ? [refFieldName(key, fields), refField(sub.$lens, key)]
+              : [key, fieldConfig(sub, key, name)],
+          ),
         ),
     })
   }
@@ -222,23 +239,54 @@ export function buildSchema(docs: Doc[]): GraphQLSchema {
       }),
     )
 
+  const lensField = (doc: Doc): GraphQLFieldConfig<unknown, Context> => ({
+    type: typeForLens(doc.name),
+    args: argsFor(doc.params),
+    description: doc.description,
+    resolve: (_source: unknown, args: any, context: Context) =>
+      callLens(context.client, doc.name, args),
+  })
+
   // Register every lens type up front so cross-references bind by name.
   for (const doc of named) typeForLens(doc.name)
+
+  // One entity per lens group ('@djgrant/hn/top' → hn), described by its site.
+  const groups = new Map<string, Doc[]>()
+  for (const doc of named) {
+    const group = segmentsOf(doc.name)[0] ?? 'lenses'
+    groups.set(group, [...(groups.get(group) ?? []), doc])
+  }
+
+  const groupField = (
+    group: string,
+    docs: Doc[],
+  ): GraphQLFieldConfig<unknown, Context> => ({
+    type: new GraphQLObjectType<unknown, Context>({
+      name: uniqueName(capitalise(group)),
+      description: [...new Set(docs.map(doc => hostOf(doc.url)))]
+        .filter(host => host !== undefined)
+        .join(', '),
+      fields: () =>
+        Object.fromEntries(
+          docs.map(doc => [
+            segmentsOf(doc.name).slice(1).join('_') || group,
+            lensField(doc),
+          ]),
+        ),
+    }),
+    resolve: () => ({}),
+  })
 
   const query = new GraphQLObjectType<unknown, Context>({
     name: 'Query',
     fields: () =>
       Object.fromEntries(
-        named.map(doc => [
-          segmentsOf(doc.name).join('_'),
-          {
-            type: typeForLens(doc.name),
-            args: argsFor(doc.params),
-            description: doc.description,
-            resolve: (_source: unknown, args: any, context: Context) =>
-              callLens(context.client, doc.name, args),
-          },
-        ]),
+        [...groups.entries()].map(([group, docs]) =>
+          // a single-lens name with no group segment sits directly on Query
+          docs.length === 1 && segmentsOf(docs[0].name).length === 1
+            ? [group, lensField(docs[0])]
+            : [group, groupField(group, docs)],
+        ),
       ),
   })
 
