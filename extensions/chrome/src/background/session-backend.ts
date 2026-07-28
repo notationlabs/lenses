@@ -11,6 +11,7 @@ import {
 import {
   bindTab,
   closeTab,
+  hasTabAt,
   reloadTab,
   tabMessage,
   type BoundTab,
@@ -116,6 +117,9 @@ export function createExtensionSessionBackend(): ExtensionSessionBackend {
             // per signed-out call, forever. The reaper collects it instead.
           }
           return { name: "finish" };
+        }
+        case "find-page": {
+          return { name: "find-page", found: await hasTabAt(operation.url) };
         }
       }
     },

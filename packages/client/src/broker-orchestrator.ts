@@ -36,6 +36,13 @@ export function createBrokerOrchestrator(
 ): BrokerOrchestrator {
   if (backends.length === 0) throw new Error("broker orchestrator requires a browser backend");
   const cache = new Map<string, { result: LensResult; expiresAt: number }>();
+  /**
+   * Sites blocked behind a sign-in, keyed by target origin. The kept tab is
+   * the gate's whole lifetime: while a tab is still open at loginUrl the site
+   * is still blocked, and completing (or closing) the sign-in dissolves the
+   * gate without any bookkeeping here.
+   */
+  const authGates = new Map<string, { loginUrl: string; result: LensResult }>();
 
   function currentBackend(): BrowserBackend {
     return backends.find((backend) => backend.available()) ?? backends[backends.length - 1];
@@ -76,6 +83,16 @@ export function createBrokerOrchestrator(
 
     const backend = await selectBackend();
     const target = expandUrl(message.spec.url, message.params);
+    const gate = authGates.get(gateKey(target));
+    if (gate) {
+      if (await hasPageQuietly(backend, gate.loginUrl)) {
+        progress(
+          `a sign-in tab is already open at ${gate.loginUrl}; complete it there to unblock this site`
+        );
+        return gate.result;
+      }
+      authGates.delete(gateKey(target));
+    }
     progress(`binding browser page for ${target} via ${backend.name}`);
     const session = await backend.bind({
       target,
@@ -94,7 +111,24 @@ export function createBrokerOrchestrator(
       }
       return result;
     } finally {
-      await finishQuietly(backend, session, dispositionFor(result));
+      const disposition = dispositionFor(result);
+      if (disposition === "keep" && result) {
+        await recordAuthGate(target, session, result);
+      }
+      await finishQuietly(backend, session, disposition);
+    }
+  }
+
+  async function recordAuthGate(
+    target: string,
+    session: BrowserSession,
+    result: LensResult
+  ): Promise<void> {
+    try {
+      const { url } = await session.snapshot({ maxChars: 0 });
+      if (url) authGates.set(gateKey(target), { loginUrl: url, result });
+    } catch {
+      // Without the kept tab's URL there is no gate; the next call binds as before.
     }
   }
 
@@ -214,6 +248,26 @@ export function createSessionEngineIO(
     },
     log: progress,
   };
+}
+
+function gateKey(target: string): string {
+  try {
+    return new URL(target).origin;
+  } catch {
+    return target;
+  }
+}
+
+async function hasPageQuietly(
+  backend: BrowserBackend,
+  url: string
+): Promise<boolean> {
+  try {
+    return await backend.hasPage(url);
+  } catch {
+    // An unanswerable probe must not veto the call; bind and find out.
+    return false;
+  }
 }
 
 function dispositionFor(result: LensResult | undefined): FinishDisposition {

@@ -224,6 +224,15 @@ export function createExtensionBackend(
       current.close();
       disconnect(current, "browser extension backend stopped");
     },
+    async hasPage(url: string): Promise<boolean> {
+      if (!backend.available()) return false;
+      if (!hello?.capabilities.includes("find-page")) return false;
+      const result = await rpc({ name: "find-page", url });
+      if (result.name !== "find-page") {
+        throw new Error(`extension returned ${result.name} for find-page`);
+      }
+      return result.found;
+    },
     async bind(request: BindRequest): Promise<BrowserSession> {
       const result = await rpc(
         { name: "bind", ...request },

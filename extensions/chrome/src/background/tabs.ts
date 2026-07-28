@@ -104,6 +104,11 @@ export async function reloadTab(
   await waitForLoad(tabId, loadTimeoutMs);
 }
 
+export async function hasTabAt(url: string): Promise<boolean> {
+  const tabs = await chrome.tabs.query({});
+  return tabs.some((tab) => tab.url && sameTarget(tab.url, url));
+}
+
 export async function closeTab(tabId: number): Promise<void> {
   try {
     await chrome.tabs.remove(tabId);
