@@ -88,6 +88,58 @@ describe("shipped lens documents", () => {
     });
   });
 
+  it("keeps a hiring post's null score and comments within the hn/top contract", async () => {
+    const spec = await loadLens("hn.top.json");
+    const result = await executeLens(spec, { p: 2 }, io({
+      domExtract: async (resolver) =>
+        resolver.item
+          ? {
+              url: "https://news.ycombinator.com/news?p=2",
+              title: "Hacker News",
+              value: [
+                {
+                  id: "42",
+                  title: "A story",
+                  url: "https://example.com/story",
+                  score: "10 points",
+                  comments: "3 comments",
+                },
+                {
+                  id: "44",
+                  title: "Acme (YC W26) is hiring",
+                  url: "https://example.com/jobs",
+                  score: null,
+                  comments: null,
+                },
+              ],
+            }
+          : {
+              url: "https://news.ycombinator.com/news?p=2",
+              title: "Hacker News",
+              value: { next_page: "https://news.ycombinator.com/news?p=3" },
+            },
+      snapshot: async () => {
+        throw new Error("LLM fallback should not run");
+      },
+    }));
+
+    expect(result).toMatchObject({
+      kind: "value",
+      resolver: "reconciled",
+      value: {
+        stories: [
+          { score: "10 points", comments: "3 comments" },
+          {
+            score: null,
+            comments: null,
+            item_url: { $lens: "@djgrant/hn/item", params: { id: "44" } },
+          },
+        ],
+        next_page: { $lens: "@djgrant/hn/top", params: { p: 3 } },
+      },
+    });
+  });
+
   it("combines Claude's usage API limits with the plan shown in the page", async () => {
     const spec = await loadLens("claude.usage.json");
     const capture: InterceptedResponse = {
