@@ -145,7 +145,19 @@ export function createExtensionBackend(
     clearTimeout(active.timer);
     pending.delete(response.requestId);
     if (response.ok) active.resolve(response.result);
-    else active.reject(new Error(response.error.message));
+    else if (
+      response.error.code === "invalid-request" &&
+      hello?.pageStamp !== pageFunctionsStamp()
+    ) {
+      // A missing or mismatched stamp means the extension is a different build
+      // than this broker, so its decoder is equally suspect; the raw decode
+      // error reads like a broker bug.
+      active.reject(
+        new Error(
+          `${response.error.message} — the Chrome extension is running an older build than this broker; rebuild it and reload it at chrome://extensions`
+        )
+      );
+    } else active.reject(new Error(response.error.message));
   }
 
   const backend: ExtensionBackend = {
