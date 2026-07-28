@@ -20,22 +20,24 @@ import { createLensClient } from '../../packages/client/dist/index.js'
 import { buildSchema } from './schema.ts'
 
 const root = resolve(import.meta.dir, '../..')
-const examplesDir = join(root, 'examples')
+const catalogDir = process.env.CATALOG_DIR
+  ? resolve(process.env.CATALOG_DIR)
+  : join(root, 'examples')
 const port = Number(process.env.PORT ?? 4381)
 
 let clientPromise: ReturnType<typeof createLensClient> | undefined
 function client() {
-  clientPromise ??= createLensClient({ catalog: [examplesDir] })
+  clientPromise ??= createLensClient({ catalog: [catalogDir] })
   return clientPromise
 }
 
 async function loadCatalog() {
-  const files = (await readdir(examplesDir)).filter(
+  const files = (await readdir(catalogDir)).filter(
     f => f.endsWith('.json') && f !== 'catalog.json',
   )
   const docs = []
   for (const f of files)
-    docs.push(JSON.parse(await readFile(join(examplesDir, f), 'utf8')))
+    docs.push(JSON.parse(await readFile(join(catalogDir, f), 'utf8')))
   return docs
 }
 
