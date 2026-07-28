@@ -3,6 +3,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
 import { errorMessage, evaluate, generateTsSdk, type LensSpec } from "@djgrant/lens";
 import { createLensClient, LensStore } from "@djgrant/lens-client";
+import { serveGraphql } from "./graphql-server.js";
 import { skillMarkdown } from "./skill.js";
 
 const globalHelp = `Usage:
@@ -15,6 +16,7 @@ const globalHelp = `Usage:
   lens status [--wait-ms <number>]
   lens broker <status|release|acquire|shutdown>
   lens update [--catalog <source>]
+  lens graphql [--catalog <source>] [--listen <port>] [--max-calls <number>]
   lens skill
 
 Run lens <command> --help for command-specific help.
@@ -205,6 +207,33 @@ Options:
   --verbose, -v           Write timestamped diagnostics to stderr
   --help, -h              Show this help
 `,
+  graphql: `Usage: lens graphql [options]
+
+Serve the catalog compiled to a GraphQL schema. GraphiQL is at / and the
+endpoint at /graphql, on loopback only — queries drive real lens calls
+through the signed-in browser, so the port is never exposed beyond this
+machine and cross-origin requests are refused.
+
+Each lens is a Query field grouped by site, its params the field args. Each
+$lens ref in a returns contract is an object field resolved by calling the
+target lens — only when selected, with \`first\` on arrays to bound how many
+rows resolve onward. Outcomes surface as GraphQL errors carrying the
+document's hint; response extensions list the lens calls each operation made
+(resolver tier, cache state, ttl, landed URL, duration).
+
+Options:
+  --listen <number>       HTTP port to serve on (default: 4381)
+  --max-calls <number>    Lens call budget per operation (default: 25);
+                          exhaustion is a GraphQL error naming the lens
+  --catalog, -c <source>  Lens catalog source; repeatable, tried in order (required)
+  --port, -p <number>     Persistent browser broker port
+  --verbose, -v           Write timestamped diagnostics to stderr
+  --help, -h              Show this help
+
+Example:
+  lens graphql -c ./lenses
+  lens graphql -c ./lenses --listen 4400 --max-calls 50
+`,
   skill: `Usage: lens skill
 
 Print an agent skill (SKILL.md with frontmatter) that teaches an agent how to
@@ -257,6 +286,8 @@ async function main(): Promise<void> {
       lax: { type: "boolean" },
       input: { type: "string" },
       out: { type: "string", short: "o" },
+      listen: { type: "string" },
+      "max-calls": { type: "string" },
       "timeout-ms": { type: "string" },
       verbose: { type: "boolean", short: "v" },
       "wait-ms": { type: "string" },
@@ -365,6 +396,15 @@ async function main(): Promise<void> {
         if (waitMs !== undefined) await client.waitForConnection(waitMs);
         output = await client.status();
         break;
+      case "graphql":
+        await serveGraphql({
+          catalogs: requireCatalogs(values.catalog),
+          client,
+          listen: numberOption(values.listen, "listen") ?? 4381,
+          maxCalls: numberOption(values["max-calls"], "max-calls") ?? 25,
+          log: log ?? (() => {}),
+        });
+        return;
       case "broker": {
         const [action] = operands;
         if (action === "shutdown") {

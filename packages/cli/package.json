@@ -15,7 +15,8 @@
   },
   "dependencies": {
     "@djgrant/lens": "workspace:*",
-    "@djgrant/lens-client": "workspace:*"
+    "@djgrant/lens-client": "workspace:*",
+    "graphql": "^17.0.2"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
