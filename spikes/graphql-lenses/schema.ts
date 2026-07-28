@@ -82,11 +82,15 @@ async function callLens(
   client: LensClient,
   lens: string,
   params: Record<string, unknown>,
+  hintFor: (lens: string, outcome: string) => string | undefined,
 ): Promise<unknown> {
   const result = await client.call({ lens, params, strict: false })
   if (result.kind === 'outcome') {
+    // call() returns outcomes without the doc's hint (only value() joins it),
+    // so look it up from the catalog we compiled the schema from.
+    const hint = hintFor(lens, result.name)
     throw new GraphQLError(`${lens} returned outcome: ${result.name}`, {
-      extensions: { lens, outcome: result.name, hint: result.hint },
+      extensions: { lens, outcome: result.name, hint },
     })
   }
   if (result.kind === 'error') {
@@ -99,6 +103,13 @@ async function callLens(
 
 export function buildSchema(docs: Doc[]): GraphQLSchema {
   const named = docs.filter(doc => isRecord(doc) && typeof doc.name === 'string')
+
+  const hintFor = (lens: string, outcome: string): string | undefined => {
+    const declared = named.find(doc => doc.name === lens)?.outcomes?.[outcome]
+    return isRecord(declared) && typeof declared.hint === 'string'
+      ? declared.hint
+      : undefined
+  }
   const typeByLens = new Map<string, GraphQLOutputType>()
   const usedNames = new Set<string>(['Query', 'JSON'])
 
@@ -120,7 +131,7 @@ export function buildSchema(docs: Doc[]): GraphQLSchema {
     resolve: async (parent, _args, context) => {
       const ref = parent?.[key]
       if (!isRecord(ref) || typeof ref.$lens !== 'string') return null
-      return callLens(context.client, ref.$lens, ref.params ?? {})
+      return callLens(context.client, ref.$lens, ref.params ?? {}, hintFor)
     },
   })
 
@@ -244,7 +255,7 @@ export function buildSchema(docs: Doc[]): GraphQLSchema {
     args: argsFor(doc.params),
     description: doc.description,
     resolve: (_source: unknown, args: any, context: Context) =>
-      callLens(context.client, doc.name, args),
+      callLens(context.client, doc.name, args, hintFor),
   })
 
   // Register every lens type up front so cross-references bind by name.
