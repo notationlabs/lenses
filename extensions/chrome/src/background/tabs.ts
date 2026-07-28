@@ -19,16 +19,18 @@ export async function bindTab(
 ): Promise<BoundTab> {
   const tabs = await chrome.tabs.query({});
 
-  // A tab this extension opened for the target is ours whatever it is showing
-  // now: a signed-out target redirects onto a sign-in form, and matching on
-  // URL alone would miss it and open another tab for every later call.
+  // A tab this extension opened for the target is reusable whatever it is
+  // showing now: a signed-out target redirects onto a sign-in form, and
+  // matching on URL alone would miss it and open another tab for every later
+  // call. The lease stays with the call that took it, so this one borrows the
+  // tab and leaves its disposal to the holder.
   const leased = await leasedTabFor(request.target, tabs);
-  if (leased) return bindExisting(leased, request, true);
+  if (leased) return bindExisting(leased, request);
 
   const exact = tabs.find(
     (tab) => tab.url && sameTarget(tab.url, request.target)
   );
-  if (exact) return bindExisting(exact, request, false);
+  if (exact) return bindExisting(exact, request);
 
   const created = await chrome.tabs.create({
     url: request.target,
@@ -54,23 +56,24 @@ async function leasedTabFor(
   return tabs.find((tab) => tab.id === leased.tabId);
 }
 
+// Only chrome.tabs.create makes a tab this call may close: everything bound
+// here already belonged to someone else, the user or an earlier lease.
 async function bindExisting(
   tab: chrome.tabs.Tab,
-  request: BindOperation,
-  owned: boolean
+  request: BindOperation
 ): Promise<BoundTab> {
   const tabId = tab.id;
   if (tabId === undefined) throw new Error("could not bind tab");
   if (!tab.url || !sameTarget(tab.url, request.target)) {
     await navigateTab(tabId, request.target, request.loadTimeoutMs);
-    return { tabId, created: owned, navigated: true };
+    return { tabId, created: false, navigated: true };
   }
   if (request.navigation === "fresh") {
     await reloadTab(tabId, request.loadTimeoutMs);
-    return { tabId, created: owned, navigated: true };
+    return { tabId, created: false, navigated: true };
   }
   await ensureContentScript(tabId, request.loadTimeoutMs);
-  return { tabId, created: owned, navigated: false };
+  return { tabId, created: false, navigated: false };
 }
 
 export async function navigateTab(
