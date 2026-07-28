@@ -14,6 +14,11 @@
       "types": "./dist/page-stamp.d.ts",
       "bun": "./src/page-stamp.ts",
       "import": "./dist/page-stamp.js"
+    },
+    "./graphql": {
+      "types": "./dist/graphql.d.ts",
+      "bun": "./src/graphql.ts",
+      "import": "./dist/graphql.js"
     }
   },
   "scripts": {
@@ -24,8 +29,17 @@
     "jsonata": "^2.1.0",
     "zod": "^4.0.0"
   },
+  "peerDependencies": {
+    "graphql": "^16.0.0 || ^17.0.0"
+  },
+  "peerDependenciesMeta": {
+    "graphql": {
+      "optional": true
+    }
+  },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "graphql": "^17.0.2",
     "typescript": "^5.6.0",
     "vitest": "^3.0.0"
   }
