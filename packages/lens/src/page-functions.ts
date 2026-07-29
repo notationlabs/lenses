@@ -23,15 +23,24 @@ export function pageDomExtract(spec: Pick<DomResolver, "item" | "fields">): {
    * `<br>` reads as a line break rather than vanishing. It is undefined outside
    * HTML elements (SVG, MathML), hence the `textContent` fallback.
    *
-   * Runs of whitespace collapse to one space: `\s` covers the &nbsp; that
-   * content-managed markup is dense with, so lenses need no `$norm` helper of
-   * their own. An element that is present but blank stays "" — only a missed
-   * selector yields null.
+   * Runs of horizontal whitespace collapse to one space: that covers the
+   * &nbsp; content-managed markup is dense with, so lenses need no `$norm`
+   * helper of their own. Line breaks survive — `innerText` renders `<br>` as
+   * `\n` and paragraph gaps as `\n\n` — with blank-line runs capped at one.
+   * The `textContent` fallback collapses fully: its newlines are source-markup
+   * formatting, not rendered breaks. An element that is present but blank
+   * stays "" — only a missed selector yields null.
    */
   function readText(el: Element): string {
     const rendered = (el as HTMLElement).innerText;
-    const raw = typeof rendered === "string" ? rendered : (el.textContent ?? "");
-    return raw.replace(/\s+/g, " ").trim();
+    if (typeof rendered !== "string") {
+      return (el.textContent ?? "").replace(/\s+/g, " ").trim();
+    }
+    return rendered
+      .replace(/[^\S\n]+/g, " ")
+      .replace(/ ?\n ?/g, "\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
   }
 
   /**
