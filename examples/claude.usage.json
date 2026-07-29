@@ -68,10 +68,13 @@
     },
     {
       "kind": "dom",
+      "detect": {
+        "needs_auth": "$contains(url, '/login') or $contains(url, '/logout') or $contains(title, 'Log in')"
+      },
       "fields": {
         "dialog": { "selector": "[role='dialog']" }
       },
-      "post": "($a := $substringAfter(dialog, 'Plan usage limits'); ($contains(dialog, 'Plan usage limits') and $contains($a, 'Current session')) ? { 'plan': $trim($substringBefore($a, 'Current session')) } : {})"
+      "post": "(dialog and $contains(dialog, 'Plan usage limits')) ? ($a := $substringAfter(dialog, 'Plan usage limits'); $contains($a, 'Current session') ? { 'plan': $trim($substringBefore($a, 'Current session')) } : {}) : {}"
     },
     {
       "kind": "llm",
