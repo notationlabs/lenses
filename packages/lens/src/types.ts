@@ -49,7 +49,12 @@ export type LensParamType = "string" | "number" | "integer" | "boolean";
 
 export type LensParam =
   | LensParamType
-  | { type: LensParamType; default?: string | number | boolean };
+  | {
+      type: LensParamType;
+      default?: string | number | boolean;
+      /** closed set of accepted values; only valid on string params */
+      enum?: string[];
+    };
 
 export interface LensEffects {
   reads: string[];

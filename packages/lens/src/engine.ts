@@ -119,6 +119,12 @@ export function resolveParams(
     if (!matchesParamType(value, type)) {
       throw new Error(`parameter "${key}" for ${spec.name} must be ${type}`);
     }
+    const allowed = typeof declaration === "string" ? undefined : declaration.enum;
+    if (allowed && !allowed.includes(value as string)) {
+      throw new Error(
+        `parameter "${key}" for ${spec.name} must be one of: ${allowed.join(", ")}`
+      );
+    }
     params[key] = value;
   }
   return params;

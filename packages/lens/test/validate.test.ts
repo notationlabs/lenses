@@ -59,6 +59,32 @@ describe("validateSpec", () => {
     ).toThrow(/default.*page.*integer/);
   });
 
+  it("accepts a string parameter with an enum and an in-enum default", () => {
+    const spec = {
+      ...validSpec,
+      params: { page: { type: "string", enum: ["a", "b"], default: "a" } },
+    };
+    expect(validateSpec(spec)).toEqual(spec);
+  });
+
+  it("rejects an enum on a non-string parameter", () => {
+    expect(() =>
+      validateSpec({
+        ...validSpec,
+        params: { page: { type: "integer", enum: ["1"] } },
+      })
+    ).toThrow(/enum.*only string parameters/);
+  });
+
+  it("rejects a parameter default outside its enum", () => {
+    expect(() =>
+      validateSpec({
+        ...validSpec,
+        params: { page: { type: "string", enum: ["a", "b"], default: "c" } },
+      })
+    ).toThrow(/default.*page.*enum/);
+  });
+
   it("rejects a non-positive page load timeout", () => {
     expect(() => validateSpec({ ...validSpec, loadTimeoutMs: 0 })).toThrow(/loadTimeoutMs/);
   });

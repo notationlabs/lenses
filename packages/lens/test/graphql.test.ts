@@ -94,6 +94,38 @@ describe("buildLensSchema", () => {
     expect(sdl).toMatch(/stories\([^)]*first: Int\s*\): \[HnTopStories\]/);
   });
 
+  it("compiles an enum param into a named enum type that passes the declared value", async () => {
+    const searchSpec: LensSpec = {
+      ...base,
+      name: "@example/hn/search",
+      params: {
+        order: { type: "string", enum: ["byPopularity", "byDate"], default: "byPopularity" },
+      },
+      returns: { type: "object", fields: { total: "integer" } },
+    };
+    const sdl = printSchema(buildLensSchema([searchSpec]));
+    expect(sdl).toContain("enum HnSearchOrder {");
+    expect(sdl).toContain("BY_POPULARITY");
+    // the default prints as the enum name, not the raw declared value
+    expect(sdl).toContain("search(order: HnSearchOrder = BY_POPULARITY): HnSearch");
+
+    const seen: Record<string, unknown>[] = [];
+    const client: GraphQLLensClient = {
+      async call({ params }) {
+        seen.push(params ?? {});
+        return { kind: "value", value: { total: 1 }, resolver: "intercept" };
+      },
+    };
+    const result = await graphql({
+      schema: buildLensSchema([searchSpec]),
+      source: "{ hn { search(order: BY_DATE) { total } } }",
+      contextValue: createContext(client, 10),
+    });
+    expect(result.errors).toBeUndefined();
+    // the lens receives the document's declared value, not the GraphQL name
+    expect(seen).toEqual([{ order: "byDate" }]);
+  });
+
   it("compiles a self-referencing $defs entry into one recursive type", async () => {
     const sdl = printSchema(buildLensSchema([threadSpec]));
     expect(sdl).toContain("type HnThreadComments {");
