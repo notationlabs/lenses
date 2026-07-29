@@ -224,14 +224,14 @@ export function createExtensionBackend(
       current.close();
       disconnect(current, "browser extension backend stopped");
     },
-    async hasPage(url: string): Promise<boolean> {
-      if (!backend.available()) return false;
-      if (!hello?.capabilities.includes("find-page")) return false;
-      const result = await rpc({ name: "find-page", url });
-      if (result.name !== "find-page") {
-        throw new Error(`extension returned ${result.name} for find-page`);
+    async findAuthGate(origin: string) {
+      if (!backend.available()) return undefined;
+      if (!hello?.capabilities.includes("find-gate")) return undefined;
+      const result = await rpc({ name: "find-gate", origin });
+      if (result.name !== "find-gate") {
+        throw new Error(`extension returned ${result.name} for find-gate`);
       }
-      return result.found;
+      return result.gate ?? undefined;
     },
     async bind(request: BindRequest): Promise<BrowserSession> {
       const result = await rpc(

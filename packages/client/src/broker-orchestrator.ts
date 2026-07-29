@@ -6,6 +6,7 @@ import {
   type InterceptedResponse,
   type LensBridgeRequest,
   type LensResult,
+  type LensSpec,
 } from "@djgrant/lens";
 import type {
   BrowserBackend,
@@ -36,13 +37,6 @@ export function createBrokerOrchestrator(
 ): BrokerOrchestrator {
   if (backends.length === 0) throw new Error("broker orchestrator requires a browser backend");
   const cache = new Map<string, { result: LensResult; expiresAt: number }>();
-  /**
-   * Sites blocked behind a sign-in, keyed by target origin. The kept tab is
-   * the gate's whole lifetime: while a tab is still open at loginUrl the site
-   * is still blocked, and completing (or closing) the sign-in dissolves the
-   * gate without any bookkeeping here.
-   */
-  const authGates = new Map<string, { loginUrl: string; result: LensResult }>();
 
   function currentBackend(): BrowserBackend {
     return backends.find((backend) => backend.available()) ?? backends[backends.length - 1];
@@ -83,15 +77,15 @@ export function createBrokerOrchestrator(
 
     const backend = await selectBackend();
     const target = expandUrl(message.spec.url, message.params);
-    const gate = authGates.get(gateKey(target));
+    // The gate is derived from the browser, not remembered here: a kept tab
+    // still sitting where a needs_* outcome left it blocks its whole site,
+    // and it keeps doing so across broker restarts.
+    const gate = await findGateQuietly(backend, gateKey(target));
     if (gate) {
-      if (await hasPageQuietly(backend, gate.loginUrl)) {
-        progress(
-          `a sign-in tab is already open at ${gate.loginUrl}; complete it there to unblock this site`
-        );
-        return gate.result;
-      }
-      authGates.delete(gateKey(target));
+      progress(
+        `a sign-in tab is already open at ${gate.url}; complete it there to unblock this site`
+      );
+      return gateOutcome(message.spec, gate.url);
     }
     progress(`binding browser page for ${target} via ${backend.name}`);
     const session = await backend.bind({
@@ -111,24 +105,7 @@ export function createBrokerOrchestrator(
       }
       return result;
     } finally {
-      const disposition = dispositionFor(result);
-      if (disposition === "keep" && result) {
-        await recordAuthGate(target, session, result);
-      }
-      await finishQuietly(backend, session, disposition);
-    }
-  }
-
-  async function recordAuthGate(
-    target: string,
-    session: BrowserSession,
-    result: LensResult
-  ): Promise<void> {
-    try {
-      const { url } = await session.snapshot({ maxChars: 0 });
-      if (url) authGates.set(gateKey(target), { loginUrl: url, result });
-    } catch {
-      // Without the kept tab's URL there is no gate; the next call binds as before.
+      await finishQuietly(backend, session, dispositionFor(result));
     }
   }
 
@@ -258,16 +235,38 @@ function gateKey(target: string): string {
   }
 }
 
-async function hasPageQuietly(
+async function findGateQuietly(
   backend: BrowserBackend,
-  url: string
-): Promise<boolean> {
+  origin: string
+): Promise<{ url: string; target: string } | undefined> {
   try {
-    return await backend.hasPage(url);
+    return await backend.findAuthGate(origin);
   } catch {
     // An unanswerable probe must not veto the call; bind and find out.
-    return false;
+    return undefined;
   }
+}
+
+/**
+ * The result for a call the gate short-circuited. The blocked call never ran
+ * its lens, so the outcome is synthesised: named after the spec's own needs_*
+ * outcome where it declares one, and carrying the sign-in URL as the value in
+ * place of the detection context the lens would have seen.
+ */
+function gateOutcome(spec: LensSpec, signInUrl: string): LensResult {
+  const declared = [
+    ...spec.resolve.flatMap((resolver) =>
+      "detect" in resolver ? Object.keys(resolver.detect ?? {}) : []
+    ),
+    ...Object.keys(spec.detect ?? {}),
+    ...Object.keys(spec.outcomes ?? {}),
+  ].find((name) => name.startsWith("needs_"));
+  return {
+    kind: "outcome",
+    name: declared ?? "needs_auth",
+    value: { url: signInUrl },
+    resolver: spec.resolve[0]?.kind ?? "dom",
+  };
 }
 
 function dispositionFor(result: LensResult | undefined): FinishDisposition {

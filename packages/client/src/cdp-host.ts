@@ -9,6 +9,8 @@ import puppeteer, { type Browser, type Page } from "puppeteer-core";
 import {
   pageDomExtract,
   pageSnapshot,
+  sameGatePlace,
+  type AuthGate,
   type InterceptedResponse,
 } from "@djgrant/lens";
 import type {
@@ -77,6 +79,7 @@ interface CaptureBuffer {
 
 interface CdpSession extends BrowserSession {
   page: Page;
+  target: string;
   captures: CaptureBuffer;
   closed: boolean;
 }
@@ -95,6 +98,13 @@ export function createCdpBackend(
   let sessionSequence = 0;
   const captureBuffers = new WeakMap<Page, CaptureBuffer>();
   const statusListeners = new Set<() => void>();
+  /**
+   * Pages kept by a needs_* outcome, and where they were kept. Unlike the
+   * extension's tab leases this map dies with the process — CDP has nowhere
+   * durable to write, so a broker restart forgets CDP gates (but not the
+   * extension's).
+   */
+  const keptGates = new Map<Page, { target: string; keptUrl: string }>();
 
   const endpointAvailable = () =>
     existsSync(join(defaultUserDataDir(), "DevToolsActivePort"));
@@ -243,13 +253,15 @@ export function createCdpBackend(
   function makeSession(
     page: Page,
     created: boolean,
-    navigated: boolean
+    navigated: boolean,
+    target: string
   ): CdpSession {
     const session: CdpSession = {
       id: `cdp_${++sessionSequence}`,
       created,
       navigated,
       page,
+      target,
       captures: captures(page),
       closed: false,
       async reload(loadTimeoutMs) {
@@ -336,10 +348,19 @@ export function createCdpBackend(
       statusListeners.add(listener);
       return () => statusListeners.delete(listener);
     },
-    async hasPage(url: string) {
-      const current = browser;
-      if (!current?.connected) return false;
-      return (await findPage(current, url)) !== undefined;
+    async findAuthGate(origin: string): Promise<AuthGate | undefined> {
+      if (!browser?.connected) return undefined;
+      for (const [page, kept] of keptGates) {
+        if (page.isClosed()) {
+          keptGates.delete(page);
+          continue;
+        }
+        if (pageOrigin(kept.target) !== origin) continue;
+        if (sameGatePlace(page.url(), kept.keptUrl)) {
+          return { url: page.url(), target: kept.target };
+        }
+      }
+      return undefined;
     },
     async bind(request: BindRequest) {
       const current = await ensureBrowser(() => {});
@@ -353,7 +374,8 @@ export function createCdpBackend(
         const session = makeSession(
           existing,
           false,
-          request.navigation === "fresh"
+          request.navigation === "fresh",
+          request.target
         );
         session.captures = state;
         return session;
@@ -366,7 +388,7 @@ export function createCdpBackend(
           timeout: request.loadTimeoutMs,
         })
       );
-      return makeSession(page, true, true);
+      return makeSession(page, true, true, request.target);
     },
     async finish(
       session: BrowserSession,
@@ -375,6 +397,12 @@ export function createCdpBackend(
       const cdpSession = session as CdpSession;
       cdpSession.closed = true;
       wake(cdpSession.captures);
+      if (disposition === "keep" && !cdpSession.page.isClosed()) {
+        keptGates.set(cdpSession.page, {
+          target: cdpSession.target,
+          keptUrl: cdpSession.page.url(),
+        });
+      }
       if (!cdpSession.created || disposition === "keep") return;
       try {
         await cdpSession.page.close();
@@ -471,4 +499,12 @@ async function findPage(
 
 function sameTarget(left: string, right: string): boolean {
   return left.replace(/\/$/, "") === right.replace(/\/$/, "");
+}
+
+function pageOrigin(url: string): string {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return url;
+  }
 }

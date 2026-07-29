@@ -13,10 +13,10 @@ export const REQUIRED_EXTENSION_CAPABILITIES = [
   "snapshot-html",
 ] as const;
 /**
- * Capabilities the broker uses when present but can work without. find-page
+ * Capabilities the broker uses when present but can work without. find-gate
  * backs the auth-gate short circuit; without it every gated call binds a tab.
  */
-export const OPTIONAL_EXTENSION_CAPABILITIES = ["find-page"] as const;
+export const OPTIONAL_EXTENSION_CAPABILITIES = ["find-gate"] as const;
 export const EXTENSION_CAPABILITIES = [
   ...REQUIRED_EXTENSION_CAPABILITIES,
   ...OPTIONAL_EXTENSION_CAPABILITIES,
@@ -80,7 +80,17 @@ export type ExtensionRpcOperation =
       sessionId: string;
       disposition: "close-if-created" | "keep";
     }
-  | { name: "find-page"; url: string };
+  | { name: "find-gate"; origin: string };
+
+/**
+ * A sign-in gate: a tab an earlier needs_* outcome kept open, still sitting
+ * where it was kept. `url` is the tab's current URL; `target` is the page the
+ * gated call originally asked for.
+ */
+export interface AuthGate {
+  url: string;
+  target: string;
+}
 
 export interface ExtensionRpcRequest {
   type: "extension-rpc";
@@ -116,7 +126,7 @@ export type ExtensionRpcResult =
     }
   | { name: "snapshot"; snapshot: PageSnapshot }
   | { name: "finish" }
-  | { name: "find-page"; found: boolean };
+  | { name: "find-gate"; gate: AuthGate | null };
 
 export type ExtensionRpcErrorCode =
   | "invalid-request"
@@ -227,8 +237,8 @@ const operationSchema = z.discriminatedUnion("name", [
     disposition: z.enum(["close-if-created", "keep"]),
   }),
   z.strictObject({
-    name: z.literal("find-page"),
-    url: z.string().url(),
+    name: z.literal("find-gate"),
+    origin: z.string().url(),
   }),
 ]);
 
@@ -285,8 +295,10 @@ const rpcResultSchema = z.discriminatedUnion("name", [
   }),
   z.strictObject({ name: z.literal("finish") }),
   z.strictObject({
-    name: z.literal("find-page"),
-    found: z.boolean(),
+    name: z.literal("find-gate"),
+    gate: z
+      .strictObject({ url: z.string(), target: z.string() })
+      .nullable(),
   }),
 ]);
 
@@ -334,6 +346,22 @@ const extensionMessageSchema = z.union([
     epoch: z.string().min(1),
   }),
 ]);
+
+/**
+ * Whether a kept tab is still at the place it was kept: same origin and path.
+ * Query and hash are ignored because sign-in pages rewrite them (state nonces,
+ * hash routing) without leaving the sign-in flow; a change of path or origin
+ * means the flow moved on and the gate must dissolve.
+ */
+export function sameGatePlace(left: string, right: string): boolean {
+  try {
+    const a = new URL(left);
+    const b = new URL(right);
+    return a.origin === b.origin && a.pathname === b.pathname;
+  } catch {
+    return left === right;
+  }
+}
 
 export function decodeExtensionHello(value: unknown): ExtensionHello {
   return helloSchema.parse(value);

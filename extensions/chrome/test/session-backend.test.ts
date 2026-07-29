@@ -80,7 +80,9 @@ describe("created-tab leases", () => {
     // untracked, so nothing could ever collect it.
     expect(chrome.removed).toEqual([]);
     expect(chrome.tabs.has(1)).toBe(true);
-    expect(leases()).toEqual([{ tabId: 1, target: TARGET }]);
+    expect(leases()).toEqual([
+      { tabId: 1, target: TARGET, keptUrl: TARGET },
+    ]);
   });
 
   it("never closes a tab it did not create, under either disposition", async () => {
@@ -112,18 +114,55 @@ describe("created-tab leases", () => {
   });
 });
 
-describe("find-page", () => {
-  it("reports whether any tab is showing the url", async () => {
-    chrome.addTab(SIGN_IN);
+describe("find-gate", () => {
+  const ORIGIN = "https://example.com";
+  const findGate = async (origin = ORIGIN) => {
+    const result = await run({ name: "find-gate", origin });
+    if (result.name !== "find-gate") throw new Error("expected find-gate");
+    return result.gate;
+  };
 
-    await expect(run({ name: "find-page", url: SIGN_IN })).resolves.toEqual({
-      name: "find-page",
-      found: true,
+  const keepSignedOutCall = async () => {
+    const session = await bind();
+    chrome.setUrl(1, SIGN_IN);
+    await finish(session.id, "keep");
+  };
+
+  it("gates a site while its kept tab stays at the sign-in place", async () => {
+    await keepSignedOutCall();
+
+    expect(leases()).toEqual([
+      { tabId: 1, target: TARGET, keptUrl: SIGN_IN },
+    ]);
+    await expect(findGate()).resolves.toEqual({
+      url: SIGN_IN,
+      target: TARGET,
     });
-    await expect(run({ name: "find-page", url: TARGET })).resolves.toEqual({
-      name: "find-page",
-      found: false,
+    await expect(findGate("https://other.com")).resolves.toBeNull();
+  });
+
+  it("keeps gating when the sign-in page rewrites its query", async () => {
+    await keepSignedOutCall();
+    chrome.setUrl(1, "https://example.com/login?next=/orders&state=fresh");
+
+    await expect(findGate()).resolves.toEqual({
+      url: "https://example.com/login?next=/orders&state=fresh",
+      target: TARGET,
     });
+  });
+
+  it("dissolves when the tab leaves the sign-in place", async () => {
+    await keepSignedOutCall();
+    chrome.setUrl(1, TARGET);
+
+    await expect(findGate()).resolves.toBeNull();
+  });
+
+  it("dissolves when the user closes the kept tab", async () => {
+    await keepSignedOutCall();
+    chrome.tabs.delete(1);
+
+    await expect(findGate()).resolves.toBeNull();
   });
 });
 
@@ -175,7 +214,9 @@ describe("rebinding a kept tab", () => {
     await finish(second.id, "close-if-created");
     expect(chrome.removed).toEqual([]);
     expect(chrome.tabs.has(1)).toBe(true);
-    expect(leases()).toEqual([{ tabId: 1, target: TARGET }]);
+    expect(leases()).toEqual([
+      { tabId: 1, target: TARGET, keptUrl: TARGET },
+    ]);
   });
 
   it("does not accumulate a tab per call across a run of signed-out calls", async () => {
@@ -200,7 +241,7 @@ describe("rebinding a kept tab", () => {
     expect(second.created).toBe(true);
     expect(chrome.createdUrls).toEqual([TARGET, other]);
     expect(leases()).toEqual([
-      { tabId: 1, target: TARGET },
+      { tabId: 1, target: TARGET, keptUrl: TARGET },
       { tabId: 2, target: other },
     ]);
   });

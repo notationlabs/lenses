@@ -9,6 +9,13 @@ export interface TabLease {
   tabId: number;
   /** Absent on leases written before leases carried a target. */
   target?: string;
+  /**
+   * The URL the tab showed when a needs_* outcome kept it — usually a sign-in
+   * page. While the tab stays at this place, calls to the target's site are
+   * gated. Lives here rather than in the broker so a broker restart cannot
+   * forget a gate whose tab is still open.
+   */
+  keptUrl?: string;
 }
 
 let leaseUpdate: Promise<void> = Promise.resolve();
@@ -21,6 +28,18 @@ export async function rememberCreatedTab(
     ...leases.filter((lease) => lease.tabId !== tabId),
     { tabId, target },
   ]);
+}
+
+/** No-op for a tab without a lease: only leased tabs can gate a site. */
+export async function recordKeptUrl(
+  tabId: number,
+  keptUrl: string
+): Promise<void> {
+  await writeLeases((leases) =>
+    leases.map((lease) =>
+      lease.tabId === tabId ? { ...lease, keptUrl } : lease
+    )
+  );
 }
 
 export async function forgetCreatedTab(tabId: number): Promise<void> {
@@ -46,11 +65,10 @@ export async function loadCreatedTabLeases(): Promise<TabLease[]> {
       Number.isInteger((entry as TabLease).tabId)
     ) {
       const lease = entry as TabLease;
-      return [
-        typeof lease.target === "string"
-          ? { tabId: lease.tabId, target: lease.target }
-          : { tabId: lease.tabId },
-      ];
+      const loaded: TabLease = { tabId: lease.tabId };
+      if (typeof lease.target === "string") loaded.target = lease.target;
+      if (typeof lease.keptUrl === "string") loaded.keptUrl = lease.keptUrl;
+      return [loaded];
     }
     return [];
   });
