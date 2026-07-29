@@ -26,6 +26,21 @@ describe("resolver result reconciliation", () => {
     expect(satisfiesReturns({ story: { title: "hello", score: "42 points" } }, returns)).toBe(true);
   });
 
+  it("follows a $ref through $defs at every depth of the value", () => {
+    const defs = {
+      comment: {
+        type: "object",
+        fields: { text: "string", replies: { type: "array", items: { $ref: "comment" } } },
+      },
+    };
+    const returns = { type: "array", items: { $ref: "comment" } };
+    const nested = [{ text: "a", replies: [{ text: "b", replies: [] }] }];
+    expect(satisfiesReturns(nested, returns, defs)).toBe(true);
+    expect(satisfiesReturns([{ text: "a", replies: [{ replies: [] }] }], returns, defs)).toBe(false);
+    // an unresolvable ref does not veto the value
+    expect(satisfiesReturns(nested, { type: "array", items: { $ref: "missing" } }, defs)).toBe(true);
+  });
+
   it("checks every object in a declared array", () => {
     const returns = {
       type: "array",

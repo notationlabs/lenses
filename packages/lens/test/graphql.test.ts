@@ -40,6 +40,26 @@ const itemSpec: LensSpec = {
   returns: { type: "object", fields: { text: "string" } },
 };
 
+const threadSpec: LensSpec = {
+  ...base,
+  name: "@example/hn/thread",
+  params: { id: "string" },
+  $defs: {
+    comments: {
+      type: "object",
+      fields: {
+        author: "string",
+        text: "string",
+        replies: { type: "array", items: { $ref: "comments" } },
+      },
+    },
+  },
+  returns: {
+    type: "object",
+    fields: { comments: { type: "array", items: { $ref: "comments" } } },
+  },
+};
+
 /** A client whose lenses resolve from a canned result map; records each call. */
 function stubClient(results: Record<string, LensResult>): GraphQLLensClient & {
   calls: string[];
@@ -72,6 +92,38 @@ describe("buildLensSchema", () => {
     expect(sdl).toContain("item: HnItem");
     // first's description makes printSchema render the args multi-line
     expect(sdl).toMatch(/stories\([^)]*first: Int\s*\): \[HnTopStories\]/);
+  });
+
+  it("compiles a self-referencing $defs entry into one recursive type", async () => {
+    const sdl = printSchema(buildLensSchema([threadSpec]));
+    expect(sdl).toContain("type HnThreadComments {");
+    // the recursive edge points back at the same type, with the array's first arg
+    expect(sdl).toMatch(/replies\([^)]*first: Int\s*\): \[HnThreadComments\]/);
+
+    const client = stubClient({
+      "@example/hn/thread": {
+        kind: "value",
+        value: {
+          comments: [
+            {
+              author: "a",
+              text: "root",
+              replies: [{ author: "b", text: "child", replies: [] }],
+            },
+          ],
+        },
+        resolver: "dom",
+      },
+    });
+    const result = await graphql({
+      schema: buildLensSchema([threadSpec]),
+      source: "{ hn { thread { comments { text replies { text replies { text } } } } } }",
+      contextValue: createContext(client, 10),
+    });
+    expect(result.errors).toBeUndefined();
+    const comments = (result.data as any).hn.thread.comments;
+    expect(comments[0].replies[0].text).toBe("child");
+    expect(comments[0].replies[0].replies).toEqual([]);
   });
 
   it("resolves refs by calling the lens, only when selected", async () => {

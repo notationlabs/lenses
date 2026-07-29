@@ -19,6 +19,10 @@ export interface LensSpec {
   /** JSON-schema-ish shape of the return value. Fields whose value is
    *  {"$lens": "<lens-name>", "params": {"key": "<jsonata expr>"}} are lens references. */
   returns?: unknown;
+  /** Named object schemas that `returns` can reference via {"$ref": <name>};
+   *  a def may reference itself, which is how a recursive shape (a comment
+   *  tree) is declared without infinite nesting. */
+  $defs?: Record<string, unknown>;
   /** Named failure modes. Value is either null, a plain schema, or a $lens ref. */
   outcomes?: Record<string, unknown>;
   /**

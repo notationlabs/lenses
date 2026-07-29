@@ -88,6 +88,18 @@ A call result is one of:
    }
    ```
 
+   For a recursive shape (a comment tree), declare the repeating object once under top-level `$defs` and point at it with `{"$ref": "<name>"}` — a def may reference itself:
+
+   ```jsonc
+   "$defs": {
+     "comments": { "type": "object", "fields": {
+       "author": "string", "text": "string",
+       "replies": { "type": "array", "items": { "$ref": "comments" } } } }
+   },
+   "returns": { "type": "object", "fields": {
+     "comments": { "type": "array", "items": { "$ref": "comments" } } } }
+   ```
+
    A `dom` tier reads the rendered page. It takes `fields` (selector specs)
    and optionally `post` (JSONata over the extracted value) — there is no
    `map` key; `map` belongs to `intercept` tiers. With a repeating `item` selector it

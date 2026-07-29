@@ -19,6 +19,29 @@ describe("validateSpec", () => {
     expect(validateSpec(spec)).toEqual(spec);
   });
 
+  it("accepts a $defs entry that references itself", () => {
+    const spec = {
+      ...validSpec,
+      $defs: {
+        comment: {
+          type: "object",
+          fields: { text: "string", replies: { type: "array", items: { $ref: "comment" } } },
+        },
+      },
+      returns: { type: "object", fields: { comments: { type: "array", items: { $ref: "comment" } } } },
+    };
+    expect(validateSpec(spec)).toEqual(spec);
+  });
+
+  it("rejects a $ref that names no $defs entry", () => {
+    expect(() =>
+      validateSpec({
+        ...validSpec,
+        returns: { type: "object", fields: { comments: { type: "array", items: { $ref: "comment" } } } },
+      })
+    ).toThrow(/"\$ref": "comment" names no entry/);
+  });
+
   it("rejects undeclared URL parameters", () => {
     expect(() => validateSpec({ ...validSpec, params: undefined })).toThrow(/not declared/);
   });

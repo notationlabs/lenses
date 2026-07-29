@@ -112,6 +112,14 @@ const hostOf = (url: unknown): string | undefined => {
   }
 };
 
+/** One lens's `$defs`, with each def's compiled type memoised so self-references bind. */
+interface DefScope {
+  defs: Record<string, unknown>;
+  types: Map<string, GraphQLOutputType>;
+  /** prefix for def type names, e.g. "HnItem" + def "comments" → HnItemComments */
+  baseName: string;
+}
+
 export function buildLensSchema(specs: LensSpec[]): GraphQLSchema {
   const typeByLens = new Map<string, GraphQLOutputType>();
   const usedNames = new Set<string>(["Query", "JSON"]);
@@ -186,18 +194,22 @@ export function buildLensSchema(specs: LensSpec[]): GraphQLSchema {
   const fieldConfig = (
     schema: unknown,
     key: string,
-    owner: string
+    owner: string,
+    scope: DefScope
   ): GraphQLFieldConfig<any, GraphQLLensContext> => {
     if (isRecord(schema) && typeof schema.$lens === "string") {
       return refField(schema.$lens, key);
     }
     if (isRecord(schema) && schema.type === "array") {
       const items = schema.items;
-      // items may be a bare field map (no type/$lens), a schema, or a scalar name
+      // items may be a bare field map (no type/$lens/$ref), a schema, or a scalar name
       const itemType =
-        isRecord(items) && items.type === undefined && items.$lens === undefined
-          ? objectType(`${owner}${capitalise(key)}`, items)
-          : typeFor(items, key, owner);
+        isRecord(items) &&
+        items.type === undefined &&
+        items.$lens === undefined &&
+        items.$ref === undefined
+          ? objectType(`${owner}${capitalise(key)}`, items, scope)
+          : typeFor(items, key, owner, scope);
       return {
         type: new GraphQLList(itemType),
         args: {
@@ -213,15 +225,21 @@ export function buildLensSchema(specs: LensSpec[]): GraphQLSchema {
         },
       };
     }
-    return { type: typeFor(schema, key, owner) };
+    return { type: typeFor(schema, key, owner, scope) };
   };
 
-  const typeFor = (schema: unknown, key: string, owner: string): GraphQLOutputType => {
+  const typeFor = (
+    schema: unknown,
+    key: string,
+    owner: string,
+    scope: DefScope
+  ): GraphQLOutputType => {
     if (typeof schema === "string") return SCALARS[schema] ?? JSONScalar;
     if (!isRecord(schema)) return JSONScalar;
     if (typeof schema.$lens === "string") return typeForLens(schema.$lens);
+    if (typeof schema.$ref === "string") return typeForDef(schema.$ref, scope);
     if (schema.type === "object" && isRecord(schema.fields)) {
-      return objectType(`${owner}${capitalise(key)}`, schema.fields);
+      return objectType(`${owner}${capitalise(key)}`, schema.fields, scope);
     }
     if (typeof schema.type === "string") {
       return SCALARS[schema.type] ?? JSONScalar;
@@ -231,7 +249,8 @@ export function buildLensSchema(specs: LensSpec[]): GraphQLSchema {
 
   const objectType = (
     baseName: string,
-    fields: Record<string, unknown>
+    fields: Record<string, unknown>,
+    scope: DefScope
   ): GraphQLObjectType<any, GraphQLLensContext> => {
     const name = uniqueName(baseName);
     return new GraphQLObjectType<any, GraphQLLensContext>({
@@ -241,10 +260,28 @@ export function buildLensSchema(specs: LensSpec[]): GraphQLSchema {
           Object.entries(fields).map(([key, sub]) =>
             isRecord(sub) && typeof sub.$lens === "string"
               ? [refFieldName(key, fields), refField(sub.$lens, key)]
-              : [key, fieldConfig(sub, key, name)]
+              : [key, fieldConfig(sub, key, name, scope)]
           )
         ),
     });
+  };
+
+  /**
+   * The type a `$defs` entry compiles to, memoised per lens so a def that
+   * references itself (a comment's replies) resolves to one GraphQL type
+   * rather than recursing. Safe to memoise after construction: the cycle only
+   * re-enters through the fields thunk, which graphql-js runs later.
+   */
+  const typeForDef = (name: string, scope: DefScope): GraphQLOutputType => {
+    const existing = scope.types.get(name);
+    if (existing !== undefined) return existing;
+    const def = scope.defs[name];
+    const type =
+      isRecord(def) && def.type === "object"
+        ? objectType(`${scope.baseName}${capitalise(name)}`, isRecord(def.fields) ? def.fields : {}, scope)
+        : JSONScalar;
+    scope.types.set(name, type);
+    return type;
   };
 
   /** The GraphQL type a lens resolves to; memoised so cyclic refs (next_page) work. */
@@ -253,20 +290,32 @@ export function buildLensSchema(specs: LensSpec[]): GraphQLSchema {
     if (existing !== undefined) return existing;
     const spec = specFor(lens);
     const baseName = segmentsOf(lens).map(capitalise).join("");
+    const defs = spec?.$defs;
+    const scope: DefScope = {
+      defs: isRecord(defs) ? defs : {},
+      types: new Map(),
+      baseName,
+    };
     const type =
       spec === undefined
         ? JSONScalar // ref into a lens we have no document for
         : (() => {
             const returns = spec.returns;
+            if (isRecord(returns) && typeof returns.$ref === "string") {
+              return typeForDef(returns.$ref, scope);
+            }
             if (isRecord(returns) && returns.type === "object") {
-              return objectType(baseName, returns.fields ?? {});
+              return objectType(baseName, returns.fields ?? {}, scope);
             }
             if (isRecord(returns) && returns.type === "array") {
               const items = returns.items;
               return new GraphQLList(
-                isRecord(items) && items.type === undefined && items.$lens === undefined
-                  ? objectType(`${baseName}Item`, items)
-                  : typeFor(items, "item", baseName)
+                isRecord(items) &&
+                items.type === undefined &&
+                items.$lens === undefined &&
+                items.$ref === undefined
+                  ? objectType(`${baseName}Item`, items, scope)
+                  : typeFor(items, "item", baseName, scope)
               );
             }
             return JSONScalar;

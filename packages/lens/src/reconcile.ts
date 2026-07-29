@@ -15,8 +15,16 @@ export function fillAbsent(current: unknown, incoming: unknown): unknown {
   return merged;
 }
 
-/** Whether a value contains every object field declared by a returns schema. */
-export function satisfiesReturns(value: unknown, schema: unknown): boolean {
+/**
+ * Whether a value contains every object field declared by a returns schema.
+ * `defs` resolves `$ref` nodes; recursion terminates because each deref
+ * descends into the (finite) value, never the schema alone.
+ */
+export function satisfiesReturns(
+  value: unknown,
+  schema: unknown,
+  defs?: Record<string, unknown>
+): boolean {
   if (typeof schema === "string") return primitiveMatches(value, schema);
   if (!isPlainObject(schema)) return value !== undefined;
   if (value === null && schema.nullable === true) return true;
@@ -25,10 +33,15 @@ export function satisfiesReturns(value: unknown, schema: unknown): boolean {
     return value === null || typeof value === "string" || isLensRef(value);
   }
 
+  if (typeof schema.$ref === "string") {
+    const def = defs?.[schema.$ref];
+    return def === undefined || satisfiesReturns(value, def, defs);
+  }
+
   if (schema.type === "object" && isPlainObject(schema.fields)) {
     if (!isPlainObject(value)) return false;
     return Object.entries(schema.fields).every(
-      ([field, fieldSchema]) => field in value && satisfiesReturns(value[field], fieldSchema)
+      ([field, fieldSchema]) => field in value && satisfiesReturns(value[field], fieldSchema, defs)
     );
   }
 
@@ -36,8 +49,12 @@ export function satisfiesReturns(value: unknown, schema: unknown): boolean {
 
   if (schema.type === "array") {
     if (!Array.isArray(value)) return false;
-    const itemFields = schema.items;
-    return !isPlainObject(itemFields) || value.every((item) => satisfiesFieldMap(item, itemFields));
+    const items = schema.items;
+    if (!isPlainObject(items)) return true;
+    if (typeof items.$ref === "string") {
+      return value.every((item) => satisfiesReturns(item, items, defs));
+    }
+    return value.every((item) => satisfiesFieldMap(item, items, defs));
   }
 
   if (typeof schema.type === "string") return primitiveMatches(value, schema.type);
@@ -52,10 +69,14 @@ export function satisfiesReturns(value: unknown, schema: unknown): boolean {
  * has to extract — is left absent by materialisation and correctly fails here,
  * so the engine goes on to the tier that supplies it.
  */
-function satisfiesFieldMap(value: unknown, fields: Record<string, unknown>): boolean {
+function satisfiesFieldMap(
+  value: unknown,
+  fields: Record<string, unknown>,
+  defs?: Record<string, unknown>
+): boolean {
   if (!isPlainObject(value)) return false;
   return Object.entries(fields).every(
-    ([field, fieldSchema]) => field in value && satisfiesReturns(value[field], fieldSchema)
+    ([field, fieldSchema]) => field in value && satisfiesReturns(value[field], fieldSchema, defs)
   );
 }
 

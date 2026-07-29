@@ -59,7 +59,7 @@ export async function executeLens(
           ...result,
           value: {
             ...(result.value as Record<string, unknown>),
-            gathered: await materialiseLenses(gathered, spec.returns, params, true, spec.helpers),
+            gathered: await materialiseLenses(gathered, spec.returns, params, true, spec.helpers, spec.$defs),
           },
         };
       }
@@ -76,8 +76,8 @@ export async function executeLens(
     // Materialise before testing the contract: a declared $lens ref is supplied
     // by materialisation, not by a resolver, so a value missing only refs is
     // complete. Refs that cannot bind yet stay absent and still fail this.
-    const materialised = await materialiseLenses(gathered, spec.returns, params, false, spec.helpers);
-    if (satisfiesReturns(materialised, spec.returns)) {
+    const materialised = await materialiseLenses(gathered, spec.returns, params, false, spec.helpers, spec.$defs);
+    if (satisfiesReturns(materialised, spec.returns, spec.$defs)) {
       io.log?.("return contract satisfied");
       return {
         kind: "value",
@@ -92,7 +92,7 @@ export async function executeLens(
     io.log?.("resolvers exhausted with a partial value");
     return {
       kind: "value",
-      value: await materialiseLenses(gathered, spec.returns, params, true, spec.helpers),
+      value: await materialiseLenses(gathered, spec.returns, params, true, spec.helpers, spec.$defs),
       resolver: settledResolver(contributors),
       partial: true,
       observed,

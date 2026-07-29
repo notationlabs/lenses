@@ -51,7 +51,10 @@ const llmSchema = z.strictObject({
 const RETURNS_HINT =
   'must be a primitive type ("string" | "number" | "integer" | "boolean" | "null"), ' +
   'a nullable primitive {"type": ..., "nullable": true}, a lens reference {"$lens": ..., "params"?}, ' +
-  '{"type": "object", "fields"?: {...}}, or {"type": "array", "items"?: <field map>}';
+  'a def reference {"$ref": <name in $defs>}, ' +
+  '{"type": "object", "fields"?: {...}}, or {"type": "array", "items"?: <field map> | {"$ref": ...}}';
+
+const defRefSchema = z.strictObject({ $ref: z.string() });
 
 const returnSchema: z.ZodType<unknown> = z.lazy(() =>
   z.union([
@@ -64,16 +67,24 @@ const returnSchema: z.ZodType<unknown> = z.lazy(() =>
       $lens: z.string(),
       params: z.record(z.string(), expression).optional(),
     }),
+    defRefSchema,
     z.strictObject({
       type: z.literal("object"),
       fields: z.record(z.string(), returnSchema).optional(),
     }),
     z.strictObject({
       type: z.literal("array"),
-      items: z.record(z.string(), returnSchema).optional(),
+      items: z.union([defRefSchema, z.record(z.string(), returnSchema)]).optional(),
     }),
   ], { error: RETURNS_HINT })
 );
+
+// A def is always an object shape: refs exist so a field map can contain
+// itself, and only object types can carry the recursive edge.
+const defSchema = z.strictObject({
+  type: z.literal("object"),
+  fields: z.record(z.string(), returnSchema).optional(),
+});
 
 const lensSpecSchema = z.strictObject({
   name: z.string().regex(/^@[a-z0-9_-]+\/[a-z0-9_-]+\/[a-z0-9_-]+$/, {
@@ -95,6 +106,7 @@ const lensSpecSchema = z.strictObject({
     .optional(),
   loadTimeoutMs: z.number().int().positive().optional(),
   returns: returnSchema.optional(),
+  $defs: z.record(z.string(), defSchema).optional(),
   outcomes: z.record(z.string(), z.unknown()).optional(),
   detect: detect.optional(),
   helpers: z.record(z.string(), expression).optional(),
@@ -192,6 +204,19 @@ export function validateSpec(raw: unknown): LensSpec {
       (issue) => `  at ${pointerOf(issue.path)}: ${issue.message}`
     );
     throw new Error(`invalid lens spec:\n${[...new Set(lines)].join("\n")}`);
+  }
+  const defs = result.data.$defs ?? {};
+  const refsIn = (schema: unknown): string[] => {
+    if (schema === null || typeof schema !== "object") return [];
+    if (Array.isArray(schema)) return schema.flatMap(refsIn);
+    const record = schema as Record<string, unknown>;
+    if (typeof record.$ref === "string") return [record.$ref];
+    return Object.values(record).flatMap(refsIn);
+  };
+  for (const ref of refsIn([result.data.returns, defs])) {
+    if (!(ref in defs)) {
+      throw new Error(`invalid lens spec:\n  "$ref": "${ref}" names no entry in "$defs"`);
+    }
   }
   const holesIn = (template: string) =>
     [...template.matchAll(/\{([a-zA-Z_][a-zA-Z0-9_]*)\}/g)].map((match) => match[1]);

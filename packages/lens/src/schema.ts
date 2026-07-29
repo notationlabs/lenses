@@ -18,31 +18,65 @@ const primitives: Record<string, z.ZodType> = {
   null: z.null(),
 };
 
-/** Zod schema for a lens's resolved value, built from its `returns` declaration. */
-export function returnsSchema(spec: LensSpec): z.ZodType {
-  return toZod(spec.returns);
+/** The spec's `$defs`, with each def's zod schema memoised so self-references bind. */
+interface DefScope {
+  defs: Record<string, unknown>;
+  memo: Map<string, z.ZodType>;
+  lens: string;
 }
 
-function toZod(node: unknown): z.ZodType {
+/** Zod schema for a lens's resolved value, built from its `returns` declaration. */
+export function returnsSchema(spec: LensSpec): z.ZodType {
+  const defs = spec.$defs;
+  return toZod(spec.returns, {
+    defs: isPlainObject(defs) ? defs : {},
+    memo: new Map(),
+    lens: spec.name,
+  });
+}
+
+function toZod(node: unknown, scope: DefScope): z.ZodType {
   if (typeof node === "string" && node in primitives) return primitives[node];
   if (!isPlainObject(node)) return z.unknown();
   if (typeof node.$lens === "string") return lensRef.nullable();
+  if (typeof node.$ref === "string") return defZod(node.$ref, scope);
   if (node.nullable === true && typeof node.type === "string" && node.type in primitives) {
     return primitives[node.type].nullable();
   }
   if (node.type === "object") {
-    return isPlainObject(node.fields) ? fieldMap(node.fields) : z.record(z.string(), z.unknown());
+    return isPlainObject(node.fields)
+      ? fieldMap(node.fields, scope)
+      : z.record(z.string(), z.unknown());
   }
   if (node.type === "array") {
-    return isPlainObject(node.items) ? z.array(fieldMap(node.items)) : z.array(z.unknown());
+    const items = node.items;
+    if (!isPlainObject(items)) return z.array(z.unknown());
+    return z.array(
+      typeof items.$ref === "string" ? defZod(items.$ref, scope) : fieldMap(items, scope)
+    );
   }
   return z.unknown();
 }
 
+/**
+ * A `$defs` entry, memoised behind z.lazy so a def whose fields reference it
+ * (a comment's replies) resolves to one schema instead of recursing; the meta
+ * id lets toJSONSchema extract the cycle into JSON Schema `$defs`.
+ */
+function defZod(name: string, scope: DefScope): z.ZodType {
+  const existing = scope.memo.get(name);
+  if (existing !== undefined) return existing;
+  const schema = z
+    .lazy(() => toZod(scope.defs[name], scope))
+    .meta({ id: `${scope.lens.replace(/[^a-zA-Z0-9_]+/g, "_")}_${name}` });
+  scope.memo.set(name, schema);
+  return schema;
+}
+
 /** Declared fields are required; undeclared fields pass through untouched. */
-function fieldMap(fields: Record<string, unknown>): z.ZodType {
+function fieldMap(fields: Record<string, unknown>, scope: DefScope): z.ZodType {
   return z.looseObject(
-    Object.fromEntries(Object.entries(fields).map(([name, field]) => [name, toZod(field)]))
+    Object.fromEntries(Object.entries(fields).map(([name, field]) => [name, toZod(field, scope)]))
   );
 }
 
