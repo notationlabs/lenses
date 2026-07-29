@@ -402,6 +402,13 @@ export function createCdpBackend(
           target: cdpSession.target,
           keptUrl: cdpSession.page.url(),
         });
+        try {
+          // The page was opened in the background, so without this the
+          // sign-in page sits unseen behind whatever the user is doing.
+          await cdpSession.page.bringToFront();
+        } catch {
+          // The user may close the page while its call is still running.
+        }
       }
       if (!cdpSession.created || disposition === "keep") return;
       try {

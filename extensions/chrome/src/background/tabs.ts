@@ -104,6 +104,17 @@ export async function reloadTab(
   await waitForLoad(tabId, loadTimeoutMs);
 }
 
+export async function focusTab(tabId: number): Promise<void> {
+  try {
+    const tab = await chrome.tabs.update(tabId, { active: true });
+    if (tab?.windowId !== undefined) {
+      await chrome.windows.update(tab.windowId, { focused: true });
+    }
+  } catch {
+    // The user may have closed the tab; there is nothing left to focus.
+  }
+}
+
 export async function closeTab(tabId: number): Promise<void> {
   try {
     await chrome.tabs.remove(tabId);

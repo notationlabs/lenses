@@ -29,12 +29,22 @@ export interface FakeChrome {
   createdUrls: string[];
   /** Every [tabId, url] passed to chrome.tabs.update, in order. */
   navigations: [number, string][];
+  /** Every tab id activated via chrome.tabs.update, in order. */
+  activated: number[];
+  /** Every window id passed to chrome.windows.update with focused. */
+  focusedWindows: number[];
+  /** Every notification created, in order. */
+  notifications: { id: string; title: string; message: string }[];
   reloads: number[];
   storage: Map<string, unknown>;
   /** Seed a tab the extension did not open, e.g. one the user already had. */
   addTab(url: string): FakeTab;
   /** Drive a redirect the way a sign-in page would: same tab, new url. */
   setUrl(tabId: number, url: string): void;
+  /** Whether a Chrome window holds OS focus; defaults to true. */
+  setOsFocus(focused: boolean): void;
+  /** Simulate the user clicking a notification. */
+  clickNotification(id: string): void;
   /**
    * A signed-out account bounces every tab pointed at the target, not just the
    * one the last call happened to bind.
@@ -47,6 +57,11 @@ export function createFakeChrome(): FakeChrome {
   const removed: number[] = [];
   const createdUrls: string[] = [];
   const navigations: [number, string][] = [];
+  const activated: number[] = [];
+  const focusedWindows: number[] = [];
+  const notifications: { id: string; title: string; message: string }[] = [];
+  const onNotificationClicked = new FakeEvent<[string]>();
+  let osFocused = true;
   const reloads: number[] = [];
   const storage = new Map<string, unknown>();
   const onUpdated = new FakeEvent<
@@ -92,13 +107,19 @@ export function createFakeChrome(): FakeChrome {
         if (!tab) throw new Error(`No tab with id: ${tabId}.`);
         return { ...tab };
       },
-      async update(tabId: number, { url }: { url: string }) {
+      async update(
+        tabId: number,
+        { url, active }: { url?: string; active?: boolean }
+      ) {
         const tab = tabs.get(tabId);
         if (!tab) throw new Error(`No tab with id: ${tabId}.`);
-        navigations.push([tabId, url]);
-        tab.url = url;
-        completeSoon(tab);
-        return { ...tab };
+        if (active) activated.push(tabId);
+        if (url !== undefined) {
+          navigations.push([tabId, url]);
+          tab.url = url;
+          completeSoon(tab);
+        }
+        return { ...tab, windowId: 1 };
       },
       async reload(tabId: number) {
         const tab = tabs.get(tabId);
@@ -119,6 +140,29 @@ export function createFakeChrome(): FakeChrome {
         }
         if (message.type === "ping") return { ok: true };
         throw new Error(`unexpected tab message ${message.type}`);
+      },
+    },
+    windows: {
+      async update(windowId: number, { focused }: { focused?: boolean }) {
+        if (focused) focusedWindows.push(windowId);
+      },
+      async getLastFocused() {
+        return { id: 1, focused: osFocused };
+      },
+    },
+    notifications: {
+      onClicked: onNotificationClicked,
+      async create(
+        id: string,
+        { title, message }: { title: string; message: string }
+      ) {
+        notifications.push({ id, title, message });
+        return id;
+      },
+      async clear(id: string) {
+        const index = notifications.findIndex((item) => item.id === id);
+        if (index >= 0) notifications.splice(index, 1);
+        return index >= 0;
       },
     },
     storage: {
@@ -144,6 +188,9 @@ export function createFakeChrome(): FakeChrome {
     removed,
     createdUrls,
     navigations,
+    activated,
+    focusedWindows,
+    notifications,
     reloads,
     storage,
     addTab,
@@ -151,6 +198,12 @@ export function createFakeChrome(): FakeChrome {
       const tab = tabs.get(tabId);
       if (!tab) throw new Error(`No tab with id: ${tabId}.`);
       tab.url = url;
+    },
+    setOsFocus(focused) {
+      osFocused = focused;
+    },
+    clickNotification(id) {
+      onNotificationClicked.emit(id);
     },
     redirectAll(from, to) {
       for (const tab of tabs.values()) {

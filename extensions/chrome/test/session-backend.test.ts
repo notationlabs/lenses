@@ -85,6 +85,66 @@ describe("created-tab leases", () => {
     ]);
   });
 
+  it("brings the kept tab to the front on a keep finish", async () => {
+    const session = await bind();
+
+    await finish(session.id, "keep");
+
+    expect(chrome.activated).toEqual([1]);
+    expect(chrome.focusedWindows).toEqual([1]);
+  });
+
+  it("posts a sign-in notification when Chrome lacks OS focus", async () => {
+    chrome.setOsFocus(false);
+    const session = await bind();
+    chrome.setUrl(1, SIGN_IN);
+
+    await finish(session.id, "keep");
+
+    expect(chrome.notifications).toEqual([
+      {
+        id: "lens-gate:1",
+        title: "Sign-in needed",
+        message:
+          "A lens call is waiting for you to sign in to example.com. Click to open the tab.",
+      },
+    ]);
+  });
+
+  it("posts no notification when a Chrome window holds OS focus", async () => {
+    const session = await bind();
+
+    await finish(session.id, "keep");
+
+    expect(chrome.notifications).toEqual([]);
+  });
+
+  it("focuses the kept tab when its notification is clicked", async () => {
+    const { watchGateNotifications } = await import(
+      "../src/background/notifications.js"
+    );
+    watchGateNotifications();
+    chrome.setOsFocus(false);
+    const session = await bind();
+    await finish(session.id, "keep");
+    chrome.activated.length = 0;
+
+    chrome.clickNotification("lens-gate:1");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(chrome.activated).toEqual([1]);
+    expect(chrome.notifications).toEqual([]);
+  });
+
+  it("does not steal focus on a close-if-created finish", async () => {
+    const session = await bind();
+
+    await finish(session.id, "close-if-created");
+
+    expect(chrome.activated).toEqual([]);
+    expect(chrome.focusedWindows).toEqual([]);
+  });
+
   it("never closes a tab it did not create, under either disposition", async () => {
     for (const disposition of ["close-if-created", "keep"] as const) {
       chrome = createFakeChrome();
