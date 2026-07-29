@@ -12,6 +12,8 @@ const ABSENT = Symbol("absent");
 interface Ctx {
   callParams: Record<string, unknown>;
   helpers?: Record<string, string>;
+  /** the spec's `$defs`, so a `$ref` field schema can be followed */
+  defs: Record<string, unknown>;
   /**
    * True on the pass whose result is returned. Until then an unbindable ref
    * that no resolver emitted stays absent, so the return contract reads as
@@ -28,10 +30,11 @@ export async function materialiseLenses(
   returns: unknown,
   callParams: Record<string, unknown> = {},
   final = true,
-  helpers?: Record<string, string>
+  helpers?: Record<string, string>,
+  defs?: Record<string, unknown>
 ): Promise<unknown> {
   if (!isPlainObject(returns)) return value;
-  return materialiseField(value, returns, {}, { callParams, final, helpers });
+  return materialiseField(value, returns, {}, { callParams, final, helpers, defs: defs ?? {} });
 }
 
 /** Apply field schemas to one object. */
@@ -67,10 +70,22 @@ async function materialiseField(
 ): Promise<unknown> {
   if (isLensRefSchema(schema)) return materialiseRef(value, schema, contextObj, ctx);
   if (isPlainObject(schema)) {
+    if (typeof schema.$ref === "string") {
+      const def = ctx.defs[schema.$ref];
+      // deref follows the value, so a self-referencing def bottoms out with it
+      return def === undefined ? value : materialiseField(value, def, contextObj, ctx);
+    }
     if (schema.type === "array" && isPlainObject(schema.items)) {
       if (!Array.isArray(value)) return value;
+      const items = schema.items;
       const out: unknown[] = [];
-      for (const row of value) out.push(await applyFieldMap(row, schema.items, ctx));
+      for (const row of value) {
+        out.push(
+          typeof items.$ref === "string"
+            ? await materialiseField(row, items, isPlainObject(row) ? row : {}, ctx)
+            : await applyFieldMap(row, items, ctx)
+        );
+      }
       return out;
     }
     if (schema.type === "object" && isPlainObject(schema.fields)) {

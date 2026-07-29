@@ -1,6 +1,6 @@
 {
   "name": "@djgrant/hn/item",
-  "description": "A Hacker News story page: the story plus a page of its comment thread. HN serves the whole thread in one document, so the lens windows it client-side (default 30 comments/page); next_page is the same lens at the next window (null on the last page). Pass params {page, limit} to control the window.",
+  "description": "A Hacker News story page: the story plus a page of its comment thread as a tree. HN serves the whole thread in one document, so the lens rebuilds reply nesting from row indentation and windows the top-level comments client-side (default 30/page); next_page is the same lens at the next window (null on the last page). Pass params {page, limit} to control the window.",
   "url": "https://news.ycombinator.com/item?id={id}",
   "params": {
     "id": "string",
@@ -11,6 +11,20 @@
     "limit": {
       "type": "integer",
       "default": 30
+    }
+  },
+  "$defs": {
+    "comments": {
+      "type": "object",
+      "fields": {
+        "author": "string",
+        "age": "string",
+        "text": "string",
+        "replies": {
+          "type": "array",
+          "items": { "$ref": "comments" }
+        }
+      }
     }
   },
   "returns": {
@@ -26,11 +40,7 @@
       },
       "comments": {
         "type": "array",
-        "items": {
-          "author": "string",
-          "age": "string",
-          "text": "string"
-        }
+        "items": { "$ref": "comments" }
       },
       "next_page": {
         "$lens": "@djgrant/hn/item",
@@ -72,7 +82,7 @@
           "attr": "indent"
         }
       },
-      "post": "($all := $[text != null]; $size := $number($limit ? $limit : 30); $pg := $number($page ? $page : 1); $start := ($pg - 1) * $size; { \"story\": { \"id\": $id }, \"comments\": [$all#$i[$i >= $start and $i < $start + $size]], \"next_page\": ($count($all) > $start + $size) ? \"https://news.ycombinator.com/item?id=\" & $id & \"&p=\" & ($pg + 1) : null })"
+      "post": "($all := [$[text != null]]; $size := $number($limit ? $limit : 30); $pg := $number($page ? $page : 1); $start := ($pg - 1) * $size; $build := function($rows) { ($n := $count($rows); $n = 0 ? [] : ($top := $number($rows[0].indent); $starts := [$filter([0..$n-1], function($j) { $number($rows[$j].indent) = $top })]; $map($starts, function($s, $k) { ($next := $k < $count($starts) - 1 ? $starts[$k + 1] : $n; $row := $rows[$s]; { \"author\": $row.author, \"age\": $row.age, \"text\": $row.text, \"replies\": [$build([$rows#$j[$j > $s and $j < $next]])] }) }))) }; $tree := [$build($all)]; { \"story\": { \"id\": $id }, \"comments\": [$tree#$i[$i >= $start and $i < $start + $size]], \"next_page\": ($count($tree) > $start + $size) ? \"https://news.ycombinator.com/item?id=\" & $id & \"&p=\" & ($pg + 1) : null })"
     },
     {
       "kind": "dom",
@@ -92,7 +102,7 @@
     },
     {
       "kind": "llm",
-      "prompt": "This is a Hacker News story page. Return {story: {title, url, score}, comments: [{author, age, text}], next_page}. Return at most 30 comments in reading order. If you can see more than 30 comments on the page, set next_page to the URL of this page with the query param &p=2 appended (page 2 of the client-side window); otherwise set next_page to null. Include only fields you can actually see."
+      "prompt": "This is a Hacker News story page. Return {story: {title, url, score}, comments: [{author, age, text, replies}], next_page}. Comments nest: each comment's replies is an array of the same {author, age, text, replies} shape (use [] when a comment has no replies); use the indentation of each comment row to decide nesting. Return at most 30 top-level comments in reading order. If you can see more than 30 top-level comments on the page, set next_page to the URL of this page with the query param &p=2 appended (page 2 of the client-side window); otherwise set next_page to null. Include only fields you can actually see."
     }
   ]
 }

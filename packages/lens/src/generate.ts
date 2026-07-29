@@ -25,12 +25,35 @@ export function generateTsSdk(specs: LensSpec[]): string {
     }
   }
 
+  // A recursive def cannot be printed inline, so each `$defs` entry is hoisted
+  // to a named interface the result types (and the def itself) refer to.
+  const usedDefNames = new Set<string>();
+  const defDeclarations: string[] = [];
+  const scopeOf = (spec: LensSpec): DefScope => {
+    const defs = isPlainObject(spec.$defs) ? spec.$defs : {};
+    const names: Record<string, string> = {};
+    for (const name of Object.keys(defs)) {
+      const base = `${pascal(shortName(spec.name))}${pascal(name)}`;
+      let typeName = base;
+      let n = 2;
+      while (usedDefNames.has(typeName)) typeName = `${base}${n++}`;
+      usedDefNames.add(typeName);
+      names[name] = typeName;
+    }
+    return { names, known };
+  };
+
   const entries = sorted.map((spec) => {
+    const scope = scopeOf(spec);
+    for (const [name, def] of Object.entries(isPlainObject(spec.$defs) ? spec.$defs : {})) {
+      const fields = isPlainObject(def) && isPlainObject(def.fields) ? def.fields : {};
+      defDeclarations.push(`export interface ${scope.names[name]} ${fieldMap(fields, scope, "")}`);
+    }
     const doc = spec.description ? `  /** ${spec.description.replace(/\*\//g, "*\\/")} */\n` : "";
     return (
       `${doc}  ${quoteKey(spec.name)}: {\n` +
       `    params: ${paramsType(spec)};\n` +
-      `    result: ${returnsType(spec.returns, known, "    ")};\n` +
+      `    result: ${returnsType(spec.returns, scope, "    ")};\n` +
       `  };\n` +
       `  ${quoteKey(shortName(spec.name))}: Lenses[${JSON.stringify(spec.name)}];`
     );
@@ -52,7 +75,7 @@ export interface LensRef<Name extends string = string> {
   [key: string]: unknown;
 }
 
-export interface Lenses {
+${defDeclarations.length > 0 ? `${defDeclarations.join("\n\n")}\n\n` : ""}export interface Lenses {
 ${entries.join("\n")}
 }
 
@@ -98,37 +121,54 @@ function paramsType(spec: LensSpec): string {
   return `{ ${fields.join("; ")} }`;
 }
 
+/** Lens names for LensRef targets, plus the hoisted interface name per `$defs` entry. */
+interface DefScope {
+  names: Record<string, string>;
+  known: Set<string>;
+}
+
 /** Mirrors schema.ts's toZod: declared fields required, objects open, $lens nullable. */
-function returnsType(node: unknown, known: Set<string>, indent: string): string {
+function returnsType(node: unknown, scope: DefScope, indent: string): string {
   if (typeof node === "string" && node in primitiveTypes) return primitiveTypes[node];
   if (!isPlainObject(node)) return "unknown";
   if (typeof node.$lens === "string") {
-    const target = known.has(node.$lens) ? `<${JSON.stringify(node.$lens)}>` : "";
+    const target = scope.known.has(node.$lens) ? `<${JSON.stringify(node.$lens)}>` : "";
     return `LensRef${target} | null`;
   }
+  if (typeof node.$ref === "string") return scope.names[node.$ref] ?? "unknown";
   if (node.nullable === true && typeof node.type === "string" && node.type in primitiveTypes) {
     return `${primitiveTypes[node.type]} | null`;
   }
   if (node.type === "object") {
     return isPlainObject(node.fields)
-      ? fieldMap(node.fields, known, indent)
+      ? fieldMap(node.fields, scope, indent)
       : "Record<string, unknown>";
   }
   if (node.type === "array") {
-    return isPlainObject(node.items)
-      ? `Array<${fieldMap(node.items, known, indent)}>`
-      : "unknown[]";
+    const items = node.items;
+    if (!isPlainObject(items)) return "unknown[]";
+    if (typeof items.$ref === "string") return `Array<${scope.names[items.$ref] ?? "unknown"}>`;
+    return `Array<${fieldMap(items, scope, indent)}>`;
   }
   return "unknown";
 }
 
 /** Undeclared fields pass through at runtime, hence the index signature. */
-function fieldMap(fields: Record<string, unknown>, known: Set<string>, indent: string): string {
+function fieldMap(fields: Record<string, unknown>, scope: DefScope, indent: string): string {
   const inner = `${indent}  `;
   const lines = Object.entries(fields).map(
-    ([name, field]) => `${inner}${quoteKey(name)}: ${returnsType(field, known, inner)};`
+    ([name, field]) => `${inner}${quoteKey(name)}: ${returnsType(field, scope, inner)};`
   );
   return `{\n${lines.join("\n")}\n${inner}[key: string]: unknown;\n${indent}}`;
+}
+
+/** "hn/item" → "HnItem". */
+function pascal(name: string): string {
+  return name
+    .split(/[^a-zA-Z0-9]+/)
+    .filter((segment) => segment !== "")
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .join("");
 }
 
 function quoteKey(name: string): string {

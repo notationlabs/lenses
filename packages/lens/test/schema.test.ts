@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deriveJsonSchema } from "../src/schema.js";
+import { deriveJsonSchema, validateResult } from "../src/schema.js";
 import type { LensSpec } from "../src/types.js";
 
 const baseSpec = {
@@ -63,5 +63,31 @@ describe("deriveJsonSchema", () => {
     expect(deriveJsonSchema(specWith({ type: "object" }))).toMatchObject({ type: "object" });
     expect(deriveJsonSchema(specWith({ type: "array" }))).toMatchObject({ type: "array" });
     expect(deriveJsonSchema(specWith(undefined))).not.toHaveProperty("type");
+  });
+
+  it("extracts a self-referencing $defs entry into JSON Schema $defs", () => {
+    const spec: LensSpec = {
+      ...baseSpec,
+      $defs: {
+        comment: {
+          type: "object",
+          fields: { text: "string", replies: { type: "array", items: { $ref: "comment" } } },
+        },
+      },
+      returns: { type: "object", fields: { comments: { type: "array", items: { $ref: "comment" } } } },
+    };
+    const schema = deriveJsonSchema(spec) as any;
+    const ref = schema.properties.comments.items.$ref as string;
+    expect(ref).toMatch(/^#\/\$defs\//);
+    const def = schema.$defs[ref.slice("#/$defs/".length)];
+    expect(def.properties.replies.items.$ref).toBe(ref);
+
+    // runtime validation follows the cycle
+    const good = { comments: [{ text: "a", replies: [{ text: "b", replies: [] }] }] };
+    expect(validateResult(spec, good)).toEqual([]);
+    const bad = { comments: [{ text: "a", replies: [{ replies: [] }] }] };
+    expect(validateResult(spec, bad)).toMatchObject([
+      { path: "/comments/0/replies/0/text", missing: true },
+    ]);
   });
 });

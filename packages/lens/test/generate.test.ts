@@ -65,6 +65,30 @@ describe("generateTsSdk", () => {
     );
   });
 
+  it("hoists a self-referencing $defs entry to a named interface", () => {
+    const source = generateTsSdk([
+      spec({
+        name: "@example/hn/item",
+        $defs: {
+          comments: {
+            type: "object",
+            fields: {
+              text: "string",
+              replies: { type: "array", items: { $ref: "comments" } },
+            },
+          },
+        },
+        returns: {
+          type: "object",
+          fields: { comments: { type: "array", items: { $ref: "comments" } } },
+        },
+      }),
+    ]);
+    expect(source).toContain("export interface HnItemComments {");
+    expect(source).toContain("replies: Array<HnItemComments>;");
+    expect(source).toContain("comments: Array<HnItemComments>;");
+  });
+
   it("types an absent returns declaration as unknown", () => {
     expect(generateTsSdk([spec({ name: "@example/web/page" })])).toContain("result: unknown;");
   });

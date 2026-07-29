@@ -68,6 +68,33 @@ describe("materialiseLenses", () => {
     expect(await materialiseLenses({ next_page: null }, returns)).toEqual({ next_page: null });
   });
 
+  it("binds a $lens field at every depth of a self-referencing $def", async () => {
+    const defs = {
+      comment: {
+        type: "object",
+        fields: {
+          id: "string",
+          permalink: { $lens: "@djgrant/hn/comment", params: { id: "id" } },
+          replies: { type: "array", items: { $ref: "comment" } },
+        },
+      },
+    };
+    const returns = { type: "object", fields: { comments: { type: "array", items: { $ref: "comment" } } } };
+    const r = (await materialiseLenses(
+      { comments: [{ id: "1", replies: [{ id: "2", replies: [] }] }] },
+      returns,
+      {},
+      true,
+      undefined,
+      defs
+    )) as any;
+    expect(r.comments[0].permalink).toEqual({ $lens: "@djgrant/hn/comment", params: { id: "1" } });
+    expect(r.comments[0].replies[0].permalink).toEqual({
+      $lens: "@djgrant/hn/comment",
+      params: { id: "2" },
+    });
+  });
+
   it("leaves non-$lens fields untouched", async () => {
     const returns = { type: "object", fields: { plan: "string", limits: { type: "array" } } };
     const v = { plan: "Pro", limits: [{ name: "session" }] };
