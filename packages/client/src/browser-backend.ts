@@ -1,9 +1,12 @@
 import type {
   AuthGate,
   DomResolver,
+  InterceptDelta,
   InterceptedResponse,
   PageSnapshot,
 } from "@djgrant/lens";
+
+export type { InterceptDelta };
 
 export interface BackendHttpRequest {
   method: string;
@@ -32,12 +35,6 @@ export interface SnapshotOptions {
   maxChars: number;
   html?: boolean;
   maxHtmlChars?: number;
-}
-
-export interface InterceptDelta {
-  captures: InterceptedResponse[];
-  nextCursor: number;
-  truncated: boolean;
 }
 
 export type FinishDisposition = "close-if-created" | "keep";

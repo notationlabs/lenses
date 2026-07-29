@@ -1,4 +1,4 @@
-import type { ExtensionRpcOperation } from "@djgrant/lens";
+import { sameTarget, type ExtensionRpcOperation } from "@djgrant/lens";
 import { resetIntercepts } from "./intercepts.js";
 import { loadCreatedTabLeases } from "./tab-leases.js";
 import { formatError } from "../errors.js";
@@ -190,8 +190,4 @@ function waitForLoad(
       (error) => finish(new Error(formatError(error)))
     );
   });
-}
-
-function sameTarget(left: string, right: string): boolean {
-  return left.replace(/\/$/, "") === right.replace(/\/$/, "");
 }

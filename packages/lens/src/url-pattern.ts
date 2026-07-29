@@ -31,6 +31,23 @@ export function expandTemplate(template: string, params: Record<string, unknown>
   });
 }
 
+/**
+ * Whether a live URL is the lens's bind target, tolerating only the trailing
+ * slash browsers add — anything looser would rebind to the wrong page.
+ */
+export function sameTarget(left: string, right: string): boolean {
+  return left.replace(/\/$/, "") === right.replace(/\/$/, "");
+}
+
+/** The URL's origin, or the string itself when it does not parse as a URL. */
+export function urlOrigin(url: string): string {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return url;
+  }
+}
+
 /** Match "METHOD urlglob" request patterns against a captured response. */
 export function matchRequestPattern(pattern: string, method: string, url: string): boolean {
   const space = pattern.indexOf(" ");
