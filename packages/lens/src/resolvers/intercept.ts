@@ -88,7 +88,7 @@ export async function runIntercept(
 }
 
 /** Evaluate a whole-value or per-field projection. */
-async function project(
+export async function project(
   map: MapSpec,
   data: unknown,
   params: Record<string, unknown>,
@@ -135,7 +135,7 @@ function responseContext(resp: InterceptedResponse) {
   return { status: resp.status, url: resp.url, body: tryParse(resp.body) };
 }
 
-function tryParse(text: string): unknown {
+export function tryParse(text: string): unknown {
   try {
     return JSON.parse(text);
   } catch {

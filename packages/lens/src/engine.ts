@@ -1,5 +1,6 @@
 import type { EngineIO, LensResult, LensSpec, Resolver, ResolverMiss } from "./types.js";
 import { materialiseLenses } from "./materialise.js";
+import { runHttp } from "./resolvers/http.js";
 import { runIntercept } from "./resolvers/intercept.js";
 import { runDom } from "./resolvers/dom.js";
 import { runLlm } from "./resolvers/llm.js";
@@ -32,6 +33,9 @@ export async function executeLens(
     io.log?.(`trying ${resolver.kind} resolver`);
     let result: LensResult | ResolverMiss;
     switch (resolver.kind) {
+      case "http":
+        result = await runHttp(resolver, params, io, spec);
+        break;
       case "intercept":
         result = await runIntercept(resolver, params, io, spec);
         break;

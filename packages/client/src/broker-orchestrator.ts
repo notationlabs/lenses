@@ -3,6 +3,7 @@ import {
   executeLens,
   expandUrl,
   type EngineIO,
+  type HttpFetchRequest,
   type InterceptedResponse,
   type LensBridgeRequest,
   type LensResult,
@@ -14,6 +15,19 @@ import type {
   FinishDisposition,
   InterceptDelta,
 } from "./browser-backend.js";
+
+const MAX_HTTP_BODY_CHARS = 512 * 1024;
+
+/**
+ * Whether any tier of this spec can touch a browser. A spec of credential-free
+ * http tiers runs entirely in the broker's own process, so the daemon must not
+ * launch Chrome for it and the orchestrator must not wait for a backend.
+ */
+export function specNeedsBrowser(spec: LensSpec): boolean {
+  return spec.resolve.some(
+    (resolver) => resolver.kind !== "http" || resolver.credentials === true
+  );
+}
 
 export type BrokerFrame =
   | { type: "result"; id: string; result: LensResult }
@@ -75,28 +89,53 @@ export function createBrokerOrchestrator(
     }
     if (cached) cache.delete(cacheKey);
 
-    const backend = await selectBackend();
     const target = expandUrl(message.spec.url, message.params);
-    // The gate is derived from the browser, not remembered here: a kept tab
-    // still sitting where a needs_* outcome left it blocks its whole site,
-    // and it keeps doing so across broker restarts.
-    const gate = await findGateQuietly(backend, gateKey(target));
-    if (gate) {
-      progress(
-        `a sign-in tab is already open at ${gate.url}; complete it there to unblock this site`
-      );
-      return gateOutcome(message.spec, gate.url);
+    const loadTimeoutMs = message.spec.loadTimeoutMs ?? 30_000;
+    let backend: BrowserBackend | undefined;
+    if (specNeedsBrowser(message.spec)) {
+      backend = await selectBackend();
+      // The gate is derived from the browser, not remembered here: a kept tab
+      // still sitting where a needs_* outcome left it blocks its whole site,
+      // and it keeps doing so across broker restarts.
+      const gate = await findGateQuietly(backend, gateKey(target));
+      if (gate) {
+        progress(
+          `a sign-in tab is already open at ${gate.url}; complete it there to unblock this site`
+        );
+        return gateOutcome(message.spec, gate.url);
+      }
     }
-    progress(`binding browser page for ${target} via ${backend.name}`);
-    const session = await backend.bind({
-      target,
-      loadTimeoutMs: message.spec.loadTimeoutMs ?? 30_000,
-      navigation: message.spec.resolve.some((resolver) => resolver.kind === "intercept")
-        ? "fresh"
-        : "reuse",
-    });
-    progress(`bound page${session.created ? " (created)" : " (existing)"}`);
-    const io = createSessionEngineIO(session, message.spec.loadTimeoutMs ?? 30_000, progress);
+
+    // The page is bound on first use, so a call an http tier satisfies never
+    // touches the browser at all.
+    let session: BrowserSession | undefined;
+    const ensureSession = async (): Promise<BrowserSession> => {
+      if (session) return session;
+      backend ??= await selectBackend();
+      progress(`binding browser page for ${target} via ${backend.name}`);
+      session = await backend.bind({
+        target,
+        loadTimeoutMs,
+        navigation: message.spec.resolve.some((resolver) => resolver.kind === "intercept")
+          ? "fresh"
+          : "reuse",
+      });
+      progress(`bound page${session.created ? " (created)" : " (existing)"}`);
+      return session;
+    };
+    const httpFetch = async (
+      request: HttpFetchRequest
+    ): Promise<InterceptedResponse | undefined> => {
+      if (!request.credentials) {
+        progress(`fetching ${request.url} directly`);
+        return directHttpFetch(request, loadTimeoutMs);
+      }
+      backend ??= await selectBackend();
+      progress(`fetching ${request.url} with browser cookies via ${backend.name}`);
+      return backend.httpFetch?.(request);
+    };
+
+    const io = createSessionEngineIO(ensureSession, loadTimeoutMs, progress, httpFetch);
     let result: LensResult | undefined;
     try {
       result = await executeLens(message.spec, message.params, io);
@@ -105,8 +144,30 @@ export function createBrokerOrchestrator(
       }
       return result;
     } finally {
-      await finishQuietly(backend, session, dispositionFor(result));
+      if (backend && session) {
+        await finishQuietly(backend, session, dispositionFor(result));
+      }
     }
+  }
+
+  async function directHttpFetch(
+    request: HttpFetchRequest,
+    timeoutMs: number
+  ): Promise<InterceptedResponse> {
+    const response = await fetch(request.url, {
+      method: request.method,
+      headers: request.headers,
+      redirect: "follow",
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    const body = (await response.text()).slice(0, MAX_HTTP_BODY_CHARS);
+    return {
+      url: response.url || request.url,
+      method: request.method,
+      status: response.status,
+      body,
+      timestamp: Date.now(),
+    };
   }
 
   async function observe(
@@ -186,14 +247,23 @@ function waitForPreferredBackend(
 }
 
 export function createSessionEngineIO(
-  session: BrowserSession,
+  getSession: () => Promise<BrowserSession>,
   loadTimeoutMs: number,
-  progress: (message: string) => void = () => {}
+  progress: (message: string) => void = () => {},
+  httpFetch?: EngineIO["httpFetch"]
 ): EngineIO {
   let cursor = 0;
   let captures: InterceptedResponse[] = [];
   let readDeadline = 0;
-  let navigationIsFresh = session.navigated;
+  // Read from the session on first acquisition: the page is bound lazily, so
+  // whether its navigation is fresh is unknowable before a page op needs it.
+  let navigationIsFresh: boolean | undefined;
+
+  const acquire = async (): Promise<BrowserSession> => {
+    const session = await getSession();
+    navigationIsFresh ??= session.navigated;
+    return session;
+  };
 
   const merge = (delta: InterceptDelta) => {
     if (delta.truncated) captures = [];
@@ -203,11 +273,13 @@ export function createSessionEngineIO(
 
   return {
     async getIntercepted() {
+      const session = await acquire();
       merge(await session.readIntercepts(cursor, readDeadline));
       readDeadline = 0;
       return [...captures];
     },
     async reload() {
+      const session = await acquire();
       if (navigationIsFresh) {
         navigationIsFresh = false;
         progress("using the page's fresh navigation for intercept capture");
@@ -216,8 +288,9 @@ export function createSessionEngineIO(
       await session.reload(loadTimeoutMs);
       captures = [];
     },
-    domExtract: (resolver) => session.domExtract(resolver),
-    snapshot: (maxChars) => session.snapshot({ maxChars }),
+    domExtract: async (resolver) => (await acquire()).domExtract(resolver),
+    snapshot: async (maxChars) => (await acquire()).snapshot({ maxChars }),
+    ...(httpFetch ? { httpFetch } : {}),
     async sleep(ms) {
       // EngineIO.sleep is a polling hook: defer the next cursor read until this
       // deadline so the backend can long-poll instead of sleeping then polling.

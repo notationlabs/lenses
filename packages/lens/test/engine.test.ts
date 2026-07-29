@@ -730,3 +730,231 @@ describe("shared JSONata helpers", () => {
     expect(r).toMatchObject({ kind: "outcome", name: "needs_auth" });
   });
 });
+
+describe("http tier", () => {
+  const body = JSON.stringify({ things: [{ name: "a" }, { name: "b" }] });
+  const httpSpec = validateSpec({
+    name: "@example/api/things",
+    url: "https://example.com/things/{id}",
+    params: { id: "string" },
+    effects: { reads: ["example.com"], writes: [] },
+    resolve: [
+      {
+        kind: "http",
+        request: "GET https://api.example.com/things/{id}",
+        items: "things",
+        map: "{ 'title': name }",
+        detect: { needs_auth: "status = 401" },
+      },
+    ],
+  });
+
+  it("serves from httpFetch without touching the page", async () => {
+    const requests: unknown[] = [];
+    const r = await executeLens(httpSpec, { id: "42" }, io({
+      httpFetch: async (request) => {
+        requests.push(request);
+        return { url: request.url, method: request.method, status: 200, body, timestamp: Date.now() };
+      },
+      domExtract: async () => {
+        throw new Error("http tier must not bind a page");
+      },
+    }));
+    expect(requests).toEqual([
+      { method: "GET", url: "https://api.example.com/things/42", headers: undefined, credentials: false },
+    ]);
+    expect(r).toEqual({
+      kind: "value",
+      resolver: "http",
+      observed: "https://api.example.com/things/42",
+      value: [{ title: "a" }, { title: "b" }],
+    });
+  });
+
+  it("defaults to a GET of the lens's canonical url", async () => {
+    const urls: string[] = [];
+    const bare = validateSpec({ ...httpSpec, resolve: [{ kind: "http", items: "things" }] });
+    await executeLens(bare, { id: "42" }, io({
+      httpFetch: async (request) => {
+        urls.push(`${request.method} ${request.url}`);
+        return { url: request.url, method: request.method, status: 200, body, timestamp: Date.now() };
+      },
+    }));
+    expect(urls).toEqual(["GET https://example.com/things/42"]);
+  });
+
+  it("misses when the host cannot make http requests", async () => {
+    const r = await executeLens(httpSpec, { id: "42" }, io());
+    expect(r).toEqual({
+      kind: "error",
+      message: "all resolvers exhausted (http resolver missed at host cannot perform http requests)",
+    });
+  });
+
+  it("misses when a credentialed request is unsupported", async () => {
+    const credentialed = validateSpec({
+      ...httpSpec,
+      resolve: [{ kind: "http", credentials: true, items: "things" }],
+    });
+    const r = await executeLens(credentialed, { id: "42" }, io({
+      httpFetch: async () => undefined,
+    }));
+    expect(r).toEqual({
+      kind: "error",
+      message:
+        "all resolvers exhausted (http resolver missed at host cannot perform credentialed http requests)",
+    });
+  });
+
+  it("misses on a non-2xx response and names the status", async () => {
+    const r = await executeLens(httpSpec, { id: "42" }, io({
+      httpFetch: async (request) => ({
+        url: request.url, method: request.method, status: 503, body: "down", timestamp: Date.now(),
+      }),
+    }));
+    expect(r).toEqual({
+      kind: "error",
+      message:
+        "all resolvers exhausted (http resolver missed at HTTP 503 from https://api.example.com/things/42)",
+    });
+  });
+
+  it("turns a network failure into a miss rather than an error", async () => {
+    const r = await executeLens(httpSpec, { id: "42" }, io({
+      httpFetch: async () => {
+        throw new Error("getaddrinfo ENOTFOUND api.example.com");
+      },
+    }));
+    expect(r).toEqual({
+      kind: "error",
+      message:
+        "all resolvers exhausted (http resolver missed at http request failed: getaddrinfo ENOTFOUND api.example.com)",
+    });
+  });
+
+  it("returns a detected outcome before the status check", async () => {
+    const r = await executeLens(httpSpec, { id: "42" }, io({
+      httpFetch: async (request) => ({
+        url: request.url, method: request.method, status: 401, body: "{}", timestamp: Date.now(),
+      }),
+    }));
+    expect(r).toMatchObject({ kind: "outcome", name: "needs_auth", resolver: "http" });
+  });
+
+  it("falls through to the page tiers on a miss", async () => {
+    const layered = validateSpec({
+      ...httpSpec,
+      resolve: [
+        { kind: "http", items: "things" },
+        { kind: "dom", item: ".thing", fields: { title: { selector: ".t" } } },
+      ],
+    });
+    const r = await executeLens(layered, { id: "42" }, io({
+      domExtract: async () => ({
+        url: "https://example.com/things/42",
+        title: "t",
+        value: [{ title: "from-dom" }],
+      }),
+    }));
+    expect(r).toMatchObject({ kind: "value", resolver: "dom" });
+  });
+});
+
+describe("http tier chained sources", () => {
+  const chained = validateSpec({
+    name: "@example/api/usage",
+    url: "https://example.com/usage",
+    effects: { reads: ["example.com"], writes: [] },
+    resolve: [
+      {
+        kind: "http",
+        credentials: true,
+        sources: {
+          orgs: { request: "GET https://api.example.com/organizations" },
+          usage: { request: "GET https://api.example.com/organizations/{orgs.0.uuid}/usage" },
+        },
+        detect: { needs_auth: "$orgs.status = 401" },
+        map: { plan: "$orgs[0].plan", used: "$usage.used" },
+      },
+    ],
+  });
+
+  function respond(byUrl: Record<string, { status: number; body: unknown }>) {
+    return async (request: { url: string; method: string }) => {
+      const match = byUrl[request.url];
+      if (!match) throw new Error(`unexpected request ${request.url}`);
+      return {
+        url: request.url,
+        method: request.method,
+        status: match.status,
+        body: JSON.stringify(match.body),
+        timestamp: Date.now(),
+      };
+    };
+  }
+
+  it("threads an earlier body into a later request through a dotted hole", async () => {
+    const r = await executeLens(chained, {}, io({
+      httpFetch: respond({
+        "https://api.example.com/organizations": {
+          status: 200,
+          body: [{ uuid: "org-1", plan: "max" }],
+        },
+        "https://api.example.com/organizations/org-1/usage": {
+          status: 200,
+          body: { used: 42 },
+        },
+      }),
+    }));
+    expect(r).toEqual({
+      kind: "value",
+      resolver: "http",
+      observed:
+        "https://api.example.com/organizations, https://api.example.com/organizations/org-1/usage",
+      value: { plan: "max", used: 42 },
+    });
+  });
+
+  it("stops the chain on a detected outcome from the first source", async () => {
+    const requested: string[] = [];
+    const r = await executeLens(chained, {}, io({
+      httpFetch: async (request) => {
+        requested.push(request.url);
+        return { url: request.url, method: request.method, status: 401, body: "{}", timestamp: Date.now() };
+      },
+    }));
+    expect(r).toMatchObject({ kind: "outcome", name: "needs_auth", resolver: "http" });
+    expect(requested).toEqual(["https://api.example.com/organizations"]);
+  });
+
+  it("misses when a dotted hole cannot resolve to a scalar", async () => {
+    const r = await executeLens(chained, {}, io({
+      httpFetch: respond({
+        "https://api.example.com/organizations": { status: 200, body: [] },
+      }),
+    }));
+    expect(r).toMatchObject({
+      kind: "error",
+      message:
+        'all resolvers exhausted (http resolver missed at http request failed: hole "{orgs.0.uuid}" did not resolve to a scalar)',
+    });
+  });
+
+  it("rejects a source request naming an undeclared hole", () => {
+    expect(() =>
+      validateSpec({
+        name: "@example/api/usage",
+        url: "https://example.com/usage",
+        effects: { reads: ["example.com"], writes: [] },
+        resolve: [
+          {
+            kind: "http",
+            sources: {
+              usage: { request: "GET https://api.example.com/{orgs.0.uuid}/usage" },
+            },
+          },
+        ],
+      })
+    ).toThrow('http parameter "orgs" is not declared');
+  });
+});

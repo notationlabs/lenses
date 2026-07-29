@@ -243,6 +243,13 @@ export function createExtensionBackend(
       }
       return new ExtensionSession(result.session, rpc);
     },
+    async httpFetch(request) {
+      if (!backend.available()) return undefined;
+      if (!hello?.capabilities.includes("http-fetch")) return undefined;
+      const result = await rpc({ name: "http-fetch", request });
+      assertResult(result, "http-fetch");
+      return result.response;
+    },
     async finish(
       session: BrowserSession,
       disposition: FinishDisposition

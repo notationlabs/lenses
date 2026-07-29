@@ -5,6 +5,12 @@ import type {
   PageSnapshot,
 } from "@djgrant/lens";
 
+export interface BackendHttpRequest {
+  method: string;
+  url: string;
+  headers?: Record<string, string>;
+}
+
 export interface BackendInfo {
   name: string;
   detail?: string;
@@ -59,4 +65,10 @@ export interface BrowserBackend {
   findAuthGate(origin: string): Promise<AuthGate | undefined>;
   bind(request: BindRequest): Promise<BrowserSession>;
   finish(session: BrowserSession, disposition: FinishDisposition): Promise<void>;
+  /**
+   * An HTTP request with the browser's cookies, without binding a tab. Absent
+   * (or resolving undefined) on backends that cannot make one; the http tier
+   * misses and the page tiers take over.
+   */
+  httpFetch?(request: BackendHttpRequest): Promise<InterceptedResponse | undefined>;
 }

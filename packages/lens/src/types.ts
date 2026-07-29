@@ -64,7 +64,39 @@ export interface LensEffects {
   cache?: number;
 }
 
-export type Resolver = InterceptResolver | DomResolver | LlmResolver;
+export type Resolver = HttpResolver | InterceptResolver | DomResolver | LlmResolver;
+
+/**
+ * A direct HTTP request, made without binding a page. Credential-free requests
+ * run in the broker's own process; `credentials: true` asks the host to send
+ * the browser's cookies, which needs a browser-backed host (the extension's
+ * service worker) — where none is reachable the tier misses and the page tiers
+ * take over.
+ */
+export interface HttpResolver {
+  kind: "http";
+  /** "METHOD url-template" with named holes, e.g. "GET https://api.example.com/items/{id}".
+   *  Omitted (and without `sources`), the resolver GETs the lens's canonical `url`. */
+  request?: string;
+  /**
+   * Chain several requests, fired in declaration order. Each source binds its
+   * body (through its `items` expression) as a JSONata variable `$name` for
+   * `map` and `detect`; a source whose bound value is a scalar also fills
+   * `{name}` holes in the request templates of the sources after it — which is
+   * how an id only another response knows (an organisation UUID) reaches a URL.
+   */
+  sources?: Record<string, InterceptSource>;
+  /** extra request headers; values take the same named holes as `request` */
+  headers?: Record<string, string>;
+  /** send the browser's cookies with the request */
+  credentials?: boolean;
+  /** JSONata over the parsed response body producing the working value */
+  items?: ExprString;
+  /** JSONata (or per-field object) over the working value */
+  map?: MapSpec;
+  /** outcome name -> JSONata over {status, url, body}; truthy triggers the outcome */
+  detect?: Record<string, ExprString>;
+}
 
 /** One named network response to capture within an intercept tier. */
 export interface InterceptSource {
@@ -185,10 +217,26 @@ export type LensResult =
       issues?: ValidationIssue[];
     };
 
+/** A concrete request an http tier asks its host to perform. */
+export interface HttpFetchRequest {
+  method: string;
+  url: string;
+  headers?: Record<string, string>;
+  /** true asks for the browser's cookies; hosts without a browser resolve undefined */
+  credentials: boolean;
+}
+
 /** IO the engine needs from a bound browser session or a test. */
 export interface EngineIO {
   /** recently captured responses for the bound tab, newest last */
   getIntercepted(): Promise<InterceptedResponse[]>;
+  /**
+   * Perform an HTTP request outside the page, following redirects; `url` on the
+   * response is the landed URL. Absent when the host cannot make requests at
+   * all; resolving undefined means this particular request (a credentialed one)
+   * is unsupported. Either way the http tier misses rather than errors.
+   */
+  httpFetch?(request: HttpFetchRequest): Promise<InterceptedResponse | undefined>;
   /** reload the bound tab (used by reloadOnMiss); resolves when load committed */
   reload?(): Promise<void>;
   /** run a DOM extraction spec in the bound page */

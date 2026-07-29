@@ -55,7 +55,16 @@ A call result is one of:
    except `params` and `outcomes`; `effects` in particular is mandatory.
    Resolver tiers run in order and accumulate fields until `returns` is
    satisfied:
-   - `intercept` — map a JSON response the page already fetched (preferred).
+   - `http` — direct requests to a JSON API, no page bound (preferred when a
+     public or cookie-authenticated endpoint exists). `request` is
+     `"METHOD url-template"` (defaults to `GET` of the lens `url`); `items`/`map`
+     shape the body; `credentials: true` sends the browser's cookies (extension
+     service worker, or an already-open same-origin tab on the CDP fallback),
+     otherwise the tier misses into the page tiers. `sources` chains requests:
+     each binds `$name` for `map`/`detect`, and later request templates address
+     earlier bodies with dotted holes — `{orgs.0.uuid}` — which is how an id
+     only another response knows reaches a URL.
+   - `intercept` — map a JSON response the page already fetched.
    - `dom` — CSS selectors, optionally a repeating `item` selector.
    - `llm` — last resort; returns the snapshot and prompt to you.
 

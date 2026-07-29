@@ -5,7 +5,7 @@
  */
 import { WebSocket, WebSocketServer } from "ws";
 import type { LensBridgeRequest } from "@djgrant/lens";
-import { createBrokerOrchestrator } from "./broker-orchestrator.js";
+import { createBrokerOrchestrator, specNeedsBrowser } from "./broker-orchestrator.js";
 import { createCdpBackend } from "./cdp-host.js";
 import { createExtensionBackend } from "./extension-backend.js";
 import {
@@ -203,8 +203,11 @@ function onClientMessage(client: WebSocket, raw: string): void {
     return;
   }
   if (message.type !== "call" && message.type !== "observe") return;
-  // Only work that needs a browser triggers a launch; a status query must not.
-  void ensureBrowser();
+  // Only work that needs a browser triggers a launch; a status query must not,
+  // and neither must a call whose every tier is a credential-free http request.
+  if (message.type === "observe" || specNeedsBrowser(message.spec)) {
+    void ensureBrowser();
+  }
   if (shuttingDown) {
     send(client, {
       type: "result",

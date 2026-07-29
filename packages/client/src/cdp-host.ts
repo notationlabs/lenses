@@ -14,6 +14,7 @@ import {
   type InterceptedResponse,
 } from "@djgrant/lens";
 import type {
+  BackendHttpRequest,
   BindRequest,
   BrowserBackend,
   BrowserSession,
@@ -361,6 +362,42 @@ export function createCdpBackend(
         }
       }
       return undefined;
+    },
+    /**
+     * A same-origin fetch evaluated inside an already-open tab on the request's
+     * origin. The page context supplies what a broker-side fetch cannot — the
+     * site's cookies, Origin and Referer — without binding or navigating
+     * anything. No such tab means no answer: opening one would cost the page
+     * load this tier exists to avoid, and the page tiers pay it anyway.
+     */
+    async httpFetch(request: BackendHttpRequest) {
+      if (!browser?.connected) return undefined;
+      const origin = pageOrigin(request.url);
+      const pages = await browser.pages();
+      const page = pages.find(
+        (candidate) => !candidate.isClosed() && pageOrigin(candidate.url()) === origin
+      );
+      if (!page) return undefined;
+      const result = await page.evaluate(
+        async (req: BackendHttpRequest & { maxBodyChars: number }) => {
+          const res = await fetch(req.url, {
+            method: req.method,
+            headers: req.headers,
+            credentials: "include",
+            redirect: "follow",
+          });
+          const text = await res.text();
+          return { url: res.url, status: res.status, body: text.slice(0, req.maxBodyChars) };
+        },
+        { ...request, maxBodyChars: MAX_BODY_BYTES }
+      );
+      return {
+        url: result.url || request.url,
+        method: request.method,
+        status: result.status,
+        body: result.body,
+        timestamp: Date.now(),
+      };
     },
     async bind(request: BindRequest) {
       const current = await ensureBrowser(() => {});
