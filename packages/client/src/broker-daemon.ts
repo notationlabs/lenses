@@ -46,7 +46,7 @@ const extensionGraceMs =
 const orchestrator = createBrokerOrchestrator([extension, cdp], {
   preferredWaitMs: () => (extensionExpected ? extensionGraceMs : 0),
 });
-let launchAttempted = false;
+let ensureBrowserInFlight: Promise<void> | undefined;
 let browserPresent: boolean | undefined;
 const requestQueue = new SerialTaskQueue();
 // Stamped once at startup: this daemon reports the code it is actually running,
@@ -84,12 +84,19 @@ const idleExit = createIdleExitTimer({
 /**
  * Makes sure a browser exists for the call. A running Chrome needs nothing —
  * the extension worker's reconnect alarm attaches inside its 30s period — so
- * this only ever starts a browser that is not there. Once per broker:
- * repeating it per call would launch once per parallel request.
+ * this only ever starts a browser that is not there. Re-checked per call,
+ * because Chrome can quit during the daemon's life; the shared promise is what
+ * keeps parallel calls from launching once each (`open -n` would oblige).
  */
-async function ensureBrowser(): Promise<void> {
-  if (launchAttempted || extension.available()) return;
-  launchAttempted = true;
+function ensureBrowser(): Promise<void> {
+  if (extension.available()) return Promise.resolve();
+  ensureBrowserInFlight ??= checkAndLaunch().finally(() => {
+    ensureBrowserInFlight = undefined;
+  });
+  return ensureBrowserInFlight;
+}
+
+async function checkAndLaunch(): Promise<void> {
   browserPresent = await browserRunning();
   if (browserPresent) {
     armExtensionStrike();
