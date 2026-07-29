@@ -134,23 +134,27 @@ for (const [name, createFixture] of [
       expect(fixture.closed()).toBe(true);
     });
 
-    it("reports open pages for the auth gate", async () => {
+    it("derives a sign-in gate from a kept session", async () => {
       fixture = await createFixture();
       const target = "https://example.com/shared";
 
-      await expect(fixture.backend.hasPage(target)).resolves.toBe(false);
+      await expect(
+        fixture.backend.findAuthGate("https://example.com")
+      ).resolves.toBeUndefined();
+
       const session = await fixture.backend.bind({
         target,
         loadTimeoutMs: 1000,
         navigation: "fresh",
       });
-      await expect(fixture.backend.hasPage(target)).resolves.toBe(true);
-      await expect(
-        fixture.backend.hasPage("https://example.com/elsewhere")
-      ).resolves.toBe(false);
+      await fixture.backend.finish(session, "keep");
 
-      await fixture.backend.finish(session, "close-if-created");
-      await expect(fixture.backend.hasPage(target)).resolves.toBe(false);
+      await expect(
+        fixture.backend.findAuthGate("https://example.com")
+      ).resolves.toEqual({ url: target, target });
+      await expect(
+        fixture.backend.findAuthGate("https://other.com")
+      ).resolves.toBeUndefined();
     });
 
     it("runs shared call and observe orchestration over the backend", async () => {
@@ -227,6 +231,10 @@ class FakePage {
 
   url(): string {
     return this.currentUrl;
+  }
+
+  isClosed(): boolean {
+    return this.closed;
   }
 
   on(event: string, listener: (response: FakeResponse) => void): void {

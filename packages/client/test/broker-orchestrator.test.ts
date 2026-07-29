@@ -69,7 +69,8 @@ class FakeBackend implements BrowserBackend {
   readonly session: FakeSession;
   binds: BindRequest[] = [];
   finishes: FinishDisposition[] = [];
-  openPages = new Set<string>();
+  /** Set by a keep finish, the way a real backend records a kept tab. */
+  authGate?: { url: string; target: string };
   onBind?: () => void;
 
   constructor(name: string, available = true, session = new FakeSession()) {
@@ -90,8 +91,11 @@ class FakeBackend implements BrowserBackend {
     return () => {};
   }
 
-  async hasPage(url: string): Promise<boolean> {
-    return this.openPages.has(url);
+  async findAuthGate(origin: string) {
+    if (!this.authGate) return undefined;
+    return new URL(this.authGate.target).origin === origin
+      ? this.authGate
+      : undefined;
   }
 
   async bind(request: BindRequest): Promise<BrowserSession> {
@@ -102,6 +106,12 @@ class FakeBackend implements BrowserBackend {
 
   async finish(_session: BrowserSession, disposition: FinishDisposition): Promise<void> {
     this.finishes.push(disposition);
+    if (disposition === "keep" && this.binds.length > 0) {
+      this.authGate = {
+        url: this.session.snapshotResult.url,
+        target: this.binds[this.binds.length - 1].target,
+      };
+    }
   }
 }
 
@@ -213,8 +223,10 @@ describe("broker orchestration", () => {
         timeoutMs: 1000,
       })
     ).toMatchObject({ kind: "outcome", name: "needs_auth" });
-    // The keep disposition left the sign-in tab open.
-    backend.openPages.add(loginUrl);
+    expect(backend.authGate).toEqual({
+      url: loginUrl,
+      target: "https://example.com/orders",
+    });
 
     const second = await request(orchestrator, {
       type: "call",
@@ -224,11 +236,18 @@ describe("broker orchestration", () => {
       timeoutMs: 1000,
     });
 
-    expect(second).toMatchObject({ kind: "outcome", name: "needs_auth" });
+    // Synthesised: named after the spec's needs_ outcome, valued with the
+    // sign-in URL the caller must complete.
+    expect(second).toEqual({
+      kind: "outcome",
+      name: "needs_auth",
+      value: { url: loginUrl },
+      resolver: "dom",
+    });
     expect(backend.binds).toHaveLength(1);
 
     // Completing (or closing) the sign-in dissolves the gate.
-    backend.openPages.delete(loginUrl);
+    backend.authGate = undefined;
     session.domResult = {
       url: "https://example.com/invoices",
       title: "Invoices",
@@ -270,7 +289,7 @@ describe("broker orchestration", () => {
       params: {},
       timeoutMs: 1000,
     });
-    backend.openPages.add(loginUrl);
+    expect(backend.authGate).toMatchObject({ url: loginUrl });
     session.domResult = {
       url: "https://other.com",
       title: "Other",

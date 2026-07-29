@@ -1,17 +1,20 @@
-import type {
-  ExtensionRpcRequest,
-  ExtensionRpcResult,
+import {
+  sameGatePlace,
+  type AuthGate,
+  type ExtensionRpcRequest,
+  type ExtensionRpcResult,
 } from "@djgrant/lens";
 import { readIntercepts } from "./intercepts.js";
 import {
   forgetCreatedTab,
+  loadCreatedTabLeases,
+  recordKeptUrl,
   rememberCreatedTab,
   takeCreatedTabLeases,
 } from "./tab-leases.js";
 import {
   bindTab,
   closeTab,
-  hasTabAt,
   reloadTab,
   tabMessage,
   type BoundTab,
@@ -104,6 +107,12 @@ export function createExtensionSessionBackend(): ExtensionSessionBackend {
         case "finish": {
           const active = session(operation.sessionId);
           sessions.delete(operation.sessionId);
+          if (operation.disposition === "keep") {
+            // The lease is the gate's durable memory: while the tab stays at
+            // this place, find-gate reports the site as blocked, whatever
+            // broker process is asking.
+            await recordCurrentUrlAsKept(active.bound.tabId);
+          }
           if (active.bound.created) {
             if (operation.disposition === "close-if-created") {
               await forgetCreatedTab(active.bound.tabId);
@@ -118,8 +127,8 @@ export function createExtensionSessionBackend(): ExtensionSessionBackend {
           }
           return { name: "finish" };
         }
-        case "find-page": {
-          return { name: "find-page", found: await hasTabAt(operation.url) };
+        case "find-gate": {
+          return { name: "find-gate", gate: await findGate(operation.origin) };
         }
       }
     },
@@ -136,6 +145,40 @@ export function createExtensionSessionBackend(): ExtensionSessionBackend {
       );
     },
   };
+}
+
+async function recordCurrentUrlAsKept(tabId: number): Promise<void> {
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    if (tab.url) await recordKeptUrl(tabId, tab.url);
+  } catch {
+    // The user closed the tab mid-call; there is nothing left to gate.
+  }
+}
+
+async function findGate(origin: string): Promise<AuthGate | null> {
+  for (const lease of await loadCreatedTabLeases()) {
+    if (!lease.target || !lease.keptUrl) continue;
+    if (targetOrigin(lease.target) !== origin) continue;
+    let tab: chrome.tabs.Tab;
+    try {
+      tab = await chrome.tabs.get(lease.tabId);
+    } catch {
+      continue; // The kept tab was closed; that lease no longer gates.
+    }
+    if (tab.url && sameGatePlace(tab.url, lease.keptUrl)) {
+      return { url: tab.url, target: lease.target };
+    }
+  }
+  return null;
+}
+
+function targetOrigin(url: string): string {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return url;
+  }
 }
 
 async function checkedTabMessage<T>(

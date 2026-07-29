@@ -1,4 +1,5 @@
 import type {
+  AuthGate,
   DomResolver,
   InterceptedResponse,
   PageSnapshot,
@@ -51,10 +52,11 @@ export interface BrowserBackend {
   info(): BackendInfo;
   onStatusChange(listener: () => void): () => void;
   /**
-   * Whether any open tab is currently showing this URL. Must not launch a
-   * browser or open a tab; an unreachable browser reports false.
+   * A sign-in gate for this origin: a tab a needs_* outcome kept open that is
+   * still at the place it was kept. Must not launch a browser or open a tab;
+   * an unreachable browser reports none.
    */
-  hasPage(url: string): Promise<boolean>;
+  findAuthGate(origin: string): Promise<AuthGate | undefined>;
   bind(request: BindRequest): Promise<BrowserSession>;
   finish(session: BrowserSession, disposition: FinishDisposition): Promise<void>;
 }
