@@ -17,6 +17,7 @@
     "comments": {
       "type": "object",
       "fields": {
+        "id": "string",
         "author": "string",
         "age": "string",
         "text": "string",
@@ -68,6 +69,10 @@
       "kind": "dom",
       "item": ".comtr",
       "fields": {
+        "id": {
+          "selector": ":self",
+          "attr": "id"
+        },
         "author": {
           "selector": ".hnuser"
         },
@@ -82,7 +87,7 @@
           "attr": "indent"
         }
       },
-      "post": "($all := [$[text != null]]; $size := $number($limit ? $limit : 30); $pg := $number($page ? $page : 1); $start := ($pg - 1) * $size; $build := function($rows) { ($n := $count($rows); $n = 0 ? [] : ($top := $number($rows[0].indent); $starts := [$filter([0..$n-1], function($j) { $number($rows[$j].indent) = $top })]; $map($starts, function($s, $k) { ($next := $k < $count($starts) - 1 ? $starts[$k + 1] : $n; $row := $rows[$s]; { \"author\": $row.author, \"age\": $row.age, \"text\": $row.text, \"replies\": [$build([$rows#$j[$j > $s and $j < $next]])] }) }))) }; $tree := [$build($all)]; { \"story\": { \"id\": $id }, \"comments\": [$tree#$i[$i >= $start and $i < $start + $size]], \"next_page\": ($count($tree) > $start + $size) ? \"https://news.ycombinator.com/item?id=\" & $id & \"&p=\" & ($pg + 1) : null })"
+      "post": "($all := [$[text != null]]; $size := $number($limit ? $limit : 30); $pg := $number($page ? $page : 1); $start := ($pg - 1) * $size; $build := function($rows) { ($n := $count($rows); $n = 0 ? [] : ($top := $number($rows[0].indent); $starts := [$filter([0..$n-1], function($j) { $number($rows[$j].indent) = $top })]; $map($starts, function($s, $k) { ($next := $k < $count($starts) - 1 ? $starts[$k + 1] : $n; $row := $rows[$s]; { \"id\": $row.id, \"author\": $row.author, \"age\": $row.age, \"text\": $row.text, \"replies\": [$build([$rows#$j[$j > $s and $j < $next]])] }) }))) }; $tree := [$build($all)]; { \"story\": { \"id\": $id }, \"comments\": [$tree#$i[$i >= $start and $i < $start + $size]], \"next_page\": ($count($tree) > $start + $size) ? \"https://news.ycombinator.com/item?id=\" & $id & \"&p=\" & ($pg + 1) : null })"
     },
     {
       "kind": "dom",
@@ -102,7 +107,7 @@
     },
     {
       "kind": "llm",
-      "prompt": "This is a Hacker News story page. Return {story: {title, url, score}, comments: [{author, age, text, replies}], next_page}. Comments nest: each comment's replies is an array of the same {author, age, text, replies} shape (use [] when a comment has no replies); use the indentation of each comment row to decide nesting. Return at most 30 top-level comments in reading order. If you can see more than 30 top-level comments on the page, set next_page to the URL of this page with the query param &p=2 appended (page 2 of the client-side window); otherwise set next_page to null. Include only fields you can actually see."
+      "prompt": "This is a Hacker News story page. Return {story: {title, url, score}, comments: [{id, author, age, text, replies}], next_page}. id is the comment's numeric HN id when visible (from its permalink). Comments nest: each comment's replies is an array of the same {id, author, age, text, replies} shape (use [] when a comment has no replies); use the indentation of each comment row to decide nesting. Return at most 30 top-level comments in reading order. If you can see more than 30 top-level comments on the page, set next_page to the URL of this page with the query param &p=2 appended (page 2 of the client-side window); otherwise set next_page to null. Include only fields you can actually see."
     }
   ]
 }

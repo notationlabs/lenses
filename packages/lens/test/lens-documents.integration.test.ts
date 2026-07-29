@@ -28,6 +28,7 @@ describe("shipped lens documents", () => {
     expect(specs.map((spec) => spec.name).sort()).toEqual([
       "@djgrant/claude/usage",
       "@djgrant/github/notifications",
+      "@djgrant/hn/comment",
       "@djgrant/hn/item",
       "@djgrant/hn/top",
     ]);
@@ -254,6 +255,7 @@ describe("shipped lens documents", () => {
   it("extracts a Hacker News story, windows its comments, and materialises the next page", async () => {
     const spec = await loadLens("hn.item.json");
     const comments = Array.from({ length: 31 }, (_, index) => ({
+      id: String(1000 + index),
       author: `user${index}`,
       age: `${index + 1} minutes ago`,
       text: `Comment ${index + 1}`,
@@ -286,7 +288,72 @@ describe("shipped lens documents", () => {
     if (result.kind === "value") {
       const value = result.value as { comments: Array<{ author: string; text: string }> };
       expect(value.comments).toHaveLength(30);
-      expect(value.comments[0]).toMatchObject({ author: "user0", text: "Comment 1" });
+      expect(value.comments[0]).toMatchObject({ id: "1000", author: "user0", text: "Comment 1" });
     }
+  });
+
+  it("extracts a comment subtree from a permalink, merging the root with its reply tree", async () => {
+    const spec = await loadLens("hn.comment.json");
+    const replies = [
+      { id: "43", author: "child", age: "1 minute ago", text: "First reply", indent: "0" },
+      { id: "44", author: "grandchild", age: "1 minute ago", text: "Nested reply", indent: "1" },
+    ];
+    const result = await executeLens(spec, { id: "42" }, io({
+      domExtract: async (resolver) => ({
+        url: "https://news.ycombinator.com/item?id=42",
+        title: "A comment",
+        value: resolver.item
+          ? replies
+          : { author: "root", age: "2 hours ago", text: "Root comment" },
+      }),
+      snapshot: async () => {
+        throw new Error("LLM fallback should not run");
+      },
+    }));
+
+    expect(result).toEqual({
+      kind: "value",
+      resolver: "reconciled",
+      observed: "https://news.ycombinator.com/item?id=42",
+      value: {
+        id: "42",
+        author: "root",
+        age: "2 hours ago",
+        text: "Root comment",
+        replies: [
+          {
+            id: "43",
+            author: "child",
+            age: "1 minute ago",
+            text: "First reply",
+            replies: [
+              { id: "44", author: "grandchild", age: "1 minute ago", text: "Nested reply", replies: [] },
+            ],
+          },
+        ],
+      },
+    });
+  });
+
+  it("returns an empty reply list for a leaf comment instead of missing the contract", async () => {
+    const spec = await loadLens("hn.comment.json");
+    const result = await executeLens(spec, { id: "42" }, io({
+      domExtract: async (resolver) => ({
+        url: "https://news.ycombinator.com/item?id=42",
+        title: "A comment",
+        // the reply-tree tier finds no .comtr rows on a leaf comment's page
+        value: resolver.item ? [] : { author: "root", age: "2 hours ago", text: "Leaf comment" },
+      }),
+      snapshot: async () => {
+        throw new Error("LLM fallback should not run");
+      },
+    }));
+
+    expect(result).toEqual({
+      kind: "value",
+      resolver: "dom",
+      observed: "https://news.ycombinator.com/item?id=42",
+      value: { id: "42", author: "root", age: "2 hours ago", text: "Leaf comment", replies: [] },
+    });
   });
 });
