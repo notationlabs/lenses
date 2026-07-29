@@ -39,6 +39,8 @@ pnpm build
 
 For the streamlined path, run `pnpm --filter @djgrant/lens-extension-chrome build`, open `chrome://extensions`, enable Developer mode, choose **Load unpacked**, and select `extensions/chrome/dist`. Calls run through a persistent local broker on port 4319; the first client starts it automatically, and CLI, MCP, and library clients share the extension connection.
 
+If Chrome is not running when a call arrives, the broker starts it in the background with the `Default` profile (a bare launch would stall on Chrome's profile picker). Set a different profile in `~/.config/lenses/config.json` with `{ "browser": { "profile": "Profile 2" } }`, or set `LENS_BROKER_AUTO_LAUNCH=0` to never launch Chrome. The configured profile must be the one holding the lens extension.
+
 Chrome 144+ remote debugging is always available as the fallback. Enable it at `chrome://inspect/#remote-debugging`; if no compatible extension is connected, the next call uses CDP and Chrome asks for permission with an **Allow** dialog.
 
 ## TypeScript client
