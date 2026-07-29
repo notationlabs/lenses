@@ -1,0 +1,80 @@
+{
+  "name": "@djgrant/hn/search",
+  "description": "Hacker News stories via Algolia's HN Search, the first API-backed HN lens. Sorting happens server-side before pagination: order byPopularity queries the Item_dev index, byDate its _sort_date replica. An empty query browses all stories. Each story links onward to hn/item via item_url; next_page is the same search at the next page (null on the last). Pages are 0-based, matching Algolia.",
+  "url": "https://hn.algolia.com/?query={query}&sort={order}&type=story&page={page}",
+  "params": {
+    "query": {
+      "type": "string",
+      "default": ""
+    },
+    "order": {
+      "type": "string",
+      "enum": ["byPopularity", "byDate"],
+      "default": "byPopularity"
+    },
+    "page": {
+      "type": "integer",
+      "default": 0
+    }
+  },
+  "returns": {
+    "type": "object",
+    "fields": {
+      "stories": {
+        "type": "array",
+        "items": {
+          "id": "string",
+          "title": "string",
+          "url": {
+            "type": "string",
+            "nullable": true
+          },
+          "author": "string",
+          "points": {
+            "type": "number",
+            "nullable": true
+          },
+          "comments": {
+            "type": "number",
+            "nullable": true
+          },
+          "item_url": {
+            "$lens": "@djgrant/hn/item",
+            "params": {
+              "id": "id"
+            }
+          }
+        }
+      },
+      "next_page": {
+        "$lens": "@djgrant/hn/search",
+        "params": {
+          "query": "$query",
+          "order": "$order",
+          "page": "next_page"
+        }
+      }
+    }
+  },
+  "effects": {
+    "reads": [
+      "hn.algolia.com",
+      "algolia.net"
+    ],
+    "writes": [],
+    "idempotent": true,
+    "cache": 60
+  },
+  "resolve": [
+    {
+      "kind": "intercept",
+      "request": "POST https://*/1/indexes/Item_dev*/query*",
+      "items": "{ \"stories\": [hits.{ \"id\": objectID, \"title\": title, \"url\": $exists(url) ? url : null, \"author\": author, \"points\": $exists(points) ? points : null, \"comments\": $exists(num_comments) ? num_comments : null, \"item_url\": objectID }], \"next_page\": page + 1 < nbPages ? page + 1 : null }",
+      "reloadOnMiss": true
+    },
+    {
+      "kind": "llm",
+      "prompt": "This is Algolia's Hacker News search UI. Each result reads as title(url) then 'points|author|age|comments'. Return {stories, next_page}: stories is the visible result list in order, each {id, title, url, author, points, comments} with points and comments as numbers (null when absent, e.g. Ask HN posts have no url); id is the story's numeric HN id if visible, otherwise omit the story. next_page is the next 0-based page number if the pagination control shows one after the current page, otherwise null."
+    }
+  ]
+}
