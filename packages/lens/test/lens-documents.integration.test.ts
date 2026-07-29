@@ -30,6 +30,7 @@ describe("shipped lens documents", () => {
       "@djgrant/github/notifications",
       "@djgrant/hn/comment",
       "@djgrant/hn/item",
+      "@djgrant/hn/search",
       "@djgrant/hn/top",
     ]);
   });
@@ -290,6 +291,65 @@ describe("shipped lens documents", () => {
       expect(value.comments).toHaveLength(30);
       expect(value.comments[0]).toMatchObject({ id: "1000", author: "user0", text: "Comment 1" });
     }
+  });
+
+  it("maps an Algolia search capture into sorted stories with onward refs", async () => {
+    const spec = await loadLens("hn.search.json");
+    const hit = (id: number, title: string) => ({
+      objectID: String(id),
+      title,
+      url: `https://example.com/${id}`,
+      author: "someone",
+      points: id,
+      num_comments: 2,
+    });
+    // an Ask HN hit has no url key at all; the lens must emit an explicit null
+    // for it, or the contract reads the story as underfilled and the LLM tier runs
+    const askHn = { objectID: "3", title: "Ask HN: no url", author: "asker", points: 5 };
+    const result = await executeLens(
+      spec,
+      { order: "byDate", page: 0 },
+      io({
+        getIntercepted: async () => [
+          {
+            url: "https://uj5wyc0l7x-dsn.algolia.net/1/indexes/Item_dev_sort_date/query?x-algolia-agent=x",
+            method: "POST",
+            status: 200,
+            body: JSON.stringify({
+              hits: [hit(2, "newer"), hit(1, "older"), askHn],
+              page: 0,
+              nbPages: 3,
+            }),
+            timestamp: Date.now(),
+          },
+        ],
+        snapshot: async () => {
+          throw new Error("LLM fallback should not run");
+        },
+      })
+    );
+
+    expect(result).toMatchObject({
+      kind: "value",
+      resolver: "intercept",
+      value: {
+        stories: [
+          {
+            id: "2",
+            title: "newer",
+            points: 2,
+            comments: 2,
+            item_url: { $lens: "@djgrant/hn/item", params: { id: "2" } },
+          },
+          { id: "1", title: "older" },
+          { id: "3", title: "Ask HN: no url", url: null, points: 5, comments: null },
+        ],
+        next_page: {
+          $lens: "@djgrant/hn/search",
+          params: { query: "", order: "byDate", page: 1 },
+        },
+      },
+    });
   });
 
   it("extracts a comment subtree from a permalink, merging the root with its reply tree", async () => {
