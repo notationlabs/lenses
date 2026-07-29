@@ -132,7 +132,13 @@ export function createBrokerOrchestrator(
       }
       backend ??= await selectBackend();
       progress(`fetching ${request.url} with browser cookies via ${backend.name}`);
-      return backend.httpFetch?.(request);
+      // Strip the engine's `credentials` flag: the backend request crosses the
+      // extension's strict protocol schema, which rejects unknown keys.
+      return backend.httpFetch?.({
+        method: request.method,
+        url: request.url,
+        headers: request.headers,
+      });
     };
 
     const io = createSessionEngineIO(ensureSession, loadTimeoutMs, progress, httpFetch);

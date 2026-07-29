@@ -491,6 +491,9 @@ describe("http tiers", () => {
     const seen: string[] = [];
     backend.httpFetch = async (req) => {
       seen.push(`${req.method} ${req.url}`);
+      // The engine's credentials flag must not leak into the backend request:
+      // the extension's strict protocol schema rejects unknown keys.
+      expect(req).not.toHaveProperty("credentials");
       return {
         url: req.url,
         method: req.method,
