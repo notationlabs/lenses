@@ -100,6 +100,7 @@ const lensSpecSchema = z.strictObject({
         z.strictObject({
           type: z.enum(["string", "number", "integer", "boolean"]),
           default: z.union([z.string(), z.number(), z.boolean()]).optional(),
+          enum: z.array(z.string()).min(1).optional(),
         }),
       ])
     )
@@ -244,7 +245,13 @@ export function validateSpec(raw: unknown): LensSpec {
     }
   }
   for (const [name, declaration] of Object.entries(result.data.params ?? {})) {
-    if (typeof declaration === "string" || declaration.default === undefined) continue;
+    if (typeof declaration === "string") continue;
+    if (declaration.enum && declaration.type !== "string") {
+      throw new Error(
+        `invalid lens spec:\n  parameter "${name}" declares "enum", which only string parameters may`
+      );
+    }
+    if (declaration.default === undefined) continue;
     const valid =
       declaration.type === "integer"
         ? Number.isInteger(declaration.default)
@@ -252,6 +259,11 @@ export function validateSpec(raw: unknown): LensSpec {
     if (!valid) {
       throw new Error(
         `invalid lens spec:\n  default for parameter "${name}" must be ${declaration.type}`
+      );
+    }
+    if (declaration.enum && !declaration.enum.includes(String(declaration.default))) {
+      throw new Error(
+        `invalid lens spec:\n  default for parameter "${name}" must be one of its enum values`
       );
     }
   }

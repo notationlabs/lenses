@@ -66,6 +66,19 @@ describe("executeLens", () => {
     });
   });
 
+  it("rejects a value outside a parameter's enum", async () => {
+    const enumSpec = validateSpec({
+      ...spec,
+      params: { order: { type: "string", enum: ["byPopularity", "byDate"] } },
+    });
+    const r = await executeLens(enumSpec, { order: "byMagic" }, io());
+    expect(r).toEqual({
+      kind: "error",
+      message:
+        'parameter "order" for @example/web/things must be one of: byPopularity, byDate',
+    });
+  });
+
   it("serves from the intercept tier when a capture matches", async () => {
     const r = await executeLens(spec, {}, io({
       getIntercepted: async () => [captured({})],

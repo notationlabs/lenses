@@ -18,10 +18,12 @@
  */
 import {
   GraphQLBoolean,
+  GraphQLEnumType,
   GraphQLError,
   type GraphQLFieldConfig,
   GraphQLFloat,
   GraphQLInt,
+  type GraphQLInputType,
   GraphQLList,
   GraphQLObjectType,
   type GraphQLOutputType,
@@ -96,6 +98,14 @@ const segmentsOf = (lens: string): string[] =>
     .filter((segment) => segment !== "");
 
 const capitalise = (word: string): string => word.charAt(0).toUpperCase() + word.slice(1);
+
+/** 'byPopularity' → 'BY_POPULARITY'; the lens still receives the declared value. */
+const enumValueName = (value: string): string =>
+  value
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .replace(/[^a-zA-Z0-9]+/g, "_")
+    .replace(/^([0-9])/, "_$1")
+    .toUpperCase();
 
 /** A ref field is named for what it joins to, not the url it came from. */
 const refFieldName = (key: string, siblings: Record<string, unknown>): string => {
@@ -324,15 +334,32 @@ export function buildLensSchema(specs: LensSpec[]): GraphQLSchema {
     return type;
   };
 
-  const argsFor = (params: LensSpec["params"]) =>
+  /** An enum-declared param compiles to a named enum: hn/search's order → HnSearchOrder. */
+  const argType = (
+    declaration: unknown,
+    key: string,
+    baseName: string
+  ): GraphQLInputType => {
+    if (isRecord(declaration) && Array.isArray(declaration.enum)) {
+      return new GraphQLEnumType({
+        name: uniqueName(`${baseName}${capitalise(key)}`),
+        values: Object.fromEntries(
+          declaration.enum.map((value: string) => [enumValueName(value), { value }])
+        ),
+      });
+    }
+    const type = isRecord(declaration) ? declaration.type : declaration;
+    return SCALARS[String(type)] ?? GraphQLString;
+  };
+
+  const argsFor = (params: LensSpec["params"], baseName: string) =>
     Object.fromEntries(
       Object.entries(params ?? {}).map(([key, declaration]) => {
-        const type = isRecord(declaration) ? declaration.type : declaration;
         const fallback = isRecord(declaration) ? declaration.default : undefined;
         return [
           key,
           {
-            type: SCALARS[String(type)] ?? GraphQLString,
+            type: argType(declaration, key, baseName),
             ...(fallback !== undefined ? { defaultValue: fallback } : {}),
           },
         ];
@@ -341,7 +368,7 @@ export function buildLensSchema(specs: LensSpec[]): GraphQLSchema {
 
   const lensField = (spec: LensSpec): GraphQLFieldConfig<unknown, GraphQLLensContext> => ({
     type: typeForLens(spec.name),
-    args: argsFor(spec.params),
+    args: argsFor(spec.params, segmentsOf(spec.name).map(capitalise).join("")),
     description: spec.description,
     resolve: (_source: unknown, args: any, context: GraphQLLensContext) =>
       callLens(context, spec.name, args),
