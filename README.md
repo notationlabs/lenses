@@ -1,7 +1,7 @@
 # Lenses
 
-A lens is a one-file declarative document that turns a webpage into a typed function.
-The call runs in your own browser over Chrome's remote-debugging protocol, so it can use your existing signed-in session without exporting cookies or running scraping infrastructure.
+A lens is a one-file declarative document that turns a webpage — or the API behind it — into a typed function.
+The call runs at the cheapest context that can answer it: a direct HTTP request from the local broker (no browser at all), a cookie-carrying fetch inside your own browser, or a bound page as the fallback. Either way it uses your existing signed-in session without exporting cookies or running scraping infrastructure.
 
 Applications use the TypeScript client directly. A CLI and an MCP server expose the
 same client without reimplementing lens loading, caching, validation, or browser transport.
@@ -18,6 +18,14 @@ Here is `@djgrant/claude/usage`, trimmed:
   },
   "outcomes": { "needs_auth": { "$lens": "@djgrant/claude/login" } },
   "resolve": [
+    { "kind": "http",
+      "credentials": true,
+      "sources": {
+        "orgs": { "request": "GET https://claude.ai/api/organizations" },
+        "usage": { "request": "GET https://claude.ai/api/organizations/{orgs.0.uuid}/usage" }
+      },
+      "detect": { "needs_auth": "$orgs.status = 401 or $orgs.status = 403" },
+      "map": { "plan": "$orgs[0].rate_limit_tier", "limits": "[$usage.limits.{ 'name': kind, 'percent': $string(percent) & '%' }]" } },
     { "kind": "intercept",
       "request": "GET https://claude.ai/api/organizations/*/usage*",
       "detect": { "needs_auth": "status = 401 or status = 403" },
@@ -30,7 +38,7 @@ Here is `@djgrant/claude/usage`, trimmed:
 
 ## Setup
 
-Lenses requires Node.js 22.12 or later and Chrome.
+Lenses requires Node.js 22.12 or later, and Chrome for the cookie-carrying and page tiers (a lens whose tiers are all credential-free `http` runs without any browser).
 
 ```sh
 pnpm install
@@ -155,9 +163,9 @@ parameter set.
 
 Each command connects to the persistent broker and disconnects when it finishes. The
 broker stays connected to Chrome between commands and shares successful cached results
-for each lens's declared TTL. Calls fail immediately when Chrome's remote-debugging
-endpoint is unavailable. Use `lens status --wait-ms <number>` when a script should wait
-for it.
+for each lens's declared TTL. A call that needs a page fails immediately when no browser
+backend is reachable; a call served entirely by credential-free `http` tiers needs no
+browser. Use `lens status --wait-ms <number>` when a script should wait for a backend.
 
 For repository development, Bun resolves the workspace packages directly to their
 TypeScript source, so the CLI does not need a build first:
@@ -191,7 +199,7 @@ only validates tool inputs and formats tool results; all behavior lives in the c
 The engine walks resolver tiers in order. Each tier produces a result, contributes
 fields, detects a named outcome, or misses and falls through.
 
-- **http** makes one declared request directly, without binding a page. Credential-free requests run in the broker's own process (no browser at all); `credentials: true` sends the browser's cookies via the extension's service worker.
+- **http** makes its declared requests directly, without binding a page. Credential-free requests run in the broker's own process (no browser at all); `credentials: true` sends the browser's cookies — via the extension's service worker, or an already-open same-origin tab on the CDP fallback. `sources` chains requests, threading one response's values into the next request's URL.
 - **intercept** reads JSON responses already fetched by the page.
 - **dom** extracts fields from the rendered document with CSS selectors.
 - **llm** returns a page snapshot and extraction prompt to the caller.
@@ -200,7 +208,7 @@ When `returns` is an object, fields accumulate across tiers. The engine stops wh
 declared fields are present, so each tier only needs to supply its part of the result.
 
 Lens `map` and `detect` bodies are JSONata expressions. They cannot reach the network or
-DOM. Beyond an `http` tier's single declared request, lenses observe what a page already
+DOM. Beyond an `http` tier's declared requests, lenses observe what a page already
 does and cannot fire requests or act on the page.
 `lens eval` runs the same sandboxed evaluator against a JSON file or stdin, so an
 expression can be iterated on offline before it goes into a lens document.
@@ -214,7 +222,7 @@ lens MCP ────┘                                │             └─ C
                                   @djgrant/lens resolver engine
 ```
 
-The broker hosts the resolver engine, caching, retry policy, and page-retention policy once. It pins each call to one session backend: the extension is preferred when its protocol and capabilities are compatible, while the CDP backend supplies the same page lifecycle, network capture, and in-page extraction primitives as a fallback.
+The broker hosts the resolver engine, caching, retry policy, and page-retention policy once. Credential-free `http` tiers run in the broker process itself; everything else pins the call to one session backend: the extension is preferred when its protocol and capabilities are compatible, while the CDP backend supplies the same page lifecycle, network capture, and in-page extraction primitives as a fallback. The page is bound lazily — a call an `http` tier satisfies never launches or touches the browser.
 
 ### Broker lifecycle
 
@@ -222,7 +230,7 @@ The first client to need the broker spawns it as a detached process on port 4319
 
 The broker also retires itself when nobody needs it. Two windows govern this, and any connected client, attached extension or in-flight call restarts both:
 
-- **No browser reachable** — `LENS_BROKER_NO_BROWSER_EXIT_MS`, default 10s. A broker with nowhere to run a lens can only occupy memory (~56MB), and respawning one costs ~200ms, so it goes almost immediately. Chrome leaves its `DevToolsActivePort` file behind when it quits, so the check is an HTTP probe of the endpoint rather than the file's presence.
+- **No browser reachable** — `LENS_BROKER_NO_BROWSER_EXIT_MS`, default 10s. A browserless broker can still serve credential-free `http` tiers, but only for a connected client — and a connected client holds the broker open anyway, so an idle one only occupies memory (~56MB), and respawning costs ~200ms; it goes almost immediately. Chrome leaves its `DevToolsActivePort` file behind when it quits, so the check is an HTTP probe of the endpoint rather than the file's presence.
 - **Browser present but unused** — `LENS_BROKER_IDLE_EXIT_MS`, default 15m (`0` disables both). Longer, because exiting here throws away a working CDP lease: consent is session-scoped, so reacquiring is silent while Chrome keeps running but costs an **Allow** dialog once Chrome restarts.
 
 The extension guard matters: exiting while the extension is attached would drop its socket and push it back through broker rediscovery (~7s, longer on a port it has not seen), which costs more than the resident process saves. In practice that means a broker stays up while you have Chrome open with the extension, and is reclaimed shortly after you quit Chrome. `lens broker shutdown` retires it immediately.
@@ -287,10 +295,43 @@ repository, or an HTTP catalog index — or at a direct HTTP URL.
 
 - `effects` — `{ "reads": [...], "writes": [...], "idempotent": true, "cache": 60 }`.
 - `loadTimeoutMs` — optional page-load timeout; the default is 30 seconds.
-- `resolve` — ordered intercept, DOM, and LLM resolver definitions.
+- `resolve` — ordered http, intercept, DOM, and LLM resolver definitions.
 
 An intercept resolver can capture one request or declare named `sources` that join several
 responses. An LLM resolver declares the extraction prompt and optional snapshot limit.
+
+### HTTP resolver
+
+An HTTP resolver fires its own requests instead of reading a page's. `request` is
+`"METHOD url-template"` (omitted, the tier GETs the lens `url`); `items` and `map`
+shape the parsed body exactly as in an intercept tier, and `detect` sees
+`{status, url, body}`. `headers` adds request headers, with the same `{param}` holes
+as URLs.
+
+```jsonc
+{
+  "kind": "http",
+  "credentials": true,
+  "sources": {
+    "orgs":  { "request": "GET https://claude.ai/api/organizations" },
+    "usage": { "request": "GET https://claude.ai/api/organizations/{orgs.0.uuid}/usage" }
+  },
+  "detect": { "needs_auth": "$orgs.status = 401 or $orgs.status = 403" },
+  "map": { "plan": "$orgs[0].rate_limit_tier", "limits": "[$usage.limits]" }
+}
+```
+
+- `credentials: true` sends the browser's cookies. The extension serves this from
+  its service worker with no tab; the CDP fallback evaluates the fetch inside an
+  already-open same-origin tab, and misses when none is open. Without a
+  browser-backed host the tier misses into the page tiers.
+- `sources` chains requests in declaration order. Each binds its body as `$name`
+  for `map` and `detect`, and later request templates address earlier bodies with
+  dotted holes — `{orgs.0.uuid}` — which is how an id only another response knows
+  reaches a URL. A detected outcome or non-2xx status stops the chain.
+- A network failure, an unexpandable hole, or an unsupported request is a miss,
+  never a call error: the page tiers reach the same site through the browser and
+  may still succeed.
 
 ### DOM resolver
 
