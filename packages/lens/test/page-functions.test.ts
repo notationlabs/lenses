@@ -151,7 +151,14 @@ describe("pageDomExtract text reading", () => {
     // The browser renders "2/3<br>17 Example Street" with a line break.
     expect(
       extractOne({ innerText: "2/3\n17 Example Street", textContent: "2/317 Example Street" })
-    ).toBe("2/3 17 Example Street");
+    ).toBe("2/3\n17 Example Street");
+  });
+
+  it("keeps paragraph breaks and caps blank-line runs at one", () => {
+    // innerText renders a paragraph gap as \n\n; comment threads depend on it.
+    expect(extractOne({ innerText: "first para \n\n second para\n\n\n\nthird" })).toBe(
+      "first para\n\nsecond para\n\nthird"
+    );
   });
 
   it("falls back to textContent where innerText is undefined", () => {
