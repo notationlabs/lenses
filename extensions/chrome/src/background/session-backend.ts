@@ -1,5 +1,6 @@
 import {
   sameGatePlace,
+  urlOrigin,
   type AuthGate,
   type ExtensionRpcRequest,
   type ExtensionRpcResult,
@@ -201,7 +202,7 @@ async function recordCurrentUrlAsKept(tabId: number): Promise<void> {
 async function findGate(origin: string): Promise<AuthGate | null> {
   for (const lease of await loadCreatedTabLeases()) {
     if (!lease.target || !lease.keptUrl) continue;
-    if (targetOrigin(lease.target) !== origin) continue;
+    if (urlOrigin(lease.target) !== origin) continue;
     let tab: chrome.tabs.Tab;
     try {
       tab = await chrome.tabs.get(lease.tabId);
@@ -213,14 +214,6 @@ async function findGate(origin: string): Promise<AuthGate | null> {
     }
   }
   return null;
-}
-
-function targetOrigin(url: string): string {
-  try {
-    return new URL(url).origin;
-  } catch {
-    return url;
-  }
 }
 
 async function checkedTabMessage<T>(

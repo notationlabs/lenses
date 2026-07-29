@@ -7,11 +7,18 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import puppeteer, { type Browser, type Page } from "puppeteer-core";
 import {
+  createCaptureBuffer,
   pageDomExtract,
   pageSnapshot,
+  pushCapture,
+  readCaptures,
+  resetCaptureBuffer,
   sameGatePlace,
+  sameTarget,
+  urlOrigin,
+  wakeCaptureWaiters,
   type AuthGate,
-  type InterceptedResponse,
+  type CaptureBuffer,
 } from "@djgrant/lens";
 import type {
   BackendHttpRequest,
@@ -23,7 +30,6 @@ import type {
   SnapshotOptions,
 } from "./browser-backend.js";
 
-const MAX_CAPTURES = 200;
 const MAX_BODY_BYTES = 512 * 1024;
 const LOAD_GRACE_MS = 500;
 const CONNECT_WINDOW_MS = 45_000;
@@ -67,17 +73,6 @@ export interface CdpBackend extends BrowserBackend {
   stop(): void;
 }
 
-interface CaptureEntry {
-  cursor: number;
-  capture: InterceptedResponse;
-}
-
-interface CaptureBuffer {
-  entries: CaptureEntry[];
-  nextCursor: number;
-  waiters: Set<() => void>;
-}
-
 interface CdpSession extends BrowserSession {
   page: Page;
   target: string;
@@ -117,7 +112,7 @@ export function createCdpBackend(
   function captures(page: Page): CaptureBuffer {
     let state = captureBuffers.get(page);
     if (state) return state;
-    state = { entries: [], nextCursor: 0, waiters: new Set() };
+    state = createCaptureBuffer();
     captureBuffers.set(page, state);
     const owned = state;
     page.on("response", (response) => {
@@ -132,20 +127,13 @@ export function createCdpBackend(
             trimmed.startsWith("{") ||
             trimmed.startsWith("[");
           if (!looksJson || body.length > MAX_BODY_BYTES) return;
-          owned.entries.push({
-            cursor: owned.nextCursor++,
-            capture: {
-              url: response.url(),
-              method: response.request().method(),
-              status: response.status(),
-              body,
-              timestamp: Date.now(),
-            },
+          pushCapture(owned, {
+            url: response.url(),
+            method: response.request().method(),
+            status: response.status(),
+            body,
+            timestamp: Date.now(),
           });
-          if (owned.entries.length > MAX_CAPTURES) {
-            owned.entries.splice(0, owned.entries.length - MAX_CAPTURES);
-          }
-          wake(owned);
         } catch {
           // Chrome may evict a response body during navigation.
         }
@@ -156,8 +144,7 @@ export function createCdpBackend(
 
   function resetCaptures(page: Page): CaptureBuffer {
     const state = captures(page);
-    state.entries = [];
-    wake(state);
+    resetCaptureBuffer(state);
     return state;
   }
 
@@ -356,7 +343,7 @@ export function createCdpBackend(
           keptGates.delete(page);
           continue;
         }
-        if (pageOrigin(kept.target) !== origin) continue;
+        if (urlOrigin(kept.target) !== origin) continue;
         if (sameGatePlace(page.url(), kept.keptUrl)) {
           return { url: page.url(), target: kept.target };
         }
@@ -372,10 +359,10 @@ export function createCdpBackend(
      */
     async httpFetch(request: BackendHttpRequest) {
       if (!browser?.connected) return undefined;
-      const origin = pageOrigin(request.url);
+      const origin = urlOrigin(request.url);
       const pages = await browser.pages();
       const page = pages.find(
-        (candidate) => !candidate.isClosed() && pageOrigin(candidate.url()) === origin
+        (candidate) => !candidate.isClosed() && urlOrigin(candidate.url()) === origin
       );
       if (!page) return undefined;
       const result = await page.evaluate(
@@ -433,7 +420,7 @@ export function createCdpBackend(
     ): Promise<void> {
       const cdpSession = session as CdpSession;
       cdpSession.closed = true;
-      wake(cdpSession.captures);
+      wakeCaptureWaiters(cdpSession.captures);
       if (disposition === "keep" && !cdpSession.page.isClosed()) {
         keptGates.set(cdpSession.page, {
           target: cdpSession.target,
@@ -455,47 +442,6 @@ export function createCdpBackend(
       }
     },
   };
-}
-
-async function readCaptures(
-  state: CaptureBuffer,
-  cursor: number,
-  deadline: number
-): Promise<InterceptDelta> {
-  while (cursor >= state.nextCursor && Date.now() < deadline) {
-    await waitForCapture(state, deadline);
-  }
-  const oldestCursor = state.entries[0]?.cursor ?? state.nextCursor;
-  const truncated = cursor < oldestCursor;
-  const effectiveCursor = truncated ? oldestCursor : cursor;
-  return {
-    captures: state.entries
-      .filter((entry) => entry.cursor >= effectiveCursor)
-      .map((entry) => entry.capture),
-    nextCursor: state.nextCursor,
-    truncated,
-  };
-}
-
-function waitForCapture(state: CaptureBuffer, deadline: number): Promise<void> {
-  return new Promise((resolve) => {
-    const remaining = Math.max(0, deadline - Date.now());
-    if (remaining === 0) {
-      resolve();
-      return;
-    }
-    const done = () => {
-      clearTimeout(timer);
-      state.waiters.delete(done);
-      resolve();
-    };
-    const timer = setTimeout(done, remaining);
-    state.waiters.add(done);
-  });
-}
-
-function wake(state: CaptureBuffer): void {
-  for (const waiter of [...state.waiters]) waiter();
 }
 
 function assertOpen(session: CdpSession): void {
@@ -539,16 +485,4 @@ async function findPage(
 ): Promise<Page | undefined> {
   const pages = await browser.pages();
   return pages.find((page) => sameTarget(page.url(), target));
-}
-
-function sameTarget(left: string, right: string): boolean {
-  return left.replace(/\/$/, "") === right.replace(/\/$/, "");
-}
-
-function pageOrigin(url: string): string {
-  try {
-    return new URL(url).origin;
-  } catch {
-    return url;
-  }
 }
