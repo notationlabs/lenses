@@ -13,11 +13,8 @@ import {
   browserRunning,
   launchBrowser,
 } from "./launch-browser.js";
-import {
-  extensionProfile,
-  extensionSeenRecently,
-  markExtensionSeen,
-} from "./extension-marker.js";
+import { extensionSeenRecently, markExtensionSeen } from "./extension-marker.js";
+import { browserProfile } from "./user-config.js";
 import { createIdleExitTimer, createShutdownSequence } from "./broker-lifecycle.js";
 import { brokerBuildStamp } from "./broker-stamp.js";
 import { SerialTaskQueue } from "./serial-task-queue.js";
@@ -39,11 +36,10 @@ const extension = createExtensionBackend();
 // An extension that has handshaked here before is worth waiting for: its
 // service worker may be dormant and needs its reconnect alarm to fire. Without
 // that history, CDP is the only hope and there is nothing to wait for.
-// Held in memory, never written back: the installed-extension evidence can be
-// stale (removed extension, unreadable profile), and one broker that waited in
-// vain is reason enough to stop waiting — but not to demote the next one.
-const installedProfile = extensionProfile();
-let extensionExpected = installedProfile !== undefined || extensionSeenRecently();
+// Held in memory, never written back: the marker can be stale (removed
+// extension), and one broker that waited in vain is reason enough to stop
+// waiting — but not to demote the next one.
+let extensionExpected = extensionSeenRecently();
 const extensionGraceMs =
   Number(process.env.LENS_BROKER_EXTENSION_GRACE_MS ?? "") ||
   (extensionExpected ? 35_000 : 2_000);
@@ -86,27 +82,27 @@ const idleExit = createIdleExitTimer({
 });
 
 /**
- * Gives a dormant extension a way back. A running Chrome needs nothing — the
- * worker's reconnect alarm attaches inside its 30s period — so this only ever
- * starts a browser that is not there. Once per broker: repeating it per call
- * would launch once per parallel request.
+ * Makes sure a browser exists for the call. A running Chrome needs nothing —
+ * the extension worker's reconnect alarm attaches inside its 30s period — so
+ * this only ever starts a browser that is not there. Once per broker:
+ * repeating it per call would launch once per parallel request.
  */
 async function ensureBrowser(): Promise<void> {
-  if (launchAttempted || !extensionExpected || extension.available()) return;
+  if (launchAttempted || extension.available()) return;
   launchAttempted = true;
   browserPresent = await browserRunning();
   if (browserPresent) {
     armExtensionStrike();
     return;
   }
-  // Launch the profile the extension was found in, so the picker never appears.
-  if (!autoLaunchEnabled() || !(await launchBrowser(installedProfile))) {
+  const profile = browserProfile();
+  if (!autoLaunchEnabled() || !(await launchBrowser(profile))) {
     // Nothing is coming, so do not make the call wait out the grace for it.
     concedeToCdp("no browser could be started");
     return;
   }
   browserPresent = true;
-  console.error("started Chrome to reach the lens extension");
+  console.error(`started Chrome with profile "${profile}"`);
   armExtensionStrike();
 }
 
