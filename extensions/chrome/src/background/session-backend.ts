@@ -13,8 +13,13 @@ import {
   takeCreatedTabLeases,
 } from "./tab-leases.js";
 import {
+  chromeHasOsFocus,
+  notifySignInNeeded,
+} from "./notifications.js";
+import {
   bindTab,
   closeTab,
+  focusTab,
   reloadTab,
   tabMessage,
   type BoundTab,
@@ -112,6 +117,14 @@ export function createExtensionSessionBackend(): ExtensionSessionBackend {
             // this place, find-gate reports the site as blocked, whatever
             // broker process is asking.
             await recordCurrentUrlAsKept(active.bound.tabId);
+            // Read OS focus before raising the tab: raising rewrites it.
+            const chromeVisible = await chromeHasOsFocus();
+            // The tab was opened in the background, so without this the
+            // sign-in page sits unseen behind whatever the user is doing.
+            await focusTab(active.bound.tabId);
+            if (!chromeVisible) {
+              await notifySignInNeeded(active.bound.tabId);
+            }
           }
           if (active.bound.created) {
             if (operation.disposition === "close-if-created") {

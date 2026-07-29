@@ -33,5 +33,6 @@ for (const name of ["content", "page"]) {
 }
 
 await copyFile("manifest.json", "dist/manifest.json");
+await copyFile("icon128.png", "dist/icon128.png");
 console.log(`extension built \u2192 extensions/chrome/dist (page functions ${stamp})`);
 console.log("load unpacked from there, and reload at chrome://extensions to pick this up");
