@@ -143,6 +143,35 @@ export function createExtensionSessionBackend(): ExtensionSessionBackend {
         case "find-gate": {
           return { name: "find-gate", gate: await findGate(operation.origin) };
         }
+        case "http-fetch": {
+          // Runs in the service worker, so host_permissions exempt it from
+          // CORS and the browser attaches the site's cookies — one request
+          // where the page tiers would cost a whole tab.
+          const { method, url, headers } = operation.request;
+          const response = await fetch(url, {
+            method,
+            headers,
+            credentials: "include",
+            redirect: "follow",
+            signal: AbortSignal.timeout(
+              Math.max(1, request.deadline - Date.now())
+            ),
+          });
+          const body = (await response.text()).slice(
+            0,
+            operation.maxBodyChars ?? 512 * 1024
+          );
+          return {
+            name: "http-fetch",
+            response: {
+              url: response.url || url,
+              method,
+              status: response.status,
+              body,
+              timestamp: Date.now(),
+            },
+          };
+        }
       }
     },
     async close() {

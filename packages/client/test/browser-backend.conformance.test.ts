@@ -197,6 +197,65 @@ for (const [name, createFixture] of [
   });
 }
 
+describe("backend httpFetch", () => {
+  function stubFetch(body: string) {
+    const init: { credentials?: string }[] = [];
+    vi.stubGlobal("fetch", async (_url: string, options: { credentials?: string }) => {
+      init.push(options);
+      return new Response(body, { status: 200 });
+    });
+    return init;
+  }
+
+  it("CDP evaluates the fetch in an existing same-origin page, and answers undefined without one", async () => {
+    const fixture = await createCdpFixture();
+    try {
+      const request = { method: "GET", url: "https://example.com/api/me" };
+      await fixture.backend.bind({
+        target: "https://other.com/",
+        loadTimeoutMs: 1000,
+        navigation: "fresh",
+      });
+      await expect(fixture.backend.httpFetch!(request)).resolves.toBeUndefined();
+
+      await fixture.backend.bind({
+        target: "https://example.com/shared",
+        loadTimeoutMs: 1000,
+        navigation: "fresh",
+      });
+      const init = stubFetch('{"me":true}');
+      await expect(fixture.backend.httpFetch!(request)).resolves.toMatchObject({
+        method: "GET",
+        url: "https://example.com/api/me",
+        status: 200,
+        body: '{"me":true}',
+      });
+      expect(init).toEqual([expect.objectContaining({ credentials: "include" })]);
+    } finally {
+      vi.unstubAllGlobals();
+      await fixture.close();
+    }
+  });
+
+  it("extension fetches through the service worker without binding a tab", async () => {
+    const fixture = await createExtensionFixture();
+    try {
+      const init = stubFetch('{"me":true}');
+      await expect(
+        fixture.backend.httpFetch!({ method: "GET", url: "https://example.com/api/me" })
+      ).resolves.toMatchObject({
+        method: "GET",
+        url: "https://example.com/api/me",
+        status: 200,
+        body: '{"me":true}',
+      });
+      expect(init).toEqual([expect.objectContaining({ credentials: "include" })]);
+    } finally {
+      await fixture.close();
+    }
+  });
+});
+
 async function expectCapture(
   session: BrowserSession,
   url: string
@@ -250,9 +309,14 @@ class FakePage {
   }
 
   async evaluate(
-    fn: typeof pageDomExtract | typeof pageSnapshot,
+    fn: typeof pageDomExtract | typeof pageSnapshot | ((arg: never) => unknown),
     options: unknown
   ): Promise<unknown> {
+    // An inline function (the httpFetch page script) runs as-is against the
+    // test's stubbed fetch, exercising its real body.
+    if (fn !== pageDomExtract && fn !== pageSnapshot) {
+      return (fn as (arg: unknown) => unknown)(options);
+    }
     if (fn === pageDomExtract) {
       return {
         url: this.currentUrl,

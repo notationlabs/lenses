@@ -4,6 +4,26 @@ import type { LensSpec } from "./types.js";
 const expression = z.string();
 const detect = z.record(z.string(), expression);
 
+const httpSchema = z
+  .strictObject({
+    kind: z.literal("http"),
+    request: z.string().optional(),
+    sources: z
+      .record(z.string(), z.strictObject({ request: z.string(), items: expression.optional() }))
+      .optional(),
+    headers: z.record(z.string(), z.string()).optional(),
+    credentials: z.boolean().optional(),
+    items: expression.optional(),
+    map: z.union([expression, z.record(z.string(), expression)]).optional(),
+    detect: detect.optional(),
+  })
+  .refine((resolver) => !(resolver.request && resolver.sources), {
+    message: 'http resolver takes either "request" or "sources", not both',
+  })
+  .refine((resolver) => !resolver.sources || Object.keys(resolver.sources).length > 0, {
+    message: 'http resolver "sources" must not be empty',
+  });
+
 const sourceSchema = z.strictObject({
   request: z.string(),
   items: expression.optional(),
@@ -117,7 +137,9 @@ const lensSpecSchema = z.strictObject({
     idempotent: z.boolean().optional(),
     cache: z.number().nonnegative().optional(),
   }),
-  resolve: z.array(z.discriminatedUnion("kind", [interceptSchema, domSchema, llmSchema])).min(1),
+  resolve: z
+    .array(z.discriminatedUnion("kind", [httpSchema, interceptSchema, domSchema, llmSchema]))
+    .min(1),
 });
 
 /**
@@ -224,6 +246,32 @@ export function validateSpec(raw: unknown): LensSpec {
   for (const hole of holesIn(result.data.url)) {
     if (!result.data.params?.[hole]) {
       throw new Error(`invalid lens spec:\n  URL parameter "${hole}" is not declared`);
+    }
+  }
+  // http request templates and header values take the same holes; a chained
+  // source's request may also name any source declared before it.
+  for (const resolver of result.data.resolve) {
+    if (resolver.kind !== "http") continue;
+    const bindable = new Set(Object.keys(result.data.params ?? {}));
+    const check = (template: string) => {
+      const bases = [
+        ...holesIn(template),
+        // Dotted holes ({orgs.0.uuid}) bind from the named source's body.
+        ...[...template.matchAll(/\{([a-zA-Z_][a-zA-Z0-9_]*)(?:\.[a-zA-Z0-9_]+)+\}/g)].map(
+          (match) => match[1]
+        ),
+      ];
+      for (const hole of bases) {
+        if (!bindable.has(hole)) {
+          throw new Error(`invalid lens spec:\n  http parameter "${hole}" is not declared`);
+        }
+      }
+    };
+    for (const template of Object.values(resolver.headers ?? {})) check(template);
+    if (resolver.request) check(resolver.request);
+    for (const [name, source] of Object.entries(resolver.sources ?? {})) {
+      check(source.request);
+      bindable.add(name);
     }
   }
   // Selectors take the same holes. Catching an undeclared one here beats a

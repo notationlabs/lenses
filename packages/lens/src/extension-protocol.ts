@@ -15,8 +15,10 @@ export const REQUIRED_EXTENSION_CAPABILITIES = [
 /**
  * Capabilities the broker uses when present but can work without. find-gate
  * backs the auth-gate short circuit; without it every gated call binds a tab.
+ * http-fetch backs credentialed http tiers; without it they miss and the page
+ * tiers take over.
  */
-export const OPTIONAL_EXTENSION_CAPABILITIES = ["find-gate"] as const;
+export const OPTIONAL_EXTENSION_CAPABILITIES = ["find-gate", "http-fetch"] as const;
 export const EXTENSION_CAPABILITIES = [
   ...REQUIRED_EXTENSION_CAPABILITIES,
   ...OPTIONAL_EXTENSION_CAPABILITIES,
@@ -80,7 +82,16 @@ export type ExtensionRpcOperation =
       sessionId: string;
       disposition: "close-if-created" | "keep";
     }
-  | { name: "find-gate"; origin: string };
+  | { name: "find-gate"; origin: string }
+  /**
+   * A service-worker fetch with the browser's cookies. Sessionless: it binds no
+   * tab, which is the point — one credentialed request instead of a page load.
+   */
+  | {
+      name: "http-fetch";
+      request: { method: string; url: string; headers?: Record<string, string> };
+      maxBodyChars?: number;
+    };
 
 /**
  * A sign-in gate: a tab an earlier needs_* outcome kept open, still sitting
@@ -126,7 +137,8 @@ export type ExtensionRpcResult =
     }
   | { name: "snapshot"; snapshot: PageSnapshot }
   | { name: "finish" }
-  | { name: "find-gate"; gate: AuthGate | null };
+  | { name: "find-gate"; gate: AuthGate | null }
+  | { name: "http-fetch"; response: InterceptedResponse };
 
 export type ExtensionRpcErrorCode =
   | "invalid-request"
@@ -240,6 +252,15 @@ const operationSchema = z.discriminatedUnion("name", [
     name: z.literal("find-gate"),
     origin: z.string().url(),
   }),
+  z.strictObject({
+    name: z.literal("http-fetch"),
+    request: z.strictObject({
+      method: z.string().min(1),
+      url: z.string().url(),
+      headers: z.record(z.string(), z.string()).optional(),
+    }),
+    maxBodyChars: z.number().int().positive().optional(),
+  }),
 ]);
 
 const rpcRequestSchema = z.strictObject({
@@ -299,6 +320,10 @@ const rpcResultSchema = z.discriminatedUnion("name", [
     gate: z
       .strictObject({ url: z.string(), target: z.string() })
       .nullable(),
+  }),
+  z.strictObject({
+    name: z.literal("http-fetch"),
+    response: interceptedResponseSchema,
   }),
 ]);
 

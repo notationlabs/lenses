@@ -72,6 +72,7 @@ class FakeBackend implements BrowserBackend {
   /** Set by a keep finish, the way a real backend records a kept tab. */
   authGate?: { url: string; target: string };
   onBind?: () => void;
+  httpFetch?: BrowserBackend["httpFetch"];
 
   constructor(name: string, available = true, session = new FakeSession()) {
     this.name = name;
@@ -406,7 +407,7 @@ describe("session cursor adapter", () => {
       { captures: [capture("one")], nextCursor: 1, truncated: false },
       { captures: [capture("two")], nextCursor: 2, truncated: false }
     );
-    const io = createSessionEngineIO(session, 1000);
+    const io = createSessionEngineIO(async () => session, 1000);
 
     expect((await io.getIntercepted()).map((item) => item.url)).toEqual([
       "https://example.com/one",
@@ -423,7 +424,7 @@ describe("session cursor adapter", () => {
       { captures: [capture("stale")], nextCursor: 1, truncated: false },
       { captures: [capture("fresh")], nextCursor: 9, truncated: true }
     );
-    const io = createSessionEngineIO(session, 1000);
+    const io = createSessionEngineIO(async () => session, 1000);
 
     await io.getIntercepted();
     expect((await io.getIntercepted()).map((item) => item.url)).toEqual([
@@ -433,7 +434,7 @@ describe("session cursor adapter", () => {
 
   it("turns engine sleeps into long-poll deadlines", async () => {
     const session = new FakeSession();
-    const io = createSessionEngineIO(session, 1000);
+    const io = createSessionEngineIO(async () => session, 1000);
     const before = Date.now();
 
     await io.sleep(250);
@@ -441,5 +442,109 @@ describe("session cursor adapter", () => {
 
     expect(session.deadlines[0]).toBeGreaterThanOrEqual(before + 240);
     expect(session.deadlines[0]).toBeLessThanOrEqual(Date.now() + 260);
+  });
+});
+
+describe("http tiers", () => {
+  const apiBody = JSON.stringify({ things: [{ name: "a" }] });
+
+  function httpSpec(overrides: Partial<LensSpec> = {}): LensSpec {
+    return domSpec({
+      resolve: [
+        { kind: "http", request: "GET https://api.example.com/things", items: "things" },
+      ],
+      ...overrides,
+    });
+  }
+
+  it("serves a credential-free http call without binding a page", async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(apiBody, { status: 200 })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const backend = new FakeBackend("cdp");
+      const orchestrator = createBrokerOrchestrator([backend]);
+      const result = await request(orchestrator, {
+        type: "call",
+        id: "one",
+        spec: httpSpec(),
+        params: {},
+        timeoutMs: 1000,
+      });
+
+      expect(result).toMatchObject({
+        kind: "value",
+        resolver: "http",
+        value: [{ name: "a" }],
+      });
+      expect(fetchMock).toHaveBeenCalledOnce();
+      expect(backend.binds).toHaveLength(0);
+      expect(backend.finishes).toHaveLength(0);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("routes a credentialed http tier through the backend's httpFetch", async () => {
+    const backend = new FakeBackend("extension");
+    const seen: string[] = [];
+    backend.httpFetch = async (req) => {
+      seen.push(`${req.method} ${req.url}`);
+      return {
+        url: req.url,
+        method: req.method,
+        status: 200,
+        body: apiBody,
+        timestamp: Date.now(),
+      };
+    };
+    const orchestrator = createBrokerOrchestrator([backend]);
+    const result = await request(orchestrator, {
+      type: "call",
+      id: "one",
+      spec: httpSpec({
+        resolve: [
+          {
+            kind: "http",
+            request: "GET https://api.example.com/things",
+            credentials: true,
+            items: "things",
+          },
+        ],
+      }),
+      params: {},
+      timeoutMs: 1000,
+    });
+
+    expect(result).toMatchObject({ kind: "value", resolver: "http" });
+    expect(seen).toEqual(["GET https://api.example.com/things"]);
+    expect(backend.binds).toHaveLength(0);
+  });
+
+  it("falls through to the page tiers when the backend cannot fetch with cookies", async () => {
+    const backend = new FakeBackend("cdp");
+    const orchestrator = createBrokerOrchestrator([backend]);
+    const result = await request(orchestrator, {
+      type: "call",
+      id: "one",
+      spec: httpSpec({
+        resolve: [
+          {
+            kind: "http",
+            request: "GET https://api.example.com/things",
+            credentials: true,
+            items: "things",
+          },
+          { kind: "dom", fields: { title: { selector: "h1" } } },
+        ],
+      }),
+      params: {},
+      timeoutMs: 1000,
+    });
+
+    expect(result).toMatchObject({ kind: "value", resolver: "dom" });
+    expect(backend.binds).toHaveLength(1);
+    expect(backend.finishes).toEqual(["close-if-created"]);
   });
 });

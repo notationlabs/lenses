@@ -1,6 +1,6 @@
 {
   "name": "@djgrant/hn/item",
-  "description": "A Hacker News story page: the story plus a page of its comment thread as a tree. HN serves the whole thread in one document, so the lens rebuilds reply nesting from row indentation and windows the top-level comments client-side (default 30/page); next_page is the same lens at the next window (null on the last page). Pass params {page, limit} to control the window.",
+  "description": "A Hacker News story page: the story plus a page of its comment thread as a tree. Served first from Algolia's HN items API as one browserless http request (the tree arrives pre-nested); the HN page itself is the fallback, where the lens rebuilds reply nesting from row indentation. Top-level comments are windowed client-side (default 30/page); next_page is the same lens at the next window (null on the last page). Pass params {page, limit} to control the window.",
   "url": "https://news.ycombinator.com/item?id={id}",
   "params": {
     "id": "string",
@@ -58,13 +58,22 @@
   },
   "effects": {
     "reads": [
-      "news.ycombinator.com"
+      "news.ycombinator.com",
+      "hn.algolia.com"
     ],
     "writes": [],
     "idempotent": true,
     "cache": 120
   },
   "resolve": [
+    {
+      "kind": "http",
+      "request": "GET https://hn.algolia.com/api/v1/items/{id}",
+      "detect": {
+        "not_found": "status = 404"
+      },
+      "items": "($size := $number($limit ? $limit : 30); $pg := $number($page ? $page : 1); $start := ($pg - 1) * $size; $mapc := function($c) { { 'id': $string($c.id), 'author': $c.author, 'age': $c.created_at, 'text': $c.text, 'replies': [$map([$c.children[text != null]], $mapc)] } }; $top := [$map([children[text != null]], $mapc)]; { 'story': { 'title': title, 'url': url ? url : 'https://news.ycombinator.com/item?id=' & $string(id), 'score': $string(points) & ' points' }, 'comments': [$top#$i[$i >= $start and $i < $start + $size]], 'next_page': $count($top) > $start + $size ? 'https://news.ycombinator.com/item?id=' & $string(id) & '&p=' & ($pg + 1) : null })"
+    },
     {
       "kind": "dom",
       "item": ".comtr",

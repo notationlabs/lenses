@@ -191,6 +191,7 @@ only validates tool inputs and formats tool results; all behavior lives in the c
 The engine walks resolver tiers in order. Each tier produces a result, contributes
 fields, detects a named outcome, or misses and falls through.
 
+- **http** makes one declared request directly, without binding a page. Credential-free requests run in the broker's own process (no browser at all); `credentials: true` sends the browser's cookies via the extension's service worker.
 - **intercept** reads JSON responses already fetched by the page.
 - **dom** extracts fields from the rendered document with CSS selectors.
 - **llm** returns a page snapshot and extraction prompt to the caller.
@@ -199,7 +200,8 @@ When `returns` is an object, fields accumulate across tiers. The engine stops wh
 declared fields are present, so each tier only needs to supply its part of the result.
 
 Lens `map` and `detect` bodies are JSONata expressions. They cannot reach the network or
-DOM. Lenses observe what a page already does and cannot fire requests or act on the page.
+DOM. Beyond an `http` tier's single declared request, lenses observe what a page already
+does and cannot fire requests or act on the page.
 `lens eval` runs the same sandboxed evaluator against a JSON file or stdin, so an
 expression can be iterated on offline before it goes into a lens document.
 
