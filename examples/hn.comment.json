@@ -1,0 +1,80 @@
+{
+  "name": "@djgrant/hn/comment",
+  "description": "One Hacker News comment subtree: the comment addressed by id plus its replies as a tree. A comment permalink is the same item?id= endpoint HN uses for stories, so any id found in hn/item's comments can be fetched directly.",
+  "url": "https://news.ycombinator.com/item?id={id}",
+  "params": {
+    "id": "string"
+  },
+  "$defs": {
+    "comments": {
+      "type": "object",
+      "fields": {
+        "id": "string",
+        "author": "string",
+        "age": "string",
+        "text": "string",
+        "replies": {
+          "type": "array",
+          "items": { "$ref": "comments" }
+        }
+      }
+    }
+  },
+  "returns": { "$ref": "comments" },
+  "outcomes": {
+    "not_found": null
+  },
+  "effects": {
+    "reads": [
+      "news.ycombinator.com"
+    ],
+    "writes": [],
+    "idempotent": true,
+    "cache": 120
+  },
+  "resolve": [
+    {
+      "kind": "dom",
+      "item": ".comtr",
+      "fields": {
+        "id": {
+          "selector": ":self",
+          "attr": "id"
+        },
+        "author": {
+          "selector": ".hnuser"
+        },
+        "age": {
+          "selector": ".age"
+        },
+        "text": {
+          "selector": ".commtext"
+        },
+        "indent": {
+          "selector": ".ind",
+          "attr": "indent"
+        }
+      },
+      "post": "($all := [$[text != null]]; $build := function($rows) { ($n := $count($rows); $n = 0 ? [] : ($top := $number($rows[0].indent); $starts := [$filter([0..$n-1], function($j) { $number($rows[$j].indent) = $top })]; $map($starts, function($s, $k) { ($next := $k < $count($starts) - 1 ? $starts[$k + 1] : $n; $row := $rows[$s]; { \"id\": $row.id, \"author\": $row.author, \"age\": $row.age, \"text\": $row.text, \"replies\": [$build([$rows#$j[$j > $s and $j < $next]])] }) }))) }; { \"replies\": [$build($all)] })"
+    },
+    {
+      "kind": "dom",
+      "fields": {
+        "author": {
+          "selector": ".fatitem .hnuser"
+        },
+        "age": {
+          "selector": ".fatitem .age"
+        },
+        "text": {
+          "selector": ".fatitem .commtext"
+        }
+      },
+      "post": "{ \"id\": $id, \"author\": author, \"age\": age, \"text\": text, \"replies\": [] }"
+    },
+    {
+      "kind": "llm",
+      "prompt": "This is a Hacker News comment permalink page. The page's root comment sits at the top (author, age, text); below it is its reply thread. Return the root comment as {id, author, age, text, replies} where replies is an array of the same shape nested by the indentation of each reply row (use [] for a comment with no replies). id is the numeric comment id from the page URL's id= parameter."
+    }
+  ]
+}
