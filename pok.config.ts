@@ -8,22 +8,15 @@ export default defineConfig({
   appName: 'lenses',
   plugins: [
     release({
-      packages: {
-        files: [
-          'packages/lens/package.json',
-          'packages/client/package.json',
-          'packages/cli/package.json',
-          'packages/mcp/package.json',
-        ],
-        names: [
-          '@djgrant/lens',
-          '@djgrant/lens-client',
-          '@djgrant/lens-cli',
-          '@djgrant/lens-mcp',
-        ],
-      },
+      // Listed in dependency order: client builds against lens's dist, cli
+      // against both. Builds run in list order.
+      packages: [
+        { file: 'packages/lens/package.json', build: 'pnpm --filter @djgrant/lens run build' },
+        { file: 'packages/client/package.json', build: 'pnpm --filter @djgrant/lens-client run build' },
+        { file: 'packages/cli/package.json', build: 'pnpm --filter @djgrant/lens-cli run build' },
+        { file: 'packages/mcp/package.json', build: 'pnpm --filter @djgrant/lens-mcp run build' },
+      ],
       verdaccio: true,
-      build: 'pnpm -r build',
     }),
   ],
 });
