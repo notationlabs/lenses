@@ -1,0 +1,38 @@
+{
+  "version": 4,
+  "doc": "client/observe.md",
+  "provenance": {
+    "generatedBy": "claude-fable-5",
+    "generatedAt": "2026-07-30T10:47:09.106Z",
+    "gitCommit": null
+  },
+  "freshness": {
+    "sourceDigest": "sha256:062939fd8edb4860e9d966cdf75b57b7f53976077fb36e14032d6a6b5792ad2b"
+  },
+  "projection": {
+    "assertions": [],
+    "aliasPredicates": [],
+    "gaps": [
+      {
+        "item": "client/observe.md#no-matching-request",
+        "severity": "info",
+        "note": "The error kind alone is expressible, but the no-match condition and the message naming the selector and capture count are beyond the grammar"
+      },
+      {
+        "item": "client/observe.md#index-by-default",
+        "severity": "info",
+        "note": "Request indexing with elided bodies and 120-character previews is structural mapping outside the grammar"
+      },
+      {
+        "item": "client/observe.md#request-drill",
+        "severity": "info",
+        "note": "Index-versus-substring selection and the 5-body cap operate over a dynamic request list beyond target paths"
+      },
+      {
+        "item": "client/observe.md#html-option",
+        "severity": "info",
+        "note": "Markup stripping of scripts, styles, and comments with an 80000-character cap is DOM processing outside the grammar"
+      }
+    ]
+  }
+}

@@ -1,0 +1,27 @@
+---
+title: Load lens catalogs
+---
+
+# Load lens catalogs
+
+## Context
+
+The @caller configures ordered catalog sources; the store resolves names, files, and URLs to validated documents. Evidence: `packages/client/src/catalog.ts`, `packages/client/src/lens-store.ts`, `packages/client/test/client.test.ts`, `packages/client/test/lens-store.test.ts`.
+
+## Rules
+
+- **Source schemes:** A source reference dispatches by scheme — a bare or `file:` path is a live-read local directory, `git:host/owner/repo[#ref][/subdir]` is a shallow clone (`git:/abs/path` clones a local repository over a `file://` URL), and an `http(s)` URL is a catalog index.
+- **Directory read:** A directory source reads every `*.json` (sorted, `catalog.json` excluded) as a validated lens document; a file that fails validation fails the load naming the file.
+- **Cache root:** Git clones and HTTP index caches live under `LENS_CACHE_DIR`, defaulting to `~/.cache/lenses`, keyed by a hash of the normalised reference.
+- **Git materialisation:** A git source clones once with `--depth 1` (and `--branch <ref>` when a ref is given); !update re-fetches the ref with depth 1 and hard-resets to `FETCH_HEAD`.
+- **HTTP index shape:** An HTTP catalog is an index document `{"lenses": [...]}` whose string entries are document URLs resolved against the index URL; an entry may also inline a whole document.
+- **ETag revalidation:** The index is revalidated with `If-None-Match` on every load; a 304 serves the cached documents, a network failure serves the cached copy when one exists, and !update deletes the cache file so the next load refetches.
+- **Catalogue helpers:** A `catalog.json` beside the documents (or `helpers` in an HTTP index) supplies its `helpers` to every document, with a document's own entry of the same name winning; for HTTP sources the helpers are folded in before caching so the 304 and offline paths serve documents that already carry them.
+- **Ordered load:** Sources load in configuration order; a shortname declared by several sources resolves to the earliest one.
+- **Reference resolution:** A lens reference resolves as an `http(s)` URL fetched and validated directly, a path ending `.json` read from disk with the helpers of its own directory's `catalog.json`, or otherwise a scoped name or shortname looked up across the loaded sources.
+
+## Failures
+
+- **Duplicate scoped name:** The same scoped name appearing twice — within one source or across sources — fails the load naming both sources.
+- **Empty git catalog:** A git source whose directory yields no lens documents fails the load.
+- **Unknown lens:** A name that no source declares fails with `unknown lens "<ref>"`.

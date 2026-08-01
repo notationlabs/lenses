@@ -1,0 +1,48 @@
+{
+  "version": 4,
+  "doc": "cli/ts-sdk.md",
+  "provenance": {
+    "generatedBy": "claude-fable-5",
+    "generatedAt": "2026-07-30T10:47:09.107Z",
+    "gitCommit": null
+  },
+  "freshness": {
+    "sourceDigest": "sha256:062939fd8edb4860e9d966cdf75b57b7f53976077fb36e14032d6a6b5792ad2b"
+  },
+  "projection": {
+    "assertions": [],
+    "aliasPredicates": [],
+    "gaps": [
+      {
+        "item": "cli/ts-sdk.md#dual-keys",
+        "severity": "info",
+        "note": "Generated TypeScript source structure is code generation the assertion grammar cannot inspect"
+      },
+      {
+        "item": "cli/ts-sdk.md#unique-names",
+        "severity": "info",
+        "note": "The duplicate-name failure quantifies over all documents and throws, outside the assertion grammar"
+      },
+      {
+        "item": "cli/ts-sdk.md#defaulted-params-optional",
+        "severity": "info",
+        "note": "Optionality of defaulted parameters in generated types is code generation outside the grammar"
+      },
+      {
+        "item": "cli/ts-sdk.md#result-typing-mirrors-the-schema",
+        "severity": "info",
+        "note": "Generated result type shapes are code generation outside the grammar"
+      },
+      {
+        "item": "cli/ts-sdk.md#hoisted-defs",
+        "severity": "info",
+        "note": "Interface hoisting and collision suffixing are code generation outside the grammar"
+      },
+      {
+        "item": "cli/ts-sdk.md#typed-client",
+        "severity": "info",
+        "note": "The generated client wrapper and error re-exports are code generation outside the grammar"
+      }
+    ]
+  }
+}

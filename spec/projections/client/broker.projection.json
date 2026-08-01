@@ -1,0 +1,83 @@
+{
+  "version": 4,
+  "doc": "client/broker.md",
+  "provenance": {
+    "generatedBy": "claude-fable-5",
+    "generatedAt": "2026-07-30T10:47:09.106Z",
+    "gitCommit": null
+  },
+  "freshness": {
+    "sourceDigest": "sha256:062939fd8edb4860e9d966cdf75b57b7f53976077fb36e14032d6a6b5792ad2b"
+  },
+  "projection": {
+    "assertions": [],
+    "aliasPredicates": [],
+    "gaps": [
+      {
+        "item": "client/broker.md#build-stamp",
+        "severity": "info",
+        "note": "A non-empty stamp alone is expressible, but its derivation from a content hash of the daemon's module directory is process behaviour beyond the grammar"
+      },
+      {
+        "item": "client/broker.md#connect-or-spawn",
+        "severity": "info",
+        "note": "Connect-else-spawn with a detached child process is process lifecycle outside the grammar"
+      },
+      {
+        "item": "client/broker.md#stale-broker-replaced",
+        "severity": "info",
+        "note": "Shutdown-and-respawn on stamp mismatch is multi-process coordination outside the grammar"
+      },
+      {
+        "item": "client/broker.md#bounded-rebind",
+        "severity": "info",
+        "note": "The three-attempt cap ends in a thrown error, which is outside the assertion grammar"
+      },
+      {
+        "item": "client/broker.md#respawn-coordination",
+        "severity": "info",
+        "note": "The mkdir lock, 10 s wait, and 60 s staleness window are cross-process coordination outside the grammar"
+      },
+      {
+        "item": "client/broker.md#shutdown-sequence",
+        "severity": "info",
+        "note": "The stop-listen, drain (10 s), close, release (5 s), exit ordering is process lifecycle outside the grammar"
+      },
+      {
+        "item": "client/broker.md#no-browser-exit",
+        "severity": "info",
+        "note": "The LENS_BROKER_NO_BROWSER_EXIT_MS window (default 10 s) is timed process lifecycle outside the grammar"
+      },
+      {
+        "item": "client/broker.md#idle-exit",
+        "severity": "info",
+        "note": "The LENS_BROKER_IDLE_EXIT_MS window (default 15 m, 0 disables) is timed process lifecycle outside the grammar"
+      },
+      {
+        "item": "client/broker.md#idle-re-check",
+        "severity": "info",
+        "note": "Re-checking idleness when the timer fires is timing behaviour outside the grammar"
+      },
+      {
+        "item": "client/broker.md#idle-lease-release",
+        "severity": "info",
+        "note": "Opt-in idle lease release via LENS_BROKER_IDLE_RELEASE_MS is environment-driven behaviour outside the grammar"
+      },
+      {
+        "item": "client/broker.md#lease-control",
+        "severity": "info",
+        "note": "The release/acquire/status/shutdown control actions mutate broker state the grammar cannot reference"
+      },
+      {
+        "item": "client/broker.md#broker-disconnect",
+        "severity": "info",
+        "note": "Resolving pending calls with a disconnect error on socket close is event-driven behaviour outside the grammar"
+      },
+      {
+        "item": "client/broker.md#loopback-only",
+        "severity": "info",
+        "note": "Listening on 127.0.0.1 only is network configuration the assertion grammar cannot state"
+      }
+    ]
+  }
+}

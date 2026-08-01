@@ -1,0 +1,73 @@
+{
+  "version": 4,
+  "doc": "client/calls.md",
+  "provenance": {
+    "generatedBy": "claude-fable-5",
+    "generatedAt": "2026-07-30T10:47:09.106Z",
+    "gitCommit": null
+  },
+  "freshness": {
+    "sourceDigest": "sha256:062939fd8edb4860e9d966cdf75b57b7f53976077fb36e14032d6a6b5792ad2b"
+  },
+  "projection": {
+    "assertions": [],
+    "aliasPredicates": [],
+    "gaps": [
+      {
+        "item": "client/calls.md#bad-input-is-a-result",
+        "severity": "info",
+        "note": "The error kind alone is expressible, but the bad-input condition and the returns-rather-than-throws contrast are beyond the grammar"
+      },
+      {
+        "item": "client/calls.md#ttl-cache",
+        "severity": "info",
+        "note": "The cached flag alone is expressible, but the TTL window, the document-plus-parameters key, and the storage policy are beyond the grammar"
+      },
+      {
+        "item": "client/calls.md#lazy-broker-binding",
+        "severity": "info",
+        "note": "Side-effect-free construction and first-use broker binding are lifecycle behaviour outside the grammar"
+      },
+      {
+        "item": "client/calls.md#construction-guards",
+        "severity": "info",
+        "note": "Constructor rejections throw exceptions, which are outside the assertion grammar"
+      },
+      {
+        "item": "client/calls.md#strict-validation",
+        "severity": "info",
+        "note": "The condition (schema violations present) and the composed error message are beyond the comparison grammar; the effect on kind alone would not distinguish this from other errors"
+      },
+      {
+        "item": "client/calls.md#lax-validation",
+        "severity": "info",
+        "note": "Attaching the issue list as warnings conditions on validation results the grammar cannot reference"
+      },
+      {
+        "item": "client/calls.md#listing",
+        "severity": "info",
+        "note": "The per-document summary construction (shortname slicing, outcome keys, warnings) is structural mapping outside the grammar"
+      },
+      {
+        "item": "client/calls.md#value-unwrap",
+        "severity": "info",
+        "note": "value() returns the inner value of a value result; relating the two results is beyond the grammar"
+      },
+      {
+        "item": "client/calls.md#catalog-refresh",
+        "severity": "info",
+        "note": "Refreshing sources and reporting per-source counts is a side-effecting aggregate outside the grammar"
+      },
+      {
+        "item": "client/calls.md#outcome-throw",
+        "severity": "info",
+        "note": "LensOutcomeError with the declared hint is a thrown exception, outside the assertion grammar"
+      },
+      {
+        "item": "client/calls.md#error-throw",
+        "severity": "info",
+        "note": "LensResultError carrying message and issues is a thrown exception, outside the assertion grammar"
+      }
+    ]
+  }
+}

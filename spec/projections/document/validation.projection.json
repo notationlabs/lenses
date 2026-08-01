@@ -1,0 +1,936 @@
+{
+  "version": 4,
+  "doc": "document/validation.md",
+  "provenance": {
+    "generatedBy": "claude-fable-5",
+    "generatedAt": "2026-07-30T10:47:09.102Z",
+    "gitCommit": null
+  },
+  "freshness": {
+    "sourceDigest": "sha256:062939fd8edb4860e9d966cdf75b57b7f53976077fb36e14032d6a6b5792ad2b"
+  },
+  "projection": {
+    "assertions": [
+      {
+        "kind": "invariant",
+        "item": "document/validation.md#at-least-one-resolver",
+        "subject": {
+          "root": "$LensDocument",
+          "path": [
+            {
+              "kind": "field",
+              "name": "resolve"
+            }
+          ]
+        },
+        "predicate": {
+          "op": ">=",
+          "left": {
+            "kind": "target",
+            "target": {
+              "root": "$LensDocument",
+              "path": [
+                {
+                  "kind": "field",
+                  "name": "resolve"
+                },
+                {
+                  "kind": "method",
+                  "name": "count",
+                  "args": null
+                }
+              ]
+            }
+          },
+          "right": {
+            "kind": "literal",
+            "value": 1
+          }
+        }
+      },
+      {
+        "kind": "invariant",
+        "item": "document/validation.md#resolver-kinds",
+        "subject": {
+          "root": "$LensDocument",
+          "path": [
+            {
+              "kind": "field",
+              "name": "resolve"
+            }
+          ]
+        },
+        "predicate": {
+          "forall": {
+            "over": {
+              "kind": "target",
+              "target": {
+                "root": "$LensDocument",
+                "path": [
+                  {
+                    "kind": "field",
+                    "name": "resolve"
+                  }
+                ]
+              }
+            },
+            "bind": "resolver",
+            "where": null,
+            "holds": {
+              "or": [
+                {
+                  "op": "==",
+                  "left": {
+                    "kind": "binding",
+                    "name": "resolver",
+                    "path": [
+                      {
+                        "kind": "case",
+                        "name": "HttpResolver"
+                      },
+                      {
+                        "kind": "field",
+                        "name": "kind"
+                      }
+                    ]
+                  },
+                  "right": {
+                    "kind": "literal",
+                    "value": "http"
+                  }
+                },
+                {
+                  "op": "==",
+                  "left": {
+                    "kind": "binding",
+                    "name": "resolver",
+                    "path": [
+                      {
+                        "kind": "case",
+                        "name": "InterceptResolver"
+                      },
+                      {
+                        "kind": "field",
+                        "name": "kind"
+                      }
+                    ]
+                  },
+                  "right": {
+                    "kind": "literal",
+                    "value": "intercept"
+                  }
+                },
+                {
+                  "op": "==",
+                  "left": {
+                    "kind": "binding",
+                    "name": "resolver",
+                    "path": [
+                      {
+                        "kind": "case",
+                        "name": "DomResolver"
+                      },
+                      {
+                        "kind": "field",
+                        "name": "kind"
+                      }
+                    ]
+                  },
+                  "right": {
+                    "kind": "literal",
+                    "value": "dom"
+                  }
+                },
+                {
+                  "op": "==",
+                  "left": {
+                    "kind": "binding",
+                    "name": "resolver",
+                    "path": [
+                      {
+                        "kind": "case",
+                        "name": "LlmResolver"
+                      },
+                      {
+                        "kind": "field",
+                        "name": "kind"
+                      }
+                    ]
+                  },
+                  "right": {
+                    "kind": "literal",
+                    "value": "llm"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "kind": "invariant",
+        "item": "document/validation.md#llm-prompt-required",
+        "subject": {
+          "root": "$LensDocument",
+          "path": [
+            {
+              "kind": "field",
+              "name": "resolve"
+            }
+          ]
+        },
+        "predicate": {
+          "forall": {
+            "over": {
+              "kind": "target",
+              "target": {
+                "root": "$LensDocument",
+                "path": [
+                  {
+                    "kind": "field",
+                    "name": "resolve"
+                  }
+                ]
+              }
+            },
+            "bind": "resolver",
+            "where": {
+              "op": "==",
+              "left": {
+                "kind": "binding",
+                "name": "resolver",
+                "path": [
+                  {
+                    "kind": "case",
+                    "name": "LlmResolver"
+                  },
+                  {
+                    "kind": "field",
+                    "name": "kind"
+                  }
+                ]
+              },
+              "right": {
+                "kind": "literal",
+                "value": "llm"
+              }
+            },
+            "holds": {
+              "and": [
+                {
+                  "present": {
+                    "kind": "binding",
+                    "name": "resolver",
+                    "path": [
+                      {
+                        "kind": "case",
+                        "name": "LlmResolver"
+                      },
+                      {
+                        "kind": "field",
+                        "name": "prompt"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "or": [
+                    {
+                      "not": {
+                        "present": {
+                          "kind": "binding",
+                          "name": "resolver",
+                          "path": [
+                            {
+                              "kind": "case",
+                              "name": "LlmResolver"
+                            },
+                            {
+                              "kind": "field",
+                              "name": "maxSnapshotChars"
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "op": ">=",
+                      "left": {
+                        "kind": "binding",
+                        "name": "resolver",
+                        "path": [
+                          {
+                            "kind": "case",
+                            "name": "LlmResolver"
+                          },
+                          {
+                            "kind": "field",
+                            "name": "maxSnapshotChars"
+                          }
+                        ]
+                      },
+                      "right": {
+                        "kind": "literal",
+                        "value": 1
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "kind": "example",
+        "item": "document/validation.md#scoped-name",
+        "operation": "validate",
+        "of": null,
+        "args": {
+          "raw": {
+            "name": "@acme/site/product",
+            "url": "https://example.com/product",
+            "effects": {
+              "reads": [],
+              "writes": []
+            },
+            "resolve": [
+              {
+                "kind": "dom",
+                "fields": {}
+              }
+            ]
+          }
+        },
+        "via": "returns",
+        "errorType": null,
+        "result": {
+          "name": "@acme/site/product",
+          "url": "https://example.com/product",
+          "effects": {
+            "reads": [],
+            "writes": []
+          },
+          "resolve": [
+            {
+              "kind": "dom",
+              "fields": {}
+            }
+          ]
+        }
+      },
+      {
+        "kind": "invariant",
+        "item": "document/validation.md#parameter-declaration-forms",
+        "subject": {
+          "root": "$LensDocument",
+          "path": [
+            {
+              "kind": "field",
+              "name": "params"
+            }
+          ]
+        },
+        "predicate": {
+          "forall": {
+            "over": {
+              "kind": "target",
+              "target": {
+                "root": "$LensDocument",
+                "path": [
+                  {
+                    "kind": "field",
+                    "name": "params"
+                  }
+                ]
+              }
+            },
+            "bind": "parameter",
+            "key": "name",
+            "where": null,
+            "holds": {
+              "is": {
+                "atom": {
+                  "kind": "binding",
+                  "name": "parameter",
+                  "path": []
+                },
+                "type": "$LensParameter"
+              }
+            }
+          }
+        }
+      },
+      {
+        "kind": "invariant",
+        "item": "document/validation.md#returns-grammar",
+        "subject": {
+          "root": "$LensDocument",
+          "path": [
+            {
+              "kind": "field",
+              "name": "returns"
+            }
+          ]
+        },
+        "predicate": {
+          "is": {
+            "atom": {
+              "kind": "target",
+              "target": {
+                "root": "$LensDocument",
+                "path": [
+                  {
+                    "kind": "field",
+                    "name": "returns"
+                  }
+                ]
+              }
+            },
+            "type": "$ReturnNode"
+          }
+        }
+      },
+      {
+        "kind": "invariant",
+        "item": "document/validation.md#defs-are-object-shapes",
+        "subject": {
+          "root": "$LensDocument",
+          "path": [
+            {
+              "kind": "field",
+              "name": "$defs"
+            }
+          ]
+        },
+        "predicate": {
+          "forall": {
+            "over": {
+              "kind": "target",
+              "target": {
+                "root": "$LensDocument",
+                "path": [
+                  {
+                    "kind": "field",
+                    "name": "$defs"
+                  }
+                ]
+              }
+            },
+            "bind": "definition",
+            "key": "name",
+            "where": null,
+            "holds": {
+              "is": {
+                "atom": {
+                  "kind": "binding",
+                  "name": "definition",
+                  "path": []
+                },
+                "type": "$ObjectReturn"
+              }
+            }
+          }
+        }
+      },
+      {
+        "kind": "invariant",
+        "item": "document/validation.md#enum-is-string-only",
+        "subject": {
+          "root": "$LensDocument",
+          "path": [
+            {
+              "kind": "field",
+              "name": "params"
+            }
+          ]
+        },
+        "predicate": {
+          "forall": {
+            "over": {
+              "kind": "target",
+              "target": {
+                "root": "$LensDocument",
+                "path": [
+                  {
+                    "kind": "field",
+                    "name": "params"
+                  }
+                ]
+              }
+            },
+            "bind": "parameter",
+            "key": "name",
+            "where": {
+              "and": [
+                {
+                  "is": {
+                    "atom": {
+                      "kind": "binding",
+                      "name": "parameter",
+                      "path": []
+                    },
+                    "type": "$ParameterOptions"
+                  }
+                },
+                {
+                  "present": {
+                    "kind": "binding",
+                    "name": "parameter",
+                    "path": [
+                      {
+                        "kind": "case",
+                        "name": "ParameterOptions"
+                      },
+                      {
+                        "kind": "field",
+                        "name": "enum"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "holds": {
+              "and": [
+                {
+                  "op": "==",
+                  "left": {
+                    "kind": "binding",
+                    "name": "parameter",
+                    "path": [
+                      {
+                        "kind": "case",
+                        "name": "ParameterOptions"
+                      },
+                      {
+                        "kind": "field",
+                        "name": "type"
+                      },
+                      {
+                        "kind": "case",
+                        "name": "string"
+                      }
+                    ]
+                  },
+                  "right": {
+                    "kind": "literal",
+                    "value": "string"
+                  }
+                },
+                {
+                  "op": ">=",
+                  "left": {
+                    "kind": "binding",
+                    "name": "parameter",
+                    "path": [
+                      {
+                        "kind": "case",
+                        "name": "ParameterOptions"
+                      },
+                      {
+                        "kind": "field",
+                        "name": "enum"
+                      },
+                      {
+                        "kind": "method",
+                        "name": "count",
+                        "args": null
+                      }
+                    ]
+                  },
+                  "right": {
+                    "kind": "literal",
+                    "value": 1
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "kind": "invariant",
+        "item": "document/validation.md#http-request-exclusivity",
+        "subject": {
+          "root": "$LensDocument",
+          "path": [
+            {
+              "kind": "field",
+              "name": "resolve"
+            }
+          ]
+        },
+        "predicate": {
+          "forall": {
+            "over": {
+              "kind": "target",
+              "target": {
+                "root": "$LensDocument",
+                "path": [
+                  {
+                    "kind": "field",
+                    "name": "resolve"
+                  }
+                ]
+              }
+            },
+            "bind": "resolver",
+            "where": {
+              "op": "==",
+              "left": {
+                "kind": "binding",
+                "name": "resolver",
+                "path": [
+                  {
+                    "kind": "case",
+                    "name": "HttpResolver"
+                  },
+                  {
+                    "kind": "field",
+                    "name": "kind"
+                  }
+                ]
+              },
+              "right": {
+                "kind": "literal",
+                "value": "http"
+              }
+            },
+            "holds": {
+              "and": [
+                {
+                  "not": {
+                    "and": [
+                      {
+                        "present": {
+                          "kind": "binding",
+                          "name": "resolver",
+                          "path": [
+                            {
+                              "kind": "case",
+                              "name": "HttpResolver"
+                            },
+                            {
+                              "kind": "field",
+                              "name": "request"
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "present": {
+                          "kind": "binding",
+                          "name": "resolver",
+                          "path": [
+                            {
+                              "kind": "case",
+                              "name": "HttpResolver"
+                            },
+                            {
+                              "kind": "field",
+                              "name": "sources"
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "or": [
+                    {
+                      "not": {
+                        "present": {
+                          "kind": "binding",
+                          "name": "resolver",
+                          "path": [
+                            {
+                              "kind": "case",
+                              "name": "HttpResolver"
+                            },
+                            {
+                              "kind": "field",
+                              "name": "sources"
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "op": ">=",
+                      "left": {
+                        "kind": "binding",
+                        "name": "resolver",
+                        "path": [
+                          {
+                            "kind": "case",
+                            "name": "HttpResolver"
+                          },
+                          {
+                            "kind": "field",
+                            "name": "sources"
+                          },
+                          {
+                            "kind": "method",
+                            "name": "count",
+                            "args": null
+                          }
+                        ]
+                      },
+                      "right": {
+                        "kind": "literal",
+                        "value": 1
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "kind": "invariant",
+        "item": "document/validation.md#intercept-request-exclusivity",
+        "subject": {
+          "root": "$LensDocument",
+          "path": [
+            {
+              "kind": "field",
+              "name": "resolve"
+            }
+          ]
+        },
+        "predicate": {
+          "forall": {
+            "over": {
+              "kind": "target",
+              "target": {
+                "root": "$LensDocument",
+                "path": [
+                  {
+                    "kind": "field",
+                    "name": "resolve"
+                  }
+                ]
+              }
+            },
+            "bind": "resolver",
+            "where": {
+              "op": "==",
+              "left": {
+                "kind": "binding",
+                "name": "resolver",
+                "path": [
+                  {
+                    "kind": "case",
+                    "name": "InterceptResolver"
+                  },
+                  {
+                    "kind": "field",
+                    "name": "kind"
+                  }
+                ]
+              },
+              "right": {
+                "kind": "literal",
+                "value": "intercept"
+              }
+            },
+            "holds": {
+              "and": [
+                {
+                  "or": [
+                    {
+                      "and": [
+                        {
+                          "present": {
+                            "kind": "binding",
+                            "name": "resolver",
+                            "path": [
+                              {
+                                "kind": "case",
+                                "name": "InterceptResolver"
+                              },
+                              {
+                                "kind": "field",
+                                "name": "request"
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "not": {
+                            "present": {
+                              "kind": "binding",
+                              "name": "resolver",
+                              "path": [
+                                {
+                                  "kind": "case",
+                                  "name": "InterceptResolver"
+                                },
+                                {
+                                  "kind": "field",
+                                  "name": "sources"
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "and": [
+                        {
+                          "not": {
+                            "present": {
+                              "kind": "binding",
+                              "name": "resolver",
+                              "path": [
+                                {
+                                  "kind": "case",
+                                  "name": "InterceptResolver"
+                                },
+                                {
+                                  "kind": "field",
+                                  "name": "request"
+                                }
+                              ]
+                            }
+                          }
+                        },
+                        {
+                          "present": {
+                            "kind": "binding",
+                            "name": "resolver",
+                            "path": [
+                              {
+                                "kind": "case",
+                                "name": "InterceptResolver"
+                              },
+                              {
+                                "kind": "field",
+                                "name": "sources"
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "or": [
+                    {
+                      "not": {
+                        "present": {
+                          "kind": "binding",
+                          "name": "resolver",
+                          "path": [
+                            {
+                              "kind": "case",
+                              "name": "InterceptResolver"
+                            },
+                            {
+                              "kind": "field",
+                              "name": "sources"
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "op": ">=",
+                      "left": {
+                        "kind": "binding",
+                        "name": "resolver",
+                        "path": [
+                          {
+                            "kind": "case",
+                            "name": "InterceptResolver"
+                          },
+                          {
+                            "kind": "field",
+                            "name": "sources"
+                          },
+                          {
+                            "kind": "method",
+                            "name": "count",
+                            "args": null
+                          }
+                        ]
+                      },
+                      "right": {
+                        "kind": "literal",
+                        "value": 1
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      }
+    ],
+    "aliasPredicates": [],
+    "gaps": [
+      {
+        "item": "document/validation.md#scoped-name",
+        "severity": "info",
+        "note": "The three-segment @scope/site/name pattern is a regular-expression constraint the predicate grammar cannot state"
+      },
+      {
+        "item": "document/validation.md#absolute-url-template",
+        "severity": "info",
+        "note": "URL-template substitution followed by URL parsing is beyond the comparison grammar"
+      },
+      {
+        "item": "document/validation.md#closed-keys",
+        "severity": "info",
+        "note": "Rejection of undeclared object keys quantifies over dynamic key sets, which the grammar cannot express"
+      },
+      {
+        "item": "document/validation.md#default-agrees-with-declaration",
+        "severity": "info",
+        "note": "Type agreement between a default and its declaration, and enum membership, quantify over the params record"
+      },
+      {
+        "item": "document/validation.md#refs-resolve",
+        "severity": "info",
+        "note": "Cross-referencing every $ref against $defs keys quantifies over nested schema nodes"
+      },
+      {
+        "item": "document/validation.md#url-holes-declared",
+        "severity": "info",
+        "note": "Extracting {name} holes from a template and checking them against declared params is beyond the grammar"
+      },
+      {
+        "item": "document/validation.md#http-holes-declared",
+        "severity": "info",
+        "note": "Hole extraction across request templates, headers, and earlier source names is beyond the grammar"
+      },
+      {
+        "item": "document/validation.md#selector-holes-declared",
+        "severity": "info",
+        "note": "Hole extraction from selectors and scopes is beyond the grammar"
+      },
+      {
+        "item": "document/validation.md#sibling-spelling-warning",
+        "severity": "info",
+        "note": "Emission of a non-fatal warning string is a diagnostic side effect outside the assertion grammar"
+      },
+      {
+        "item": "document/validation.md#undeclared-outcome-warning",
+        "severity": "info",
+        "note": "Comparing detected outcome names against declared outcomes and emitting a warning is outside the assertion grammar"
+      },
+      {
+        "item": "document/validation.md#invalid-document",
+        "severity": "info",
+        "note": "validate signals failure by throwing with JSON-pointer lines; thrown exceptions and message formats are outside the assertion grammar"
+      }
+    ]
+  }
+}
