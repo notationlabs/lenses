@@ -1,0 +1,43 @@
+{
+  "version": 4,
+  "doc": "resolution/expressions.md",
+  "provenance": {
+    "generatedBy": "claude-fable-5",
+    "generatedAt": "2026-07-30T10:47:09.105Z",
+    "gitCommit": null
+  },
+  "freshness": {
+    "sourceDigest": "sha256:062939fd8edb4860e9d966cdf75b57b7f53976077fb36e14032d6a6b5792ad2b"
+  },
+  "projection": {
+    "assertions": [],
+    "aliasPredicates": [],
+    "gaps": [
+      {
+        "item": "resolution/expressions.md#parameter-bindings",
+        "severity": "info",
+        "note": "Binding each parameter as a JSONata variable is evaluator environment construction outside the grammar"
+      },
+      {
+        "item": "resolution/expressions.md#helper-bindings",
+        "severity": "info",
+        "note": "Compile-once caching keyed by helper source text is evaluator implementation behaviour outside the grammar"
+      },
+      {
+        "item": "resolution/expressions.md#parameters-shadow-helpers",
+        "severity": "info",
+        "note": "Binding precedence between helpers and parameters is environment ordering outside the grammar"
+      },
+      {
+        "item": "resolution/expressions.md#truthy-detection",
+        "severity": "info",
+        "note": "JavaScript Boolean() truthiness of an arbitrary expression result is beyond the comparison grammar"
+      },
+      {
+        "item": "resolution/expressions.md#sandboxed-evaluation",
+        "severity": "info",
+        "note": "The absence of network, DOM, and host access is a capability property the assertion grammar cannot state"
+      }
+    ]
+  }
+}

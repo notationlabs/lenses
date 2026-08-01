@@ -1,0 +1,93 @@
+{
+  "version": 4,
+  "doc": "cli/interface.md",
+  "provenance": {
+    "generatedBy": "claude-fable-5",
+    "generatedAt": "2026-07-30T10:47:09.106Z",
+    "gitCommit": null
+  },
+  "freshness": {
+    "sourceDigest": "sha256:062939fd8edb4860e9d966cdf75b57b7f53976077fb36e14032d6a6b5792ad2b"
+  },
+  "projection": {
+    "assertions": [],
+    "aliasPredicates": [],
+    "gaps": [
+      {
+        "item": "cli/interface.md#non-zero-exit",
+        "severity": "info",
+        "note": "The exit code alone is expressible, but the thrown-versus-error-result conditions and stderr routing are process IO beyond the grammar"
+      },
+      {
+        "item": "cli/interface.md#json-to-stdout",
+        "severity": "info",
+        "note": "Stream separation of JSON stdout and verbose stderr is process IO outside the grammar"
+      },
+      {
+        "item": "cli/interface.md#catalog-requirement",
+        "severity": "info",
+        "note": "The per-command catalog requirement conditions on the command name inside argv, beyond target paths"
+      },
+      {
+        "item": "cli/interface.md#help",
+        "severity": "info",
+        "note": "Help text selection and unknown-command failure are argv-driven control flow outside the grammar"
+      },
+      {
+        "item": "cli/interface.md#option-bounds",
+        "severity": "info",
+        "note": "Numeric option and port-range validation of argv strings is parsing outside the grammar"
+      },
+      {
+        "item": "cli/interface.md#call-operand",
+        "severity": "info",
+        "note": "Operand arity, JSON-object params, --lax mapping, and the 90000 ms default timeout are argv handling outside the grammar"
+      },
+      {
+        "item": "cli/interface.md#eval-offline",
+        "severity": "info",
+        "note": "Stdin/file input selection and variable binding for eval are process IO outside the grammar"
+      },
+      {
+        "item": "cli/interface.md#observe-selector",
+        "severity": "info",
+        "note": "All-digit index versus substring interpretation of --request is string parsing outside the grammar"
+      },
+      {
+        "item": "cli/interface.md#status-wait",
+        "severity": "info",
+        "note": "Waiting up to --wait-ms for a backend before reporting is timed behaviour outside the grammar"
+      },
+      {
+        "item": "cli/interface.md#broker-actions",
+        "severity": "info",
+        "note": "The closed action set for the broker command is argv validation outside the grammar"
+      },
+      {
+        "item": "cli/interface.md#skill-output",
+        "severity": "info",
+        "note": "Printing the embedded SKILL.md without catalog or broker is process IO outside the grammar"
+      },
+      {
+        "item": "cli/interface.md#graphql-loopback",
+        "severity": "info",
+        "note": "Loopback binding, 403 on cross-origin, port scanning from 4381, and the 25-call budget are server behaviour outside the grammar"
+      },
+      {
+        "item": "cli/interface.md#update-report",
+        "severity": "info",
+        "note": "The printed per-source lens counts aggregate catalog state the grammar cannot reference"
+      },
+      {
+        "item": "cli/interface.md#list-report",
+        "severity": "info",
+        "note": "Combining broker status with lens summaries is output composition outside the grammar"
+      },
+      {
+        "item": "cli/interface.md#eval-null-note",
+        "severity": "info",
+        "note": "Printing null with a stderr note for an empty result is process IO outside the grammar"
+      }
+    ]
+  }
+}

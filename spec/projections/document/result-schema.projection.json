@@ -1,0 +1,93 @@
+{
+  "version": 4,
+  "doc": "document/result-schema.md",
+  "provenance": {
+    "generatedBy": "claude-fable-5",
+    "generatedAt": "2026-07-30T10:47:09.104Z",
+    "gitCommit": null
+  },
+  "freshness": {
+    "sourceDigest": "sha256:062939fd8edb4860e9d966cdf75b57b7f53976077fb36e14032d6a6b5792ad2b"
+  },
+  "projection": {
+    "assertions": [
+      {
+        "kind": "outcome",
+        "item": "document/result-schema.md#no-declaration-no-issues",
+        "operation": "checkResult",
+        "condition": {
+          "not": {
+            "present": {
+              "kind": "argument",
+              "name": "doc",
+              "path": [
+                {
+                  "kind": "field",
+                  "name": "returns"
+                }
+              ]
+            }
+          }
+        },
+        "effect": {
+          "op": "==",
+          "left": {
+            "kind": "result",
+            "path": [
+              {
+                "kind": "method",
+                "name": "count",
+                "args": null
+              }
+            ]
+          },
+          "right": {
+            "kind": "literal",
+            "value": 0
+          }
+        },
+        "of": null,
+        "via": "returns",
+        "errorType": null
+      }
+    ],
+    "aliasPredicates": [],
+    "gaps": [
+      {
+        "item": "document/result-schema.md#standard-dialect",
+        "severity": "info",
+        "note": "The emitted JSON Schema dialect, $id, and title composition are properties of a generated document the grammar cannot inspect"
+      },
+      {
+        "item": "document/result-schema.md#declared-fields-required",
+        "severity": "info",
+        "note": "Required-versus-passthrough field semantics of the derived schema are schema-generation behaviour beyond the grammar"
+      },
+      {
+        "item": "document/result-schema.md#lens-ref-shape",
+        "severity": "info",
+        "note": "Validation of $lens fields as nullable lensRef objects is schema-generation behaviour beyond the grammar"
+      },
+      {
+        "item": "document/result-schema.md#nullable-primitives",
+        "severity": "info",
+        "note": "Nullable-primitive translation is schema-generation behaviour beyond the grammar"
+      },
+      {
+        "item": "document/result-schema.md#recursive-defs",
+        "severity": "info",
+        "note": "Memoised lazy schemas and $defs cycle extraction are schema-generation behaviour beyond the grammar"
+      },
+      {
+        "item": "document/result-schema.md#issue-pointers",
+        "severity": "info",
+        "note": "JSON-pointer formatting with ~0/~1 escaping is a string construction the grammar cannot state"
+      },
+      {
+        "item": "document/result-schema.md#missing-flag",
+        "severity": "info",
+        "note": "Whether the failing value is absent versus mistyped requires walking the value by issue path, beyond the grammar"
+      }
+    ]
+  }
+}

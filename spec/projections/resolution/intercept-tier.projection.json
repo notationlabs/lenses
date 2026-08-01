@@ -1,0 +1,205 @@
+{
+  "version": 4,
+  "doc": "resolution/intercept-tier.md",
+  "provenance": {
+    "generatedBy": "claude-fable-5",
+    "generatedAt": "2026-07-30T10:47:09.105Z",
+    "gitCommit": null
+  },
+  "freshness": {
+    "sourceDigest": "sha256:062939fd8edb4860e9d966cdf75b57b7f53976077fb36e14032d6a6b5792ad2b"
+  },
+  "projection": {
+    "assertions": [
+      {
+        "kind": "outcome",
+        "item": "resolution/intercept-tier.md#all-sources-required",
+        "operation": "runIntercept",
+        "of": null,
+        "condition": {
+          "present": {
+            "kind": "event",
+            "type": "$MissingCapture",
+            "path": []
+          }
+        },
+        "via": "returns",
+        "errorType": null,
+        "effect": {
+          "op": "==",
+          "left": {
+            "kind": "result",
+            "path": [
+              {
+                "kind": "case",
+                "name": "TierMiss"
+              },
+              {
+                "kind": "field",
+                "name": "kind"
+              }
+            ]
+          },
+          "right": {
+            "kind": "literal",
+            "value": "miss"
+          }
+        }
+      },
+      {
+        "kind": "outcome",
+        "item": "resolution/intercept-tier.md#non-2xx-is-a-miss",
+        "operation": "runIntercept",
+        "of": null,
+        "condition": {
+          "or": [
+            {
+              "op": "<",
+              "left": {
+                "kind": "event",
+                "type": "$HttpResponseObserved",
+                "path": [
+                  {
+                    "kind": "field",
+                    "name": "status"
+                  }
+                ]
+              },
+              "right": {
+                "kind": "literal",
+                "value": 200
+              }
+            },
+            {
+              "op": ">=",
+              "left": {
+                "kind": "event",
+                "type": "$HttpResponseObserved",
+                "path": [
+                  {
+                    "kind": "field",
+                    "name": "status"
+                  }
+                ]
+              },
+              "right": {
+                "kind": "literal",
+                "value": 300
+              }
+            }
+          ]
+        },
+        "via": "returns",
+        "errorType": null,
+        "effect": {
+          "op": "==",
+          "left": {
+            "kind": "result",
+            "path": [
+              {
+                "kind": "case",
+                "name": "TierMiss"
+              },
+              {
+                "kind": "field",
+                "name": "kind"
+              }
+            ]
+          },
+          "right": {
+            "kind": "literal",
+            "value": "miss"
+          }
+        }
+      },
+      {
+        "kind": "outcome",
+        "item": "resolution/intercept-tier.md#empty-value-is-a-miss",
+        "operation": "runIntercept",
+        "of": null,
+        "condition": {
+          "present": {
+            "kind": "event",
+            "type": "$EmptyTierValue",
+            "path": []
+          }
+        },
+        "via": "returns",
+        "errorType": null,
+        "effect": {
+          "op": "==",
+          "left": {
+            "kind": "result",
+            "path": [
+              {
+                "kind": "case",
+                "name": "TierMiss"
+              },
+              {
+                "kind": "field",
+                "name": "kind"
+              }
+            ]
+          },
+          "right": {
+            "kind": "literal",
+            "value": "miss"
+          }
+        }
+      }
+    ],
+    "aliasPredicates": [],
+    "gaps": [
+      {
+        "item": "resolution/intercept-tier.md#single-request-as-source",
+        "severity": "info",
+        "note": "Normalising the request shorthand into a named source is internal restructuring outside the grammar"
+      },
+      {
+        "item": "resolution/intercept-tier.md#request-pattern-match",
+        "severity": "info",
+        "note": "METHOD-plus-glob matching against captured responses is string matching beyond the comparison grammar"
+      },
+      {
+        "item": "resolution/intercept-tier.md#newest-capture-wins",
+        "severity": "info",
+        "note": "Selecting the newest matching capture is an ordering over the capture buffer the grammar cannot state"
+      },
+      {
+        "item": "resolution/intercept-tier.md#reload-on-miss",
+        "severity": "info",
+        "note": "Reload-then-poll behaviour with a 250 ms interval and waitMs deadline is timed control flow outside the grammar"
+      },
+      {
+        "item": "resolution/intercept-tier.md#body-parse",
+        "severity": "info",
+        "note": "JSON-parse-with-text-fallback of a captured body is beyond the comparison grammar"
+      },
+      {
+        "item": "resolution/intercept-tier.md#projection",
+        "severity": "info",
+        "note": "Per-source items expressions and map projection over bindings are evaluation behaviour outside the grammar"
+      },
+      {
+        "item": "resolution/intercept-tier.md#passive-capture",
+        "severity": "info",
+        "note": "The inability to fire requests or act on the page is a capability property the grammar cannot state"
+      },
+      {
+        "item": "resolution/intercept-tier.md#missing-source-diagnostic",
+        "severity": "info",
+        "note": "Formatting unmatched request patterns into the miss description is outside the projection grammar"
+      },
+      {
+        "item": "resolution/intercept-tier.md#non-2xx-meaning",
+        "severity": "info",
+        "note": "The domain interpretation of a miss as a signed-out redirect is prose semantics"
+      },
+      {
+        "item": "resolution/intercept-tier.md#empty-value-diagnostic",
+        "severity": "info",
+        "note": "Relating an empty projection to captured response URLs is cross-stage data flow outside the projection grammar"
+      }
+    ]
+  }
+}

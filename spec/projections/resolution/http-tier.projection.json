@@ -1,0 +1,245 @@
+{
+  "version": 4,
+  "doc": "resolution/http-tier.md",
+  "provenance": {
+    "generatedBy": "claude-fable-5",
+    "generatedAt": "2026-07-30T10:47:09.105Z",
+    "gitCommit": null
+  },
+  "freshness": {
+    "sourceDigest": "sha256:062939fd8edb4860e9d966cdf75b57b7f53976077fb36e14032d6a6b5792ad2b"
+  },
+  "projection": {
+    "assertions": [
+      {
+        "kind": "outcome",
+        "item": "resolution/http-tier.md#host-cannot-fetch",
+        "operation": "runHttp",
+        "of": null,
+        "condition": {
+          "present": {
+            "kind": "event",
+            "type": "$MissingHttpCapability",
+            "path": []
+          }
+        },
+        "via": "returns",
+        "errorType": null,
+        "effect": {
+          "op": "==",
+          "left": {
+            "kind": "result",
+            "path": [
+              {
+                "kind": "case",
+                "name": "TierMiss"
+              },
+              {
+                "kind": "field",
+                "name": "kind"
+              }
+            ]
+          },
+          "right": {
+            "kind": "literal",
+            "value": "miss"
+          }
+        }
+      },
+      {
+        "kind": "outcome",
+        "item": "resolution/http-tier.md#network-failure-is-a-miss",
+        "operation": "runHttp",
+        "of": null,
+        "condition": {
+          "present": {
+            "kind": "event",
+            "type": "$NetworkFailure",
+            "path": []
+          }
+        },
+        "via": "returns",
+        "errorType": null,
+        "effect": {
+          "op": "==",
+          "left": {
+            "kind": "result",
+            "path": [
+              {
+                "kind": "case",
+                "name": "TierMiss"
+              },
+              {
+                "kind": "field",
+                "name": "kind"
+              }
+            ]
+          },
+          "right": {
+            "kind": "literal",
+            "value": "miss"
+          }
+        }
+      },
+      {
+        "kind": "outcome",
+        "item": "resolution/http-tier.md#non-2xx-is-a-miss",
+        "operation": "runHttp",
+        "of": null,
+        "condition": {
+          "or": [
+            {
+              "op": "<",
+              "left": {
+                "kind": "event",
+                "type": "$HttpResponseObserved",
+                "path": [
+                  {
+                    "kind": "field",
+                    "name": "status"
+                  }
+                ]
+              },
+              "right": {
+                "kind": "literal",
+                "value": 200
+              }
+            },
+            {
+              "op": ">=",
+              "left": {
+                "kind": "event",
+                "type": "$HttpResponseObserved",
+                "path": [
+                  {
+                    "kind": "field",
+                    "name": "status"
+                  }
+                ]
+              },
+              "right": {
+                "kind": "literal",
+                "value": 300
+              }
+            }
+          ]
+        },
+        "via": "returns",
+        "errorType": null,
+        "effect": {
+          "op": "==",
+          "left": {
+            "kind": "result",
+            "path": [
+              {
+                "kind": "case",
+                "name": "TierMiss"
+              },
+              {
+                "kind": "field",
+                "name": "kind"
+              }
+            ]
+          },
+          "right": {
+            "kind": "literal",
+            "value": "miss"
+          }
+        }
+      },
+      {
+        "kind": "outcome",
+        "item": "resolution/http-tier.md#empty-value-is-a-miss",
+        "operation": "runHttp",
+        "of": null,
+        "condition": {
+          "present": {
+            "kind": "event",
+            "type": "$EmptyTierValue",
+            "path": []
+          }
+        },
+        "via": "returns",
+        "errorType": null,
+        "effect": {
+          "op": "==",
+          "left": {
+            "kind": "result",
+            "path": [
+              {
+                "kind": "case",
+                "name": "TierMiss"
+              },
+              {
+                "kind": "field",
+                "name": "kind"
+              }
+            ]
+          },
+          "right": {
+            "kind": "literal",
+            "value": "miss"
+          }
+        }
+      }
+    ],
+    "aliasPredicates": [],
+    "gaps": [
+      {
+        "item": "resolution/http-tier.md#http-value",
+        "severity": "info",
+        "note": "The resolver field value alone is expressible, but the tier-scoped condition and the landed-URL observed fact are beyond the grammar"
+      },
+      {
+        "item": "resolution/http-tier.md#default-request",
+        "severity": "info",
+        "note": "Defaulting to GET of the lens url and METHOD-prefix parsing are request-construction behaviour outside the grammar"
+      },
+      {
+        "item": "resolution/http-tier.md#url-expansion-encodes",
+        "severity": "info",
+        "note": "Percent-encoded versus verbatim hole expansion is string construction outside the grammar"
+      },
+      {
+        "item": "resolution/http-tier.md#dotted-holes-address-bodies",
+        "severity": "info",
+        "note": "Path addressing into earlier response bodies with a scalar requirement is beyond the grammar"
+      },
+      {
+        "item": "resolution/http-tier.md#chained-sources",
+        "severity": "info",
+        "note": "Declaration-order fetching and progressive variable binding across sources is control flow outside the grammar"
+      },
+      {
+        "item": "resolution/http-tier.md#progressive-detection",
+        "severity": "info",
+        "note": "Running detection after each chained response is control flow outside the grammar"
+      },
+      {
+        "item": "resolution/http-tier.md#credentialed-requests",
+        "severity": "info",
+        "note": "Cookie-carrying request delegation to a browser-backed host is host capability behaviour outside the grammar"
+      },
+      {
+        "item": "resolution/http-tier.md#per-item-mapping",
+        "severity": "info",
+        "note": "Applying map per array item versus once over bindings is conditional projection behaviour outside the grammar"
+      },
+      {
+        "item": "resolution/http-tier.md#network-failure-falls-through",
+        "severity": "info",
+        "note": "Trying later tiers after a miss is orchestration outside the projection grammar"
+      },
+      {
+        "item": "resolution/http-tier.md#non-2xx-diagnostic",
+        "severity": "info",
+        "note": "Formatting status and URL into a miss description is string construction outside the projection grammar"
+      },
+      {
+        "item": "resolution/http-tier.md#empty-value-diagnostic",
+        "severity": "info",
+        "note": "Relating an empty intermediate value to its source URL is cross-stage data flow outside the projection grammar"
+      }
+    ]
+  }
+}
