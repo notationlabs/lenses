@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { executeLens } from "../src/engine.js";
+import { executeLens, resolveParams } from "../src/engine.js";
 import { validateSpec } from "../src/validate.js";
 import type { DomResolver, EngineIO, InterceptedResponse } from "../src/types.js";
 
@@ -956,5 +956,27 @@ describe("http tier chained sources", () => {
         ],
       })
     ).toThrow('http parameter "orgs" is not declared');
+  });
+});
+
+describe("resolveParams with {$lens} defaults", () => {
+  const refSpec = validateSpec({
+    name: "@example/hmrc/vat",
+    url: "https://example.com/vat/{vrn}",
+    params: { vrn: { type: "string", default: { $lens: "@example/hmrc/summary", field: "vrn" } } },
+    effects: { reads: ["example.com"], writes: [] },
+    resolve: [{ kind: "dom", fields: { total: { selector: ".total" } } }],
+  });
+
+  // The engine only ever sees concrete params; an unresolved ref default here
+  // is a host bug, never a missing input, and must not substitute the object.
+  it("hard-errors on an unresolved ref default instead of substituting the object", () => {
+    expect(() => resolveParams(refSpec, {})).toThrow(
+      'unresolved parameter default "vrn" for @example/hmrc/vat'
+    );
+  });
+
+  it("accepts a supplied value over a ref default", () => {
+    expect(resolveParams(refSpec, { vrn: "GB123" })).toEqual({ vrn: "GB123" });
   });
 });

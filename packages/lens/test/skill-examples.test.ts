@@ -205,4 +205,17 @@ describe("SKILL.md authoring examples", () => {
     const result = await executeLens(spec, {}, io([{ period: null }], null));
     expect(result).toMatchObject({ kind: "value", value: [{ period: null, detail: null }] });
   });
+
+  it("accepts a param default drawn from another lens, as written", () => {
+    const spec = validateSpec({
+      name: "@scope/site/vat",
+      url: "https://site.com/vat/{vrn}",
+      params: {
+        vrn: { type: "string", default: { $lens: "@scope/site/summary", field: "vrn" } },
+      },
+      effects: { reads: ["site.com"], writes: [] },
+      resolve: [{ kind: "dom", fields: { total: { selector: ".total" } } }],
+    });
+    expect(spec.params).toMatchObject({ vrn: { default: { field: "vrn" } } });
+  });
 });

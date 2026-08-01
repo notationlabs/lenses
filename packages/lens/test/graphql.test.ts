@@ -94,6 +94,21 @@ describe("buildLensSchema", () => {
     expect(sdl).toMatch(/stories\([^)]*first: Int\s*\): \[HnTopStories\]/);
   });
 
+  // An object is not a legal GraphQL defaultValue; the client resolves the
+  // ref default per call, so the arg just stays optional.
+  it("omits the GraphQL defaultValue for a {$lens} ref default", () => {
+    const vatSpec: LensSpec = {
+      ...base,
+      name: "@example/hmrc/vat",
+      params: {
+        vrn: { type: "string", default: { $lens: "@example/hmrc/summary", field: "vrn" } },
+      },
+      returns: { type: "object", fields: { total: "number" } },
+    };
+    const sdl = printSchema(buildLensSchema([vatSpec]));
+    expect(sdl).toContain("vat(vrn: String): HmrcVat");
+  });
+
   it("compiles an enum param into a named enum type that passes the declared value", async () => {
     const searchSpec: LensSpec = {
       ...base,

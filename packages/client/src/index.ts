@@ -2,11 +2,14 @@ import {
   deriveJsonSchema,
   errorMessage,
   expandUrl,
+  paramLensDefault,
   resolveParams,
   specWarnings,
   validateResult,
+  type LensParam,
   type LensResult,
   type LensSpec,
+  type ParamLensDefault,
   type ValidationIssue,
 } from "@djgrant/lens";
 import {
@@ -110,6 +113,57 @@ interface CacheEntry {
   expiresAt: number;
 }
 
+/** Bounds on resolving {$lens} parameter defaults within one outer call. */
+const REF_DEFAULT_MAX_CALLS = 8;
+const REF_DEFAULT_MAX_DEPTH = 4;
+
+interface RefDefaultContext {
+  /** shared across the whole outer call, including nested default chains */
+  budget: { remaining: number };
+  depth: number;
+  /** canonical (lens, params) identities of calls in progress, for cycle detection */
+  stack: Set<string>;
+}
+
+const freshRefDefaultContext = (): RefDefaultContext => ({
+  budget: { remaining: REF_DEFAULT_MAX_CALLS },
+  depth: 0,
+  stack: new Set(),
+});
+
+const canonicalCallKey = (lens: string, params: Record<string, unknown>): string =>
+  `${lens}|${JSON.stringify(
+    Object.fromEntries(Object.entries(params).sort(([a], [b]) => a.localeCompare(b)))
+  )}`;
+
+/**
+ * A ref default must project a top-level non-nullable primitive that agrees
+ * with the declared param type — checked before the call, so an authoring
+ * mistake fails without spending a browser call.
+ */
+function checkRefDefaultTarget(
+  target: LensSpec,
+  ref: ParamLensDefault,
+  declaration: LensParam,
+  via: string
+): void {
+  const paramType = typeof declaration === "string" ? declaration : declaration.type;
+  const returns = target.returns as { type?: unknown; fields?: Record<string, unknown> } | undefined;
+  const field =
+    returns && returns.type === "object" && returns.fields ? returns.fields[ref.field] : undefined;
+  if (field === undefined) {
+    throw new Error(
+      `${via}: ${ref.$lens} does not declare a top-level "${ref.field}" field in its returns`
+    );
+  }
+  const agrees = field === paramType || (paramType === "number" && field === "integer");
+  if (!agrees) {
+    throw new Error(
+      `${via}: field "${ref.field}" of ${ref.$lens} is not a non-nullable ${paramType}`
+    );
+  }
+}
+
 export class LensClient {
   private readonly cache = new Map<string, CacheEntry>();
   private transportPromise?: Promise<LensTransport>;
@@ -164,12 +218,38 @@ export class LensClient {
   }
 
   async call(input: LensCall): Promise<LensCallResult> {
+    return this.callWithin(input, freshRefDefaultContext());
+  }
+
+  private async callWithin(input: LensCall, refs: RefDefaultContext): Promise<LensCallResult> {
     this.log(`resolving lens ${input.lens}`);
     const spec = await this.store.resolve(input.lens);
+    const supplied = input.params ?? {};
+    const key = canonicalCallKey(spec.name, supplied);
+    if (refs.stack.has(key)) {
+      return {
+        kind: "error",
+        message: `circular parameter default: ${spec.name} called again with the same params while its defaults were being resolved`,
+      };
+    }
+    refs.stack.add(key);
+    try {
+      return await this.dispatch(input, spec, supplied, refs);
+    } finally {
+      refs.stack.delete(key);
+    }
+  }
+
+  private async dispatch(
+    input: LensCall,
+    spec: LensSpec,
+    supplied: Record<string, unknown>,
+    refs: RefDefaultContext
+  ): Promise<LensCallResult> {
     let params: Record<string, unknown>;
     let url: string;
     try {
-      params = resolveParams(spec, input.params ?? {});
+      params = resolveParams(spec, await this.applyRefDefaults(spec, supplied, refs));
       url = expandUrl(spec.url, params);
     } catch (error) {
       return { kind: "error", message: (error as Error).message };
@@ -191,6 +271,55 @@ export class LensClient {
       this.cache.set(key, { result, expiresAt: Date.now() + ttl });
     }
     return this.validate(spec, result, input.strict ?? true);
+  }
+
+  /**
+   * Fill omitted params whose default is a {$lens, field} reference by calling
+   * the target lens and projecting the field. The engine only ever sees
+   * concrete values; the projected value passes through the normal type and
+   * enum checks in resolveParams like any caller-supplied input.
+   */
+  private async applyRefDefaults(
+    spec: LensSpec,
+    supplied: Record<string, unknown>,
+    refs: RefDefaultContext
+  ): Promise<Record<string, unknown>> {
+    const filled = { ...supplied };
+    for (const [key, declaration] of Object.entries(spec.params ?? {})) {
+      const ref = paramLensDefault(declaration);
+      if (!ref || Object.hasOwn(filled, key)) continue;
+      const via = `default for "${key}" via ${ref.$lens}`;
+      if (refs.depth >= REF_DEFAULT_MAX_DEPTH) {
+        throw new Error(`${via}: parameter default chain exceeds depth ${REF_DEFAULT_MAX_DEPTH}`);
+      }
+      if (refs.budget.remaining <= 0) {
+        throw new Error(
+          `${via}: parameter default call budget of ${REF_DEFAULT_MAX_CALLS} exhausted`
+        );
+      }
+      refs.budget.remaining -= 1;
+      checkRefDefaultTarget(await this.store.resolve(ref.$lens), ref, declaration, via);
+      this.log(`resolving ${via}`);
+      const result = await this.callWithin(
+        { lens: ref.$lens, params: ref.params ?? {} },
+        { budget: refs.budget, depth: refs.depth + 1, stack: refs.stack }
+      );
+      if (result.kind === "outcome") throw new Error(`${via}: returned outcome "${result.name}"`);
+      if (result.kind === "error") throw new Error(`${via}: ${result.message}`);
+      if (result.partial) throw new Error(`${via}: returned a partial result`);
+      const row = result.value;
+      const value =
+        typeof row === "object" && row !== null && !Array.isArray(row)
+          ? (row as Record<string, unknown>)[ref.field]
+          : undefined;
+      if (value === undefined || value === null) {
+        throw new Error(
+          `${via}: field "${ref.field}" is ${value === null ? "null" : "missing"} in the result`
+        );
+      }
+      filled[key] = value;
+    }
+    return filled;
   }
 
   /** `call()` unwrapped: the resolved value, or a thrown LensOutcomeError / LensResultError. */

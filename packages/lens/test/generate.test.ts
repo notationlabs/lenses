@@ -33,6 +33,20 @@ describe("generateTsSdk", () => {
     expect(source).toContain("params: Record<string, never>;");
   });
 
+  it("keeps a {$lens} ref-defaulted param optional without emitting the default", () => {
+    const source = generateTsSdk([
+      spec({
+        name: "@example/hmrc/vat",
+        url: "https://example.com/{vrn}",
+        params: {
+          vrn: { type: "string", default: { $lens: "@example/hmrc/summary", field: "vrn" } },
+        },
+      }),
+    ]);
+    expect(source).toContain("params: { vrn?: string };");
+    expect(source).not.toContain("@example/hmrc/summary");
+  });
+
   it("derives open objects, nullable primitives and typed lens refs", () => {
     const source = generateTsSdk([
       spec({

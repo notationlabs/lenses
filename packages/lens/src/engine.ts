@@ -1,4 +1,12 @@
-import type { EngineIO, LensResult, LensSpec, Resolver, ResolverMiss } from "./types.js";
+import type {
+  EngineIO,
+  LensParam,
+  LensResult,
+  LensSpec,
+  ParamLensDefault,
+  Resolver,
+  ResolverMiss,
+} from "./types.js";
 import { materialiseLenses } from "./materialise.js";
 import { runHttp } from "./resolvers/http.js";
 import { runIntercept } from "./resolvers/intercept.js";
@@ -117,6 +125,11 @@ export function resolveParams(
   const params: Record<string, unknown> = {};
   for (const [key, declaration] of Object.entries(declarations)) {
     const type = typeof declaration === "string" ? declaration : declaration.type;
+    // A {$lens} default is resolved by the host before execution; reaching the
+    // engine with one still unresolved is a host bug, not a missing input.
+    if (!Object.hasOwn(input, key) && paramLensDefault(declaration)) {
+      throw new Error(`unresolved parameter default "${key}" for ${spec.name}`);
+    }
     const fallback = typeof declaration === "string" ? undefined : declaration.default;
     const value = Object.hasOwn(input, key) ? input[key] : fallback;
     if (value === undefined) throw new Error(`missing parameter "${key}" for ${spec.name}`);
@@ -132,6 +145,15 @@ export function resolveParams(
     params[key] = value;
   }
   return params;
+}
+
+/** The {$lens, field, params?} default of a declaration, when it has one. */
+export function paramLensDefault(
+  declaration: LensParam | undefined
+): ParamLensDefault | undefined {
+  if (declaration === undefined || typeof declaration === "string") return undefined;
+  const fallback = declaration.default;
+  return typeof fallback === "object" && fallback !== null ? fallback : undefined;
 }
 
 function matchesParamType(value: unknown, type: string): boolean {

@@ -314,6 +314,218 @@ describe("LensClient", () => {
     });
   });
 
+  describe("{$lens} parameter defaults", () => {
+    /** Routes canned results per lens name; records the order of engine calls. */
+    class RoutingTransport extends FakeTransport {
+      named: string[] = [];
+      results: Record<string, LensTransportResult> = {};
+
+      override async call(spec: LensSpec, params: Record<string, unknown>): Promise<LensResult> {
+        this.named.push(spec.name);
+        this.lastParams = params;
+        return this.results[spec.name] ?? { kind: "value", value: {}, resolver: "dom" };
+      }
+    }
+
+    const summarySpec = {
+      name: "@example/hmrc/summary",
+      url: "https://example.com/summary",
+      returns: { type: "object", fields: { vrn: "string" } },
+      effects: { reads: ["example.com"], writes: [] },
+      resolve: [{ kind: "dom", fields: { vrn: { selector: ".vrn" } } }],
+    };
+
+    const vatSpec = (param: unknown) => ({
+      name: "@example/hmrc/vat",
+      url: "https://example.com/vat/{vrn}",
+      params: { vrn: param },
+      returns: { type: "object", fields: { total: "number" } },
+      effects: { reads: ["example.com"], writes: [] },
+      resolve: [{ kind: "dom", fields: { total: { selector: ".total" } } }],
+    });
+
+    const refDefault = { $lens: "@example/hmrc/summary", field: "vrn" };
+
+    async function catalogDirectory(...specs: object[]): Promise<string> {
+      const directory = await mkdtemp(join(tmpdir(), "lens-client-"));
+      await Promise.all(
+        specs.map((spec, index) =>
+          writeFile(join(directory, `lens-${index}.json`), JSON.stringify(spec))
+        )
+      );
+      return directory;
+    }
+
+    async function catalog(
+      ...specs: object[]
+    ): Promise<{ client: LensClient; transport: RoutingTransport }> {
+      const transport = new RoutingTransport();
+      const client = new LensClient(new LensStore(await catalogDirectory(...specs)), transport);
+      return { client, transport };
+    }
+
+    it("fills an omitted param by calling the target lens and projecting the field", async () => {
+      const { client, transport } = await catalog(summarySpec, vatSpec({ type: "string", default: refDefault }));
+      transport.results["@example/hmrc/summary"] = {
+        kind: "value",
+        value: { vrn: "GB123" },
+        resolver: "dom",
+      };
+      transport.results["@example/hmrc/vat"] = {
+        kind: "value",
+        value: { total: 42 },
+        resolver: "dom",
+      };
+
+      expect(await client.call({ lens: "hmrc/vat" })).toMatchObject({
+        kind: "value",
+        value: { total: 42 },
+      });
+      expect(transport.named).toEqual(["@example/hmrc/summary", "@example/hmrc/vat"]);
+      expect(transport.lastParams).toEqual({ vrn: "GB123" });
+    });
+
+    it("skips the default call when the caller supplies the param", async () => {
+      const { client, transport } = await catalog(summarySpec, vatSpec({ type: "string", default: refDefault }));
+      transport.results["@example/hmrc/vat"] = {
+        kind: "value",
+        value: { total: 42 },
+        resolver: "dom",
+      };
+
+      await client.call({ lens: "hmrc/vat", params: { vrn: "GB9" } });
+      expect(transport.named).toEqual(["@example/hmrc/vat"]);
+    });
+
+    it("fails the outer call naming the param and target when the target errors", async () => {
+      const { client, transport } = await catalog(summarySpec, vatSpec({ type: "string", default: refDefault }));
+      transport.results["@example/hmrc/summary"] = { kind: "error", message: "boom" };
+
+      expect(await client.call({ lens: "hmrc/vat" })).toEqual({
+        kind: "error",
+        message: 'default for "vrn" via @example/hmrc/summary: boom',
+      });
+    });
+
+    it("fails the outer call when the target returns an outcome", async () => {
+      const { client, transport } = await catalog(summarySpec, vatSpec({ type: "string", default: refDefault }));
+      transport.results["@example/hmrc/summary"] = {
+        kind: "outcome",
+        name: "needs_auth",
+        value: null,
+        resolver: "dom",
+      };
+
+      expect(await client.call({ lens: "hmrc/vat" })).toEqual({
+        kind: "error",
+        message: 'default for "vrn" via @example/hmrc/summary: returned outcome "needs_auth"',
+      });
+    });
+
+    it("fails the outer call when the target result is partial", async () => {
+      const { client, transport } = await catalog(summarySpec, vatSpec({ type: "string", default: refDefault }));
+      transport.results["@example/hmrc/summary"] = {
+        kind: "value",
+        value: { vrn: "GB123" },
+        resolver: "dom",
+        partial: true,
+      };
+
+      expect(await client.call({ lens: "hmrc/vat" })).toEqual({
+        kind: "error",
+        message: 'default for "vrn" via @example/hmrc/summary: returned a partial result',
+      });
+    });
+
+    // An authoring mistake fails before spending a browser call.
+    it("rejects a ref default whose target field disagrees with the param type", async () => {
+      const { client, transport } = await catalog(
+        summarySpec,
+        vatSpec({ type: "integer", default: refDefault })
+      );
+
+      expect(await client.call({ lens: "hmrc/vat" })).toEqual({
+        kind: "error",
+        message:
+          'default for "vrn" via @example/hmrc/summary: field "vrn" of @example/hmrc/summary is not a non-nullable integer',
+      });
+      expect(transport.named).toEqual([]);
+    });
+
+    it("rejects a ref default naming a field the target does not declare", async () => {
+      const { client, transport } = await catalog(
+        summarySpec,
+        vatSpec({ type: "string", default: { $lens: "@example/hmrc/summary", field: "vat_number" } })
+      );
+
+      expect(await client.call({ lens: "hmrc/vat" })).toEqual({
+        kind: "error",
+        message:
+          'default for "vrn" via @example/hmrc/summary: @example/hmrc/summary does not declare a top-level "vat_number" field in its returns',
+      });
+      expect(transport.named).toEqual([]);
+    });
+
+    it("re-checks enum membership on the projected value", async () => {
+      const { client, transport } = await catalog(
+        summarySpec,
+        vatSpec({ type: "string", enum: ["GB1", "GB2"], default: refDefault })
+      );
+      transport.results["@example/hmrc/summary"] = {
+        kind: "value",
+        value: { vrn: "GB123" },
+        resolver: "dom",
+      };
+
+      expect(await client.call({ lens: "hmrc/vat" })).toEqual({
+        kind: "error",
+        message: 'parameter "vrn" for @example/hmrc/vat must be one of: GB1, GB2',
+      });
+    });
+
+    it("rejects a lens whose default chain re-enters itself", async () => {
+      const selfSpec = {
+        name: "@example/web/self",
+        url: "https://example.com/{x}",
+        params: { x: { type: "string", default: { $lens: "@example/web/self", field: "x" } } },
+        returns: { type: "object", fields: { x: "string" } },
+        effects: { reads: ["example.com"], writes: [] },
+        resolve: [{ kind: "dom", fields: { x: { selector: ".x" } } }],
+      };
+      const { client } = await catalog(selfSpec);
+
+      expect(await client.call({ lens: "web/self" })).toMatchObject({
+        kind: "error",
+        message: expect.stringContaining("circular parameter default: @example/web/self"),
+      });
+    });
+
+    it("caps how deep a default chain may recurse", async () => {
+      const chain = [0, 1, 2, 3, 4, 5].map((step) => ({
+        name: `@example/web/step${step}`,
+        url: `https://example.com/step${step}/{x}`,
+        params: {
+          x:
+            step === 5
+              ? { type: "string", default: "leaf" }
+              : { type: "string", default: { $lens: `@example/web/step${step + 1}`, field: "x" } },
+        },
+        returns: { type: "object", fields: { x: "string" } },
+        effects: { reads: ["example.com"], writes: [] },
+        resolve: [{ kind: "dom", fields: { x: { selector: ".x" } } }],
+      }));
+      const { client, transport } = await catalog(...chain);
+      for (const spec of chain) {
+        transport.results[spec.name] = { kind: "value", value: { x: "leaf" }, resolver: "dom" };
+      }
+
+      expect(await client.call({ lens: "web/step0" })).toMatchObject({
+        kind: "error",
+        message: expect.stringContaining("parameter default chain exceeds depth 4"),
+      });
+    });
+  });
+
   it("reports lens resolution and call parameters", async () => {
     const messages: string[] = [];
     const client = new LensClient(

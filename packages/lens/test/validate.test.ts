@@ -85,6 +85,71 @@ describe("validateSpec", () => {
     ).toThrow(/default.*page.*enum/);
   });
 
+  it("accepts a {$lens, field} parameter default with literal params", () => {
+    const spec = {
+      ...validSpec,
+      params: {
+        page: {
+          type: "string",
+          default: { $lens: "@example/web/home", field: "page", params: { limit: 1 } },
+        },
+      },
+    };
+    expect(validateSpec(spec)).toEqual(spec);
+  });
+
+  // Membership can only be judged against the resolved value, so an enum with
+  // a ref default is structurally fine here and checked by the host per call.
+  it("accepts an enum parameter with a ref default", () => {
+    const spec = {
+      ...validSpec,
+      params: {
+        page: {
+          type: "string",
+          enum: ["a", "b"],
+          default: { $lens: "@example/web/home", field: "page" },
+        },
+      },
+    };
+    expect(validateSpec(spec)).toEqual(spec);
+  });
+
+  it("rejects a ref default without a field", () => {
+    expect(() =>
+      validateSpec({
+        ...validSpec,
+        params: { page: { type: "string", default: { $lens: "@example/web/home" } } },
+      })
+    ).toThrow(/field/);
+  });
+
+  it("rejects a ref default whose target is not a scoped lens name", () => {
+    expect(() =>
+      validateSpec({
+        ...validSpec,
+        params: { page: { type: "string", default: { $lens: "web/home", field: "page" } } },
+      })
+    ).toThrow(/default.*page.*scoped lens name/);
+  });
+
+  it("rejects non-literal params on a ref default", () => {
+    expect(() =>
+      validateSpec({
+        ...validSpec,
+        params: {
+          page: {
+            type: "string",
+            default: {
+              $lens: "@example/web/home",
+              field: "page",
+              params: { limit: { nested: true } },
+            },
+          },
+        },
+      })
+    ).toThrow(/params/);
+  });
+
   it("rejects a non-positive page load timeout", () => {
     expect(() => validateSpec({ ...validSpec, loadTimeoutMs: 0 })).toThrow(/loadTimeoutMs/);
   });
