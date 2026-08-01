@@ -9,9 +9,17 @@ title: Entity declarations
 ```entity
 type ParameterType = "string" | "number" | "integer" | "boolean"
 
+type ParameterDefault = string | number | boolean | ParamLensDefault
+
+type ParamLensDefault = {
+  $lens: string
+  field: string
+  params?: Record<string, string | number | boolean>
+}
+
 type ParameterOptions = {
   type: ParameterType
-  default?: json
+  default?: ParameterDefault
   enum?: string[]
 }
 

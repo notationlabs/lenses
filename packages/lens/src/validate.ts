@@ -119,7 +119,22 @@ const lensSpecSchema = z.strictObject({
         z.enum(["string", "number", "integer", "boolean"]),
         z.strictObject({
           type: z.enum(["string", "number", "integer", "boolean"]),
-          default: z.union([z.string(), z.number(), z.boolean()]).optional(),
+          default: z
+            .union([
+              z.string(),
+              z.number(),
+              z.boolean(),
+              // A {$lens, field} default the host resolves by calling the
+              // target lens; params are literals only — no expressions.
+              z.strictObject({
+                $lens: z.string(),
+                field: z.string(),
+                params: z
+                  .record(z.string(), z.union([z.string(), z.number(), z.boolean()]))
+                  .optional(),
+              }),
+            ])
+            .optional(),
           enum: z.array(z.string()).min(1).optional(),
         }),
       ])
@@ -300,6 +315,17 @@ export function validateSpec(raw: unknown): LensSpec {
       );
     }
     if (declaration.default === undefined) continue;
+    if (typeof declaration.default === "object") {
+      // Structural check only: type agreement with the target's field and enum
+      // membership are the host's to verify at resolution time, because a
+      // single document cannot see the target lens.
+      if (!/^@[a-z0-9_-]+\/[a-z0-9_-]+\/[a-z0-9_-]+$/.test(declaration.default.$lens)) {
+        throw new Error(
+          `invalid lens spec:\n  default for parameter "${name}" must reference a scoped lens name like "@djgrant/hn/top"`
+        );
+      }
+      continue;
+    }
     const valid =
       declaration.type === "integer"
         ? Number.isInteger(declaration.default)

@@ -225,6 +225,23 @@ A call result is one of:
    // in a resolver: "post": "$[[0..$limit - 1]]"
    ```
 
+   A default may also come from another lens: `{"$lens": ..., "field": ...,
+   "params"?: {...literals}}` calls the target when the caller omits the key and
+   uses the named top-level field of its result. Use it for identity-like values
+   the caller should not have to know — an account number a summary page already
+   shows:
+
+   ```jsonc
+   "params": { "vrn": { "type": "string",
+     "default": { "$lens": "@scope/site/summary", "field": "vrn" } } },
+   ```
+
+   The target field must be a non-nullable primitive matching the param type,
+   and a target that errors or returns an outcome fails the call rather than
+   guessing. Prefer a cached target (`effects.cache`) — the default costs a
+   lens call whenever the caller omits the key. This form is a parameter
+   default only; `field` is not valid on a `returns` reference.
+
    Selectors take the same `{name}` holes as `url`, so a page that keys its
    markup by a parameter needs no post-hoc recovery of that value from row text:
 

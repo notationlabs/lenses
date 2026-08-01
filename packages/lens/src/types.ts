@@ -51,10 +51,24 @@ export type LensParam =
   | LensParamType
   | {
       type: LensParamType;
-      default?: string | number | boolean;
+      default?: string | number | boolean | ParamLensDefault;
       /** closed set of accepted values; only valid on string params */
       enum?: string[];
     };
+
+/**
+ * A parameter default supplied by another lens: when the caller omits the key,
+ * the host calls `$lens` (with literal `params`) and projects `field` — a
+ * top-level key of the target's returns — as the value. Only legal under a
+ * parameter's `default`; a `returns` reference stays `{$lens, params?}`,
+ * because result refs are lazy join tokens while a default must become an
+ * eager scalar before URL expansion.
+ */
+export interface ParamLensDefault {
+  $lens: string;
+  field: string;
+  params?: Record<string, string | number | boolean>;
+}
 
 export interface LensEffects {
   reads: string[];

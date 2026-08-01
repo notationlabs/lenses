@@ -355,7 +355,10 @@ export function buildLensSchema(specs: LensSpec[]): GraphQLSchema {
   const argsFor = (params: LensSpec["params"], baseName: string) =>
     Object.fromEntries(
       Object.entries(params ?? {}).map(([key, declaration]) => {
-        const fallback = isRecord(declaration) ? declaration.default : undefined;
+        const declared = isRecord(declaration) ? declaration.default : undefined;
+        // A {$lens} ref default is resolved by the client per call, and an
+        // object is not a legal GraphQL defaultValue; the arg stays optional.
+        const fallback = isRecord(declared) ? undefined : declared;
         return [
           key,
           {
