@@ -109,6 +109,7 @@ lens update -c git:github.com/notationlabs/lenses#main/examples
 lens call hn/top
 lens call claude/usage
 lens call hn/item --params '{"id":"42","p":2,"limit":10}' --verbose
+lens call chatgpt/send --params '{"message":"hello"}' --allow-writes
 lens observe https://github.com/notifications --wait-ms 4000 --html
 lens schema hn/top
 lens gen ts-sdk -o src/lenses.gen.ts
@@ -207,9 +208,7 @@ fields, detects a named outcome, or misses and falls through.
 When `returns` is an object, fields accumulate across tiers. The engine stops when all
 declared fields are present, so each tier only needs to supply its part of the result.
 
-Lens `map` and `detect` bodies are JSONata expressions. They cannot reach the network or
-DOM. Beyond an `http` tier's declared requests, lenses observe what a page already
-does and cannot fire requests or act on the page.
+Lens `map` and `detect` bodies are JSONata expressions. They cannot reach the network or DOM. Beyond an `http` tier's declared requests, lenses observe what a page already does; a lens may act on the page only through a declared `perform` block, and only when the caller opts in with `--allow-writes` (CLI) or `allowWrites` (client and MCP).
 `lens eval` runs the same sandboxed evaluator against a JSON file or stdin, so an
 expression can be iterated on offline before it goes into a lens document.
 
@@ -294,6 +293,22 @@ repository, or an HTTP catalog index — or at a direct HTTP URL.
   same name shadows both.
 
 - `effects` — `{ "reads": [...], "writes": [...], "idempotent": true, "cache": 60 }`.
+- `perform` — an ordered list of write steps run once against the bound page, before the resolve tiers read the result back:
+
+  ```jsonc
+  "perform": [
+    { "fill": "#prompt-textarea", "value": "$message" },   // insertText, never value=
+    { "click": "[data-testid='send-button']" },
+    { "press": "Enter" },
+    { "wait": { "increases": "section[data-turn]", "timeoutMs": 30000 } },
+    { "navigate": "fresh" }                                 // reload the bound target
+  ]
+  ```
+
+  `wait` takes exactly one of `appears` (≥1 match), `gone` (0 matches, immediately true when already satisfied), or `increases` (match count exceeds the baseline sampled at step entry — place it right after the step that triggers the change), plus `timeoutMs` (default 10000). `navigate` accepts only `"fresh"`.
+
+  Consent is declared and enforced: `perform` requires non-empty `effects.writes`, `effects.cache` absent or 0, and `idempotent: true` only when every step is a navigate. The caller must pass `--allow-writes`/`allowWrites` or the call is refused with `code: "writes_not_allowed"`; a step failure is `code: "perform_failed"` with the 0-based `step`, and no tier runs after it. Results are never cached, and any result from a call whose steps all ran carries `performed: true` — the write happened, even if reading the result back failed.
+
 - `loadTimeoutMs` — optional page-load timeout; the default is 30 seconds.
 - `resolve` — ordered http, intercept, DOM, and LLM resolver definitions.
 

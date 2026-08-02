@@ -43,6 +43,12 @@ export interface LensCall {
   lens: string;
   params?: Record<string, unknown>;
   timeoutMs?: number;
+  /**
+   * Consent for a lens with `perform` steps (writes). Default false: the
+   * broker denies with code "writes_not_allowed". Never inherited by nested
+   * calls or {$lens} parameter defaults.
+   */
+  allowWrites?: boolean;
   /** when false, demote `returns` schema violations from an error result to warnings (default true) */
   strict?: boolean;
 }
@@ -266,7 +272,12 @@ export class LensClient {
     }
 
     this.log(`calling ${spec.name}; params: ${Object.keys(params).join(", ") || "none"}`);
-    const result = await (await this.transport()).call(spec, params, input.timeoutMs);
+    const result = await (await this.transport()).call(
+      spec,
+      params,
+      input.timeoutMs,
+      input.allowWrites
+    );
     if (result.kind === "value" && !result.partial && !result.cached && ttl > 0) {
       this.cache.set(key, { result, expiresAt: Date.now() + ttl });
     }

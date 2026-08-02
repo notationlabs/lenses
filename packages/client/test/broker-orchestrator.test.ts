@@ -6,6 +6,8 @@ import type {
   LensResult,
   LensSpec,
   PageSnapshot,
+  PerformResult,
+  PerformStep,
 } from "@djgrant/lens";
 import {
   createBrokerOrchestrator,
@@ -56,6 +58,16 @@ class FakeSession implements BrowserSession {
   async domExtract(_resolver: DomResolver) {
     if (this.failDom) throw this.failDom;
     return this.domResult;
+  }
+
+  performCalls: PerformStep[][] = [];
+  performResult: PerformResult | undefined;
+
+  async perform(steps: PerformStep[]): Promise<PerformResult> {
+    this.performCalls.push(steps);
+    return (
+      this.performResult ?? { url: this.domResult.url, title: this.domResult.title }
+    );
   }
 
   async snapshot(_options: SnapshotOptions): Promise<PageSnapshot> {
@@ -397,6 +409,111 @@ describe("broker orchestration", () => {
     expect(cdp.binds).toHaveLength(1);
     await expect(result).resolves.toMatchObject({ kind: "value" });
     vi.useRealTimers();
+  });
+});
+
+describe("perform consent and execution", () => {
+  const performSpec = (overrides: Partial<LensSpec> = {}): LensSpec =>
+    domSpec({
+      name: "@example/send",
+      effects: { reads: ["example.com"], writes: ["example.com"] },
+      perform: [{ click: "#send" }],
+      ...overrides,
+    });
+
+  it("denies a perform spec without allowWrites, before any page bind", async () => {
+    const backend = new FakeBackend("cdp");
+    const result = await request(createBrokerOrchestrator([backend]), {
+      type: "call",
+      id: "denied",
+      spec: performSpec(),
+      params: {},
+      timeoutMs: 1000,
+    });
+
+    expect(result).toMatchObject({
+      kind: "error",
+      code: "writes_not_allowed",
+    });
+    expect((result as { message: string }).message).toContain("@example/send");
+    expect((result as { message: string }).message).toContain("allowWrites");
+    expect(backend.binds).toHaveLength(0);
+    expect(backend.finishes).toHaveLength(0);
+    expect(backend.session.performCalls).toHaveLength(0);
+  });
+
+  it("runs perform with allowWrites, binding with reuse navigation", async () => {
+    const backend = new FakeBackend("cdp");
+    const result = await request(createBrokerOrchestrator([backend]), {
+      type: "call",
+      id: "allowed",
+      spec: performSpec({
+        // An intercept tier alone would force a fresh bind; perform must win,
+        // so a send never reloads the page out from under itself.
+        resolve: [
+          { kind: "intercept", request: "GET https://example.com/api/*", waitMs: 0 },
+          { kind: "dom", fields: { title: { selector: "h1" } } },
+        ],
+      }),
+      params: {},
+      timeoutMs: 1000,
+      allowWrites: true,
+    });
+
+    expect(result).toMatchObject({ kind: "value", performed: true });
+    expect(backend.binds).toHaveLength(1);
+    expect(backend.binds[0]).toMatchObject({ navigation: "reuse" });
+    expect(backend.session.performCalls).toEqual([[{ click: "#send" }]]);
+  });
+
+  it("bypasses the result cache for perform specs, whatever effects.cache claims", async () => {
+    const backend = new FakeBackend("cdp");
+    const orchestrator = createBrokerOrchestrator([backend]);
+    const spec = performSpec({
+      effects: { reads: ["example.com"], writes: ["example.com"], cache: 60 },
+    });
+    const call = (id: string) =>
+      request(orchestrator, {
+        type: "call",
+        id,
+        spec,
+        params: {},
+        timeoutMs: 1000,
+        allowWrites: true,
+      });
+
+    await call("first");
+    const second = await call("second");
+
+    expect(backend.binds).toHaveLength(2);
+    expect(backend.session.performCalls).toHaveLength(2);
+    expect(second).not.toHaveProperty("cached");
+  });
+
+  it("aborts the call on a failed step without running any tier", async () => {
+    const backend = new FakeBackend("cdp");
+    backend.session.performResult = {
+      failedStep: 0,
+      message: 'click "#send" matched nothing',
+      url: "https://example.com",
+      title: "Example",
+    };
+    const result = await request(createBrokerOrchestrator([backend]), {
+      type: "call",
+      id: "failed",
+      spec: performSpec(),
+      params: {},
+      timeoutMs: 1000,
+      allowWrites: true,
+    });
+
+    expect(result).toMatchObject({
+      kind: "error",
+      code: "perform_failed",
+      step: 0,
+      message: 'click "#send" matched nothing',
+    });
+    expect(result).not.toHaveProperty("performed");
   });
 });
 

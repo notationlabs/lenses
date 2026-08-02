@@ -9,6 +9,10 @@ import puppeteer, { type Browser, type Page } from "puppeteer-core";
 import {
   createCaptureBuffer,
   pageDomExtract,
+  pagePerformClick,
+  pagePerformCount,
+  pagePerformFill,
+  pagePerformPress,
   pageSnapshot,
   pushCapture,
   readCaptures,
@@ -19,6 +23,9 @@ import {
   wakeCaptureWaiters,
   type AuthGate,
   type CaptureBuffer,
+  type PerformResult,
+  type PerformStep,
+  type PerformWait,
 } from "@djgrant/lens";
 import type {
   BackendHttpRequest,
@@ -32,6 +39,8 @@ import type {
 
 const MAX_BODY_BYTES = 512 * 1024;
 const LOAD_GRACE_MS = 500;
+const PERFORM_POLL_MS = 150;
+const PERFORM_WAIT_DEFAULT_MS = 10_000;
 const CONNECT_WINDOW_MS = 45_000;
 const CONNECT_RETRY_MS = 2_000;
 const CONNECT_ATTEMPT_MS = 10_000;
@@ -238,11 +247,30 @@ export function createCdpBackend(
     await settle(page.reload({ waitUntil: "load", timeout: loadTimeoutMs }));
   }
 
+  /**
+   * Serve a `navigate: "fresh"` step: reload when the tab is still on the
+   * lens's origin, otherwise go back to the lens URL (an earlier step may
+   * have taken the tab elsewhere).
+   */
+  async function navigateFresh(
+    page: Page,
+    target: string,
+    loadTimeoutMs: number
+  ): Promise<void> {
+    if (urlOrigin(page.url()) === urlOrigin(target)) {
+      await reloadPage(page, loadTimeoutMs);
+      return;
+    }
+    resetCaptures(page);
+    await settle(page.goto(target, { waitUntil: "load", timeout: loadTimeoutMs }));
+  }
+
   function makeSession(
     page: Page,
     created: boolean,
     navigated: boolean,
-    target: string
+    target: string,
+    loadTimeoutMs: number
   ): CdpSession {
     const session: CdpSession = {
       id: `cdp_${++sessionSequence}`,
@@ -266,6 +294,12 @@ export function createCdpBackend(
           item: resolver.item,
           fields: resolver.fields,
         });
+      },
+      async perform(steps) {
+        assertOpen(session);
+        return performSteps(page, steps, () =>
+          navigateFresh(page, target, loadTimeoutMs)
+        );
       },
       async snapshot(options) {
         assertOpen(session);
@@ -399,7 +433,8 @@ export function createCdpBackend(
           existing,
           false,
           request.navigation === "fresh",
-          request.target
+          request.target,
+          request.loadTimeoutMs
         );
         session.captures = state;
         return session;
@@ -412,7 +447,7 @@ export function createCdpBackend(
           timeout: request.loadTimeoutMs,
         })
       );
-      return makeSession(page, true, true, request.target);
+      return makeSession(page, true, true, request.target, request.loadTimeoutMs);
     },
     async finish(
       session: BrowserSession,
@@ -446,6 +481,112 @@ export function createCdpBackend(
 
 function assertOpen(session: CdpSession): void {
   if (session.closed) throw new Error(`browser session ${session.id} is closed`);
+}
+
+/**
+ * Run perform steps in order, stopping at the first failure. The in-page
+ * primitives are the same page functions the extension injects, so both
+ * backends act identically. A throw inside a step (e.g. a click that
+ * navigates the page away mid-evaluation) fails that step, not the session.
+ */
+async function performSteps(
+  page: Page,
+  steps: PerformStep[],
+  navigateFresh: () => Promise<void>
+): Promise<PerformResult> {
+  for (const [index, step] of steps.entries()) {
+    let failure: string | undefined;
+    try {
+      failure = await performStep(page, step, navigateFresh);
+    } catch (error) {
+      failure = error instanceof Error ? error.message : String(error);
+    }
+    if (failure !== undefined) {
+      return { failedStep: index, message: failure, ...(await pagePlace(page)) };
+    }
+  }
+  return pagePlace(page);
+}
+
+/** One step; a string is the failure message, undefined is success. */
+async function performStep(
+  page: Page,
+  step: PerformStep,
+  navigateFresh: () => Promise<void>
+): Promise<string | undefined> {
+  if ("fill" in step) {
+    const outcome = await page.evaluate(pagePerformFill, {
+      selector: step.fill,
+      value: step.value,
+    });
+    return outcome.ok ? undefined : outcome.message;
+  }
+  if ("click" in step) {
+    const outcome = await page.evaluate(pagePerformClick, { selector: step.click });
+    return outcome.ok ? undefined : outcome.message;
+  }
+  if ("press" in step) {
+    const outcome = await page.evaluate(pagePerformPress, { key: step.press });
+    return outcome.ok ? undefined : outcome.message;
+  }
+  if ("wait" in step) {
+    return performWait(step.wait, (selector) =>
+      page.evaluate(pagePerformCount, { selector })
+    );
+  }
+  await navigateFresh();
+  return undefined;
+}
+
+/**
+ * Host-side wait polling over the shared pagePerformCount probe: `appears` is
+ * count ≥ 1, `gone` is count = 0, `increases` is count > the baseline sampled
+ * once at step entry. A probe that throws mid-navigation counts as "not yet",
+ * not as a failure — the condition gets the full timeout to come true.
+ */
+async function performWait(
+  wait: PerformWait,
+  count: (selector: string) => Promise<number>,
+  pollMs = PERFORM_POLL_MS
+): Promise<string | undefined> {
+  const form = wait.appears !== undefined ? "appears" : wait.gone !== undefined ? "gone" : "increases";
+  const selector = wait.appears ?? wait.gone ?? wait.increases;
+  if (selector === undefined) return "wait step names no selector";
+  const timeoutMs = wait.timeoutMs ?? PERFORM_WAIT_DEFAULT_MS;
+  const deadline = Date.now() + timeoutMs;
+  const probe = async (): Promise<number | undefined> => {
+    try {
+      return await count(selector);
+    } catch {
+      return undefined;
+    }
+  };
+  let baseline = 0;
+  if (form === "increases") {
+    const sampled = await probe();
+    if (sampled === undefined) return `wait increases "${selector}" could not sample its baseline`;
+    baseline = sampled;
+  }
+  for (;;) {
+    const matches = await probe();
+    if (matches !== undefined) {
+      if (form === "appears" && matches >= 1) return undefined;
+      if (form === "gone" && matches === 0) return undefined;
+      if (form === "increases" && matches > baseline) return undefined;
+    }
+    if (Date.now() >= deadline) {
+      return `wait ${form} "${selector}" timed out after ${timeoutMs}ms`;
+    }
+    await delay(pollMs);
+  }
+}
+
+async function pagePlace(page: Page): Promise<{ url: string; title: string }> {
+  try {
+    return { url: page.url(), title: await page.title() };
+  } catch {
+    return { url: page.url(), title: "" };
+  }
 }
 
 async function settle(action: Promise<unknown>): Promise<void> {

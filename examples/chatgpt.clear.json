@@ -1,0 +1,44 @@
+{
+  "name": "@djgrant/chatgpt/clear",
+  "description": "Deletes the logged-out chatgpt.com conversation by reloading the tab (a logged-out chat only exists in the page). Requires allow-writes. Unrecoverable — read it with @djgrant/chatgpt/chat first if you need it.",
+  "url": "https://chatgpt.com/",
+  "returns": {
+    "type": "object",
+    "fields": {
+      "cleared": "boolean"
+    }
+  },
+  "effects": {
+    "reads": [
+      "chatgpt.com"
+    ],
+    "writes": [
+      "chatgpt.com (discards the open logged-out conversation)"
+    ],
+    "idempotent": true,
+    "cache": 0
+  },
+  "perform": [
+    {
+      "navigate": "fresh"
+    }
+  ],
+  "resolve": [
+    {
+      "kind": "dom",
+      "fields": {
+        "composer": {
+          "selector": "#prompt-textarea"
+        },
+        "turn": {
+          "selector": "[data-turn]"
+        }
+      },
+      "post": "{ 'cleared': composer != null and turn = null }"
+    },
+    {
+      "kind": "llm",
+      "prompt": "This is chatgpt.com after a reload. Return {cleared} where cleared is true when no conversation turns ('You said:' / 'ChatGPT said:') are visible and the empty chat composer is shown, and false otherwise."
+    }
+  ]
+}

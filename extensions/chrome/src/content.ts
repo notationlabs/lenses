@@ -2,6 +2,10 @@
 
 import {
   pageDomExtract,
+  pagePerformClick,
+  pagePerformCount,
+  pagePerformFill,
+  pagePerformPress,
   pageSnapshot,
   type DomResolver,
 } from "@djgrant/lens";
@@ -51,6 +55,26 @@ chrome.runtime.onMessage.addListener(
         sendResponse(
           pageDomExtract(message.spec as DomResolver)
         );
+        return false;
+      }
+      // The service worker owns wait polling and navigation; only
+      // single-shot probes run here.
+      if (message.type === "perform_fill") {
+        sendResponse(
+          pagePerformFill({ selector: message.selector, value: message.value })
+        );
+        return false;
+      }
+      if (message.type === "perform_click") {
+        sendResponse(pagePerformClick({ selector: message.selector }));
+        return false;
+      }
+      if (message.type === "perform_press") {
+        sendResponse(pagePerformPress({ key: message.key }));
+        return false;
+      }
+      if (message.type === "perform_count") {
+        sendResponse({ count: pagePerformCount({ selector: message.selector }) });
         return false;
       }
       if (message.type === "snapshot") {

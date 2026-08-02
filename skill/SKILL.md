@@ -5,7 +5,7 @@ description: Read live web pages as typed function calls through the lens CLI. U
 
 # Lenses
 
-A lens turns a webpage into a typed function. Calls run through the user's own browser, preferring the Lens Chrome extension and falling back to Chrome's remote-debugging protocol, so signed-in sessions work without exporting cookies. Lenses observe what a page already does — they cannot click, type, navigate sequences, or fire requests.
+A lens turns a webpage into a typed function. Calls run through the user's own browser, preferring the Lens Chrome extension and falling back to Chrome's remote-debugging protocol, so signed-in sessions work without exporting cookies. Lenses observe what a page already does; a lens acts on the page only through a declared `perform` block, and only when you pass `--allow-writes`.
 
 Every command prints JSON to stdout and exits non-zero on errors. Pass a catalog
 directory with `--catalog <path>` (or ask the user where their lens catalog is).
@@ -32,6 +32,18 @@ A call result is one of:
 - `{"kind": "error", "message": ..., "issues": [...]}` — `issues` names
   failing JSON pointers when the value violated the lens's schema. Retry with
   `--lax` to receive the value with warnings instead.
+
+## Write lenses
+
+A lens with a `perform` block acts on the page: its steps (fill, click, press, wait, navigate) run once, then the resolve tiers read the result in the same call. Calling one requires `--allow-writes`; otherwise it is refused with `code: "writes_not_allowed"`. Check `effects.idempotent` first — a non-idempotent write (e.g. sending a message) sends twice on a retry. `performed: true` on any result means every step ran and the write happened, even if the result itself is an error; `code: "perform_failed"` with a `step` index means it did not. The pattern, on logged-out chatgpt.com:
+
+```sh
+lens call chatgpt/send --params '{"message":"hello"}' --allow-writes   # fills, clicks, waits, returns the transcript
+lens call chatgpt/clear --allow-writes                                  # navigate "fresh" discards the anonymous chat
+lens call chatgpt/chat                                                  # plain read; no flag needed
+```
+
+Authoring one: `perform` requires non-empty `effects.writes`, `cache` 0 or absent, and `idempotent: true` only when every step is a navigate. Keep the read as its own lens (like `chatgpt/chat`) and give the write lens the same tiers as its readback.
 
 ## Authoring a lens for an unmapped page
 

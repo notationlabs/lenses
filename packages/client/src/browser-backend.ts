@@ -4,6 +4,8 @@ import type {
   InterceptDelta,
   InterceptedResponse,
   PageSnapshot,
+  PerformResult,
+  PerformStep,
 } from "@djgrant/lens";
 
 export type { InterceptDelta };
@@ -46,6 +48,12 @@ export interface BrowserSession {
   reload(loadTimeoutMs: number): Promise<void>;
   readIntercepts(cursor: number, deadline: number): Promise<InterceptDelta>;
   domExtract(resolver: DomResolver): Promise<DomExtractResult>;
+  /**
+   * Execute perform steps in order, stopping at the first failure. Failures
+   * are reported in the result, never thrown — a throw means the session
+   * itself broke.
+   */
+  perform(steps: PerformStep[]): Promise<PerformResult>;
   snapshot(options: SnapshotOptions): Promise<PageSnapshot>;
 }
 

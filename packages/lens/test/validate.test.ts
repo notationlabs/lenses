@@ -209,6 +209,115 @@ describe("validateSpec", () => {
     ).toThrow(/at \/resolve\/0\/fields\/title\/selector/);
   });
 
+  describe("perform", () => {
+    const writeSpec = {
+      ...validSpec,
+      effects: { reads: ["example.com"], writes: ["example.com"] },
+    };
+
+    it("accepts every step opcode", () => {
+      const spec = {
+        ...writeSpec,
+        perform: [
+          { wait: { appears: "[data-testid='send']" } },
+          { fill: "#composer", value: "$message" },
+          { click: "[data-testid='send']" },
+          { press: "Enter" },
+          { wait: { increases: ".turn", timeoutMs: 30000 } },
+          { wait: { gone: ".spinner" } },
+          { navigate: "fresh" },
+        ],
+      };
+      expect(validateSpec(spec)).toEqual(spec);
+    });
+
+    it("rejects an empty step list", () => {
+      expect(() => validateSpec({ ...writeSpec, perform: [] })).toThrow(/perform/);
+    });
+
+    it("rejects an unknown opcode, naming the step", () => {
+      expect(() =>
+        validateSpec({ ...writeSpec, perform: [{ click: "#a" }, { hover: "#b" }] })
+      ).toThrow(/at \/perform\/1: must be one perform step/);
+    });
+
+    it("rejects an unknown key on a known opcode", () => {
+      expect(() =>
+        validateSpec({ ...writeSpec, perform: [{ click: "#a", waitMs: 100 }] })
+      ).toThrow(/at \/perform\/0/);
+    });
+
+    it("rejects a wait naming no condition", () => {
+      expect(() => validateSpec({ ...writeSpec, perform: [{ wait: {} }] })).toThrow(
+        /exactly one of "appears", "gone", or "increases"/
+      );
+    });
+
+    it("rejects a wait naming two conditions", () => {
+      expect(() =>
+        validateSpec({ ...writeSpec, perform: [{ wait: { appears: "#a", gone: "#b" } }] })
+      ).toThrow(/exactly one of "appears", "gone", or "increases"/);
+    });
+
+    it("rejects a non-positive wait timeout", () => {
+      expect(() =>
+        validateSpec({ ...writeSpec, perform: [{ wait: { appears: "#a", timeoutMs: 0 } }] })
+      ).toThrow(/at \/perform\/0\/wait\/timeoutMs/);
+    });
+
+    it('rejects a navigate target other than "fresh"', () => {
+      expect(() =>
+        validateSpec({ ...writeSpec, perform: [{ navigate: "reload" }] })
+      ).toThrow(/at \/perform\/0/);
+    });
+
+    it("rejects perform without a writes declaration", () => {
+      expect(() =>
+        validateSpec({ ...validSpec, perform: [{ click: "#send" }] })
+      ).toThrow(/"effects.writes" must name what they write to/);
+    });
+
+    it("rejects perform with a positive result cache", () => {
+      expect(() =>
+        validateSpec({
+          ...writeSpec,
+          effects: { ...writeSpec.effects, cache: 60 },
+          perform: [{ click: "#send" }],
+        })
+      ).toThrow(/"effects.cache" must be absent or 0/);
+    });
+
+    it("accepts perform with an explicit zero cache", () => {
+      const spec = {
+        ...writeSpec,
+        effects: { ...writeSpec.effects, cache: 0 },
+        perform: [{ click: "#send" }],
+      };
+      expect(validateSpec(spec)).toEqual(spec);
+    });
+
+    it("rejects an idempotent claim on non-navigate steps", () => {
+      expect(() =>
+        validateSpec({
+          ...writeSpec,
+          effects: { ...writeSpec.effects, idempotent: true },
+          perform: [{ click: "#send" }],
+        })
+      ).toThrow(/idempotent.*unless every step is a navigate/);
+    });
+
+    // A clear-the-thread lens reloads and nothing else; reloading twice is
+    // still one cleared thread, so its idempotence claim stands.
+    it("accepts an idempotent claim on a navigate-only perform", () => {
+      const spec = {
+        ...writeSpec,
+        effects: { ...writeSpec.effects, idempotent: true },
+        perform: [{ navigate: "fresh" }],
+      };
+      expect(validateSpec(spec)).toEqual(spec);
+    });
+  });
+
   it("accepts nullable primitive return fields", () => {
     expect(() =>
       validateSpec({

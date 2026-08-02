@@ -2,6 +2,8 @@ import * as z from "zod/v4";
 import type {
   DomResolver,
   InterceptedResponse,
+  PerformResult,
+  PerformStep,
 } from "./types.js";
 import type { PageSnapshot } from "./page-functions.js";
 
@@ -70,6 +72,12 @@ export type ExtensionRpcOperation =
       pollDeadline: number;
     }
   | { name: "dom-extract"; sessionId: string; resolver: DomResolver }
+  /**
+   * Execute perform steps against the bound tab, in order, stopping at the
+   * first failure. `fill` values arrive as literal strings — the engine has
+   * already resolved any expression, so the extension never evaluates one.
+   */
+  | { name: "perform"; sessionId: string; steps: PerformStep[] }
   | {
       name: "snapshot";
       sessionId: string;
@@ -135,6 +143,7 @@ export type ExtensionRpcResult =
       name: "dom-extract";
       extraction: { url: string; title: string; value: unknown };
     }
+  | { name: "perform"; result: PerformResult }
   | { name: "snapshot"; snapshot: PageSnapshot }
   | { name: "finish" }
   | { name: "find-gate"; gate: AuthGate | null }
@@ -213,6 +222,30 @@ const domResolverSchema = z.strictObject({
   post: z.string().optional(),
 });
 
+const performWaitSchema = z.strictObject({
+  appears: z.string().min(1).optional(),
+  gone: z.string().min(1).optional(),
+  increases: z.string().min(1).optional(),
+  timeoutMs: z.number().int().positive().optional(),
+});
+
+// The same closed opcode set validate.ts enforces on documents; unknown keys
+// fail closed here too, so a stale extension rejects a step it cannot run.
+const performStepSchema = z.union([
+  z.strictObject({ fill: z.string().min(1), value: z.string() }),
+  z.strictObject({ click: z.string().min(1) }),
+  z.strictObject({ press: z.string().min(1) }),
+  z.strictObject({ wait: performWaitSchema }),
+  z.strictObject({ navigate: z.literal("fresh") }),
+]);
+
+const performResultSchema = z.strictObject({
+  failedStep: z.number().int().nonnegative().optional(),
+  message: z.string().optional(),
+  url: z.string().optional(),
+  title: z.string().optional(),
+});
+
 const operationSchema = z.discriminatedUnion("name", [
   z.strictObject({
     name: z.literal("bind"),
@@ -235,6 +268,11 @@ const operationSchema = z.discriminatedUnion("name", [
     name: z.literal("dom-extract"),
     sessionId: z.string().min(1),
     resolver: domResolverSchema,
+  }),
+  z.strictObject({
+    name: z.literal("perform"),
+    sessionId: z.string().min(1),
+    steps: z.array(performStepSchema).min(1),
   }),
   z.strictObject({
     name: z.literal("snapshot"),
@@ -309,6 +347,10 @@ const rpcResultSchema = z.discriminatedUnion("name", [
       title: z.string(),
       value: z.unknown(),
     }),
+  }),
+  z.strictObject({
+    name: z.literal("perform"),
+    result: performResultSchema,
   }),
   z.strictObject({
     name: z.literal("snapshot"),

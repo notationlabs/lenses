@@ -9,6 +9,7 @@ import {
   type ExtensionRpcRequest,
   type ExtensionRpcResponse,
   type ExtensionRpcResult,
+  type PerformStep,
 } from "@djgrant/lens";
 import { pageFunctionsStamp } from "@djgrant/lens/page-stamp";
 import type {
@@ -319,6 +320,15 @@ class ExtensionSession implements BrowserSession {
     return result.extraction;
   }
 
+  async perform(steps: PerformStep[]) {
+    const result = await this.rpc(
+      { name: "perform", sessionId: this.id, steps },
+      Date.now() + performBudgetMs(steps) + RPC_GRACE_MS
+    );
+    assertResult(result, "perform");
+    return result.result;
+  }
+
   async snapshot(options: SnapshotOptions) {
     const result = await this.rpc({
       name: "snapshot",
@@ -328,6 +338,18 @@ class ExtensionSession implements BrowserSession {
     assertResult(result, "snapshot");
     return result.snapshot;
   }
+}
+
+/**
+ * RPC deadline for a perform: the default plus each wait's own timeout, so a
+ * long wait (e.g. a 120s stream finish) is not cut off.
+ */
+function performBudgetMs(steps: PerformStep[]): number {
+  return steps.reduce(
+    (total, step) =>
+      "wait" in step ? total + (step.wait.timeoutMs ?? 10_000) : total,
+    DEFAULT_RPC_TIMEOUT_MS
+  );
 }
 
 function assertResult<Name extends ExtensionRpcResult["name"]>(

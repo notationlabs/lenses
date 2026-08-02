@@ -26,6 +26,9 @@ describe("shipped lens documents", () => {
     const files = (await readdir(lensCatalog)).filter((file) => file.endsWith(".json"));
     const specs = await Promise.all(files.map(loadLens));
     expect(specs.map((spec) => spec.name).sort()).toEqual([
+      "@djgrant/chatgpt/chat",
+      "@djgrant/chatgpt/clear",
+      "@djgrant/chatgpt/send",
       "@djgrant/claude/usage",
       "@djgrant/github/notifications",
       "@djgrant/hn/comment",

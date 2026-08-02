@@ -22,7 +22,9 @@ export interface LensTransport {
   call(
     spec: LensSpec,
     params: Record<string, unknown>,
-    timeoutMs?: number
+    timeoutMs?: number,
+    /** consent for a spec with `perform` steps; the broker denies without it */
+    allowWrites?: boolean
   ): Promise<LensTransportResult>;
   observe(
     target: string,
@@ -126,10 +128,18 @@ export class BrowserBridge implements LensTransport {
   call(
     spec: LensSpec,
     params: Record<string, unknown>,
-    timeoutMs = 90_000
+    timeoutMs = 90_000,
+    allowWrites?: boolean
   ): Promise<LensTransportResult> {
     return this.request(
-      (id) => ({ type: "call", id, spec, params, timeoutMs }),
+      (id) => ({
+        type: "call",
+        id,
+        spec,
+        params,
+        timeoutMs,
+        ...(allowWrites !== undefined ? { allowWrites } : {}),
+      }),
       timeoutMs
     );
   }

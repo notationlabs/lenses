@@ -99,6 +99,104 @@ export function pageDomExtract(spec: Pick<DomResolver, "item" | "fields">): {
   return { url: location.href, title: document.title, value };
 }
 
+/**
+ * Fill an editor with literal text. Contenteditable editors (ProseMirror
+ * etc.) ignore property writes, so text goes in via focus → select-all →
+ * `insertText`. For `<input>`/`<textarea>` the native setter is used and an
+ * InputEvent dispatched, which React requires.
+ *
+ * The selector must match exactly one element.
+ */
+export function pagePerformFill(spec: { selector: string; value: string }):
+  | { ok: true }
+  | { ok: false; message: string } {
+  const matches = document.querySelectorAll(spec.selector);
+  if (matches.length !== 1) {
+    return {
+      ok: false,
+      message: `fill "${spec.selector}" matched ${matches.length} elements, need exactly 1`,
+    };
+  }
+  const el = matches[0] as HTMLElement;
+  el.focus();
+  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+    const proto = el instanceof HTMLInputElement ? HTMLInputElement.prototype : HTMLTextAreaElement.prototype;
+    Object.getOwnPropertyDescriptor(proto, "value")?.set?.call(el, spec.value);
+    el.dispatchEvent(new InputEvent("input", { bubbles: true, data: spec.value, inputType: "insertText" }));
+    return { ok: true };
+  }
+  document.execCommand("selectAll", false);
+  if (!document.execCommand("insertText", false, spec.value)) {
+    return { ok: false, message: `fill "${spec.selector}" could not insert text` };
+  }
+  return { ok: true };
+}
+
+/**
+ * Click the first visible match. Pages often render hidden duplicates of a
+ * control, so hidden elements are skipped (offsetParent/client-rect check).
+ * A disabled or aria-disabled target is an error: the page is not ready.
+ */
+export function pagePerformClick(spec: { selector: string }):
+  | { ok: true }
+  | { ok: false; message: string } {
+  const matches = [...document.querySelectorAll(spec.selector)];
+  if (matches.length === 0) {
+    return { ok: false, message: `click "${spec.selector}" matched nothing` };
+  }
+  const visible = matches.find(
+    (el) => (el as HTMLElement).offsetParent !== null || el.getClientRects().length > 0
+  );
+  if (!visible) {
+    return { ok: false, message: `click "${spec.selector}" matched no visible element` };
+  }
+  if (
+    (visible as HTMLButtonElement).disabled === true ||
+    visible.getAttribute("aria-disabled") === "true"
+  ) {
+    return { ok: false, message: `click "${spec.selector}" target is disabled` };
+  }
+  (visible as HTMLElement).click();
+  return { ok: true };
+}
+
+/**
+ * Dispatch keydown/keyup for a named key ("Enter", "Meta+Enter") to the
+ * focused element. Synthetic events are untrusted, so trust-checking handlers
+ * and native form submits will not fire — click the submit control instead.
+ */
+export function pagePerformPress(spec: { key: string }):
+  | { ok: true }
+  | { ok: false; message: string } {
+  const parts = spec.key.split("+");
+  const key = parts[parts.length - 1];
+  if (!key) return { ok: false, message: `press "${spec.key}" names no key` };
+  const modifiers = parts.slice(0, -1).map((part) => part.toLowerCase());
+  const init: KeyboardEventInit = {
+    key,
+    bubbles: true,
+    cancelable: true,
+    metaKey: modifiers.includes("meta") || modifiers.includes("cmd"),
+    ctrlKey: modifiers.includes("ctrl") || modifiers.includes("control"),
+    altKey: modifiers.includes("alt"),
+    shiftKey: modifiers.includes("shift"),
+  };
+  const target = document.activeElement ?? document.body;
+  target.dispatchEvent(new KeyboardEvent("keydown", init));
+  target.dispatchEvent(new KeyboardEvent("keyup", init));
+  return { ok: true };
+}
+
+/**
+ * Match count for the wait forms. Hosts poll this for all three: `appears` is
+ * count ≥ 1, `gone` is count = 0, `increases` is count > the baseline the
+ * host sampled at step entry. One probe keeps the wait semantics in the host,
+ * where the timeout and poll interval already live.
+ */
+export function pagePerformCount(spec: { selector: string }): number {
+  return document.querySelectorAll(spec.selector).length;
+}
+
 export function pageSnapshot(opts: { maxChars?: number; html?: boolean; maxHtmlChars?: number }): PageSnapshot {
   /** Body markup for selector authoring: no scripts, styles, or comments. */
   function pageHtml(maxChars: number): string {

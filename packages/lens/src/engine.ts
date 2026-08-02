@@ -4,10 +4,13 @@ import type {
   LensResult,
   LensSpec,
   ParamLensDefault,
+  PerformStep,
   Resolver,
   ResolverMiss,
 } from "./types.js";
+import { evaluate } from "./expr.js";
 import { materialiseLenses } from "./materialise.js";
+import { detectOutcome } from "./resolvers/outcome.js";
 import { runHttp } from "./resolvers/http.js";
 import { runIntercept } from "./resolvers/intercept.js";
 import { runDom } from "./resolvers/dom.js";
@@ -31,6 +34,83 @@ export async function executeLens(
     return { kind: "error", message: (error as Error).message };
   }
 
+  // Perform runs before any tier: a step failure aborts the call before the
+  // walk, and a document with steps never takes an http-only path. When every
+  // step ran, the result carries `performed: true` so the caller knows the
+  // write happened even if reading the result back failed.
+  if (spec.perform) {
+    const aborted = await runPerform(spec, spec.perform, params, io);
+    if (aborted) return aborted;
+    return { ...(await resolveTiers(spec, params, io)), performed: true };
+  }
+  return resolveTiers(spec, params, io);
+}
+
+/**
+ * Run the document's perform steps. Returns the result that ends the call (a
+ * detect hit or a step failure), or null when every step succeeded.
+ */
+async function runPerform(
+  spec: LensSpec,
+  perform: PerformStep[],
+  params: Record<string, unknown>,
+  io: EngineIO
+): Promise<LensResult | null> {
+  if (!io.perform) return { kind: "error", message: "host cannot perform actions" };
+  // Before step 0, run the document's detect on {url, title}: the page may be
+  // a login wall no step should touch. An empty dom extraction is the
+  // cheapest way to read url/title.
+  if (spec.detect) {
+    const { url, title } = await io.domExtract({ kind: "dom" });
+    const outcome = await detectOutcome(spec.detect, { url, title }, params, spec.outcomes, "dom", spec.helpers);
+    if (outcome) return outcome;
+  }
+  // Expressions are the document's trust boundary: they resolve here, so a
+  // host only ever receives literal strings.
+  const steps: PerformStep[] = [];
+  for (const step of perform) {
+    if (!("fill" in step)) {
+      steps.push(step);
+      continue;
+    }
+    const value = await evaluate(step.value, params, params, spec.helpers);
+    if (value === undefined) {
+      return { kind: "error", message: `perform fill value "${step.value}" produced nothing` };
+    }
+    steps.push({ fill: step.fill, value: String(value) });
+  }
+  io.log?.(`performing ${steps.length} step${steps.length === 1 ? "" : "s"}`);
+  const result = await io.perform(steps);
+  if (result.failedStep === undefined) {
+    io.log?.("perform completed");
+    return null;
+  }
+  // A wait that times out on a login wall is not a broken selector: the
+  // document's detect gets to name the landed page before perform_failed does.
+  const detected = await detectOutcome(
+    spec.detect,
+    { url: result.url, title: result.title },
+    params,
+    spec.outcomes,
+    "dom",
+    spec.helpers
+  );
+  if (detected) return detected;
+  io.log?.(`perform failed at step ${result.failedStep}`);
+  return {
+    kind: "error",
+    code: "perform_failed",
+    step: result.failedStep,
+    message: result.message ?? `perform step ${result.failedStep} failed`,
+  };
+}
+
+/** Run resolvers in cost order, filling fields until `returns` is satisfied. */
+async function resolveTiers(
+  spec: LensSpec,
+  params: Record<string, unknown>,
+  io: EngineIO
+): Promise<LensResult> {
   let lastMiss = "no resolvers defined";
   let gathered: unknown;
   // Where the tiers that contributed were actually reading. A tier that missed

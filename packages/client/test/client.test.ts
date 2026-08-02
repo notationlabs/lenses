@@ -18,11 +18,18 @@ class FakeTransport implements LensTransport {
   port = 4319;
   calls = 0;
   lastParams: Record<string, unknown> | undefined;
+  lastAllowWrites: boolean | undefined;
   result: LensTransportResult = { kind: "value", value: { ok: true }, resolver: "dom" };
 
-  async call(_spec: LensSpec, params: Record<string, unknown>): Promise<LensResult> {
+  async call(
+    _spec: LensSpec,
+    params: Record<string, unknown>,
+    _timeoutMs?: number,
+    allowWrites?: boolean
+  ): Promise<LensResult> {
     this.calls++;
     this.lastParams = params;
+    this.lastAllowWrites = allowWrites;
     return this.result;
   }
 
@@ -108,6 +115,19 @@ describe("LensClient", () => {
     expect(await client.call(input)).toMatchObject({ kind: "value" });
     expect(await client.call(input)).toMatchObject({ kind: "value", cached: true });
     expect(transport.calls).toBe(1);
+  });
+
+  it("passes allowWrites through to the broker call, defaulting absent", async () => {
+    const transport = new FakeTransport();
+    const client = new LensClient(new LensStore(await fixtureDirectory()), transport);
+
+    await client.call({ lens: "web/page", allowWrites: true });
+    expect(transport.lastAllowWrites).toBe(true);
+
+    // A fresh client so the cached first result cannot mask the second call.
+    const bare = new LensClient(new LensStore(await fixtureDirectory()), transport);
+    await bare.call({ lens: "web/page" });
+    expect(transport.lastAllowWrites).toBeUndefined();
   });
 
   it("calls a fixed-URL lens without parameters", async () => {

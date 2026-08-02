@@ -8,7 +8,7 @@ import { skillMarkdown } from "./skill.js";
 
 const globalHelp = `Usage:
   lens list [--catalog <source>] [--port <number>]
-  lens call <lens> [--params <json>] [--timeout-ms <number>] [--lax]
+  lens call <lens> [--params <json>] [--timeout-ms <number>] [--lax] [--allow-writes]
   lens schema <lens>
   lens gen ts-sdk [<catalog> ...] [--out <file>]
   lens eval <expression> [--input <file>] [--params <json>]
@@ -55,6 +55,9 @@ Options:
   --params <json>         Declared lens parameters as a JSON object. Parameters
                           are available to URL templates and resolver expressions.
   --timeout-ms <number>   Whole browser-call timeout (default: 90000)
+  --allow-writes          Permit a lens that declares a "perform" block to act
+                          on the page. Without it a write lens is refused with
+                          code "writes_not_allowed"; read lenses never need it.
   --lax                   Attach result schema violations to the value result
                           as warnings instead of failing; by default a value
                           that violates the lens's declared result schema is
@@ -72,6 +75,8 @@ Example:
   lens call claude/usage
 
   lens call hn/item --params '{"id":"42","p":2,"limit":10}'
+
+  lens call chatgpt/send --params '{"message":"hello"}' --allow-writes
 `,
   schema: `Usage: lens schema <lens> [options]
 
@@ -289,6 +294,7 @@ async function main(): Promise<void> {
       request: { type: "string" },
       html: { type: "boolean" },
       lax: { type: "boolean" },
+      "allow-writes": { type: "boolean" },
       input: { type: "string" },
       out: { type: "string", short: "o" },
       listen: { type: "string" },
@@ -380,7 +386,13 @@ async function main(): Promise<void> {
         if (params !== undefined && (typeof params !== "object" || params === null || Array.isArray(params))) {
           throw new Error("params must be a JSON object");
         }
-        output = await client.call({ lens, params, timeoutMs, strict: !values.lax });
+        output = await client.call({
+          lens,
+          params,
+          timeoutMs,
+          strict: !values.lax,
+          allowWrites: values["allow-writes"],
+        });
         break;
       }
       case "schema":

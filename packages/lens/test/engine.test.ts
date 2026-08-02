@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { executeLens, resolveParams } from "../src/engine.js";
 import { validateSpec } from "../src/validate.js";
-import type { DomResolver, EngineIO, InterceptedResponse } from "../src/types.js";
+import type {
+  DomResolver,
+  EngineIO,
+  InterceptedResponse,
+  PerformResult,
+  PerformStep,
+} from "../src/types.js";
 
 function io(overrides: Partial<EngineIO> = {}): EngineIO {
   return {
@@ -333,6 +339,151 @@ describe("executeLens", () => {
     expect(reloaded).toBe(true);
     expect(r2.kind).toBe("value");
     expect(r.kind).not.toBe("value"); // first call had nothing to serve at intercept tier
+  });
+});
+
+describe("perform", () => {
+  const sendSpec = validateSpec({
+    name: "@example/chat/send",
+    url: "https://example.com/chat",
+    params: { message: "string" },
+    effects: { reads: ["example.com"], writes: ["example.com"] },
+    outcomes: { needs_auth: { hint: "Sign in and retry." } },
+    detect: { needs_auth: "$contains(url, '/sign-in')" },
+    perform: [
+      { fill: "#composer", value: "$message" },
+      { click: "[data-testid='send']" },
+      { wait: { increases: ".turn", timeoutMs: 30000 } },
+    ],
+    resolve: [{ kind: "dom", item: ".turn", fields: { text: { selector: ".t" } } }],
+  });
+
+  /** io whose page looks like the chat and whose perform records the steps it was given. */
+  function performIo(
+    result: PerformResult = {},
+    overrides: Partial<EngineIO> = {}
+  ): { io: EngineIO; performed: PerformStep[][] } {
+    const performed: PerformStep[][] = [];
+    return {
+      performed,
+      io: io({
+        domExtract: async () => ({ url: "https://example.com/chat", title: "Chat", value: null }),
+        perform: async (steps) => {
+          performed.push(steps);
+          return result;
+        },
+        ...overrides,
+      }),
+    };
+  }
+
+  it("errors when the host cannot act", async () => {
+    const r = await executeLens(sendSpec, { message: "hi" }, io());
+    expect(r).toEqual({ kind: "error", message: "host cannot perform actions" });
+  });
+
+  it("resolves fill values against params before handing steps to io", async () => {
+    const { io: withPerform, performed } = performIo();
+    await executeLens(sendSpec, { message: "hello there" }, withPerform);
+    expect(performed).toEqual([
+      [
+        { fill: "#composer", value: "hello there" },
+        { click: "[data-testid='send']" },
+        { wait: { increases: ".turn", timeoutMs: 30000 } },
+      ],
+    ]);
+  });
+
+  it("returns the detected outcome before step 0 when the page is a login wall", async () => {
+    const { io: withPerform, performed } = performIo({}, {
+      domExtract: async () => ({ url: "https://example.com/sign-in", title: "Sign in", value: null }),
+    });
+    const r = await executeLens(sendSpec, { message: "hi" }, withPerform);
+    expect(r).toMatchObject({ kind: "outcome", name: "needs_auth" });
+    expect(r).not.toHaveProperty("performed");
+    expect(performed).toEqual([]); // no step ran against the wrong page
+  });
+
+  it("fails the call with perform_failed and the step index", async () => {
+    const { io: withPerform } = performIo({
+      failedStep: 2,
+      message: "wait { increases: .turn } timed out after 30000ms",
+      url: "https://example.com/chat",
+      title: "Chat",
+    });
+    const r = await executeLens(sendSpec, { message: "hi" }, withPerform);
+    expect(r).toEqual({
+      kind: "error",
+      code: "perform_failed",
+      step: 2,
+      message: "wait { increases: .turn } timed out after 30000ms",
+    });
+  });
+
+  it("prefers a detect hit over perform_failed when a step fails", async () => {
+    const { io: withPerform } = performIo({
+      failedStep: 2,
+      message: "wait timed out",
+      url: "https://example.com/sign-in",
+      title: "Sign in",
+    });
+    const r = await executeLens(sendSpec, { message: "hi" }, withPerform);
+    expect(r).toMatchObject({ kind: "outcome", name: "needs_auth" });
+    expect(r).not.toHaveProperty("performed");
+  });
+
+  it("marks the readback value performed after every step succeeds", async () => {
+    const { io: withPerform } = performIo({}, {
+      domExtract: async () => ({
+        url: "https://example.com/chat",
+        title: "Chat",
+        value: [{ text: "reply" }],
+      }),
+    });
+    const r = await executeLens(sendSpec, { message: "hi" }, withPerform);
+    expect(r).toEqual({
+      kind: "value",
+      resolver: "dom",
+      observed: "https://example.com/chat",
+      value: [{ text: "reply" }],
+      performed: true,
+    });
+  });
+
+  // The message was still sent even though reading the result back failed;
+  // `performed` is how the caller finds that out.
+  it("marks even an exhausted-resolvers error performed", async () => {
+    const { io: withPerform } = performIo();
+    const r = await executeLens(sendSpec, { message: "hi" }, withPerform);
+    expect(r).toEqual({
+      kind: "error",
+      message: "all resolvers exhausted (dom resolver missed at https://example.com/chat)",
+      performed: true,
+    });
+  });
+
+  it("skips the pre-perform probe when the document has no detect", async () => {
+    const probes: string[] = [];
+    const detectFree = validateSpec({
+      name: "@example/chat/clear",
+      url: "https://example.com/chat",
+      effects: { reads: ["example.com"], writes: ["example.com"], idempotent: true },
+      perform: [{ navigate: "fresh" }],
+      resolve: [{ kind: "dom", fields: { empty: { selector: ".empty" } } }],
+    });
+    const r = await executeLens(detectFree, {}, io({
+      domExtract: async () => {
+        probes.push("extract");
+        return { url: "https://example.com/chat", title: "Chat", value: { empty: "yes" } };
+      },
+      perform: async () => {
+        probes.push("perform");
+        return {};
+      },
+    }));
+    expect(r).toMatchObject({ kind: "value", performed: true });
+    // perform first: the only extraction is the readback tier, not a probe
+    expect(probes).toEqual(["perform", "extract"]);
   });
 });
 
