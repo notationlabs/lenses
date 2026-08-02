@@ -68,6 +68,46 @@ const llmSchema = z.strictObject({
   maxSnapshotChars: z.number().int().positive().optional(),
 });
 
+const waitSchema = z
+  .strictObject({
+    appears: z.string().optional(),
+    gone: z.string().optional(),
+    increases: z.string().optional(),
+    timeoutMs: z.number().int().positive().optional(),
+  })
+  .refine(
+    (wait) =>
+      [wait.appears, wait.gone, wait.increases].filter((sel) => sel !== undefined).length === 1,
+    { message: 'wait takes exactly one of "appears", "gone", or "increases"' }
+  );
+
+const PERFORM_HINT =
+  'must be one perform step: {"fill": <sel>, "value": <expr>}, {"click": <sel>}, ' +
+  '{"press": <key>}, {"wait": {"appears" | "gone" | "increases": <sel>, "timeoutMs"?: <ms>}}, ' +
+  'or {"navigate": "fresh"}';
+
+// A closed opcode set: unknown keys and unknown opcodes fail here rather than
+// reaching a page as a silent no-op mid-write. The opcode gate runs before the
+// union so an unknown opcode reports the step's hint, not five branch misses.
+const performStepSchema = z
+  .record(z.string(), z.unknown(), { error: PERFORM_HINT })
+  .refine(
+    (step) => ["fill", "click", "press", "wait", "navigate"].some((opcode) => opcode in step),
+    { message: PERFORM_HINT }
+  )
+  .pipe(
+    z.union(
+      [
+        z.strictObject({ fill: z.string(), value: expression }),
+        z.strictObject({ click: z.string() }),
+        z.strictObject({ press: z.string() }),
+        z.strictObject({ wait: waitSchema }),
+        z.strictObject({ navigate: z.literal("fresh") }),
+      ],
+      { error: PERFORM_HINT }
+    )
+  );
+
 const RETURNS_HINT =
   'must be a primitive type ("string" | "number" | "integer" | "boolean" | "null"), ' +
   'a nullable primitive {"type": ..., "nullable": true}, a lens reference {"$lens": ..., "params"?}, ' +
@@ -152,6 +192,7 @@ const lensSpecSchema = z.strictObject({
     idempotent: z.boolean().optional(),
     cache: z.number().nonnegative().optional(),
   }),
+  perform: z.array(performStepSchema).min(1).optional(),
   resolve: z
     .array(z.discriminatedUnion("kind", [httpSchema, interceptSchema, domSchema, llmSchema]))
     .min(1),
@@ -338,6 +379,27 @@ export function validateSpec(raw: unknown): LensSpec {
     if (declaration.enum && !declaration.enum.includes(String(declaration.default))) {
       throw new Error(
         `invalid lens spec:\n  default for parameter "${name}" must be one of its enum values`
+      );
+    }
+  }
+  // Consent keys off the declaration, so a perform document must say what it
+  // writes, must never serve a cached result, and may only claim idempotence
+  // when its steps are navigate-only (a reload is; a send is not).
+  if (result.data.perform) {
+    if (result.data.effects.writes.length === 0) {
+      throw new Error(
+        'invalid lens spec:\n  "perform" steps are writes, so "effects.writes" must name what they write to'
+      );
+    }
+    if ((result.data.effects.cache ?? 0) > 0) {
+      throw new Error(
+        'invalid lens spec:\n  a "perform" result must not be cached — "effects.cache" must be absent or 0'
+      );
+    }
+    const navigateOnly = result.data.perform.every((step) => "navigate" in step);
+    if (result.data.effects.idempotent === true && !navigateOnly) {
+      throw new Error(
+        'invalid lens spec:\n  "effects.idempotent": true contradicts "perform" unless every step is a navigate'
       );
     }
   }

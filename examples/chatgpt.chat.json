@@ -1,0 +1,58 @@
+{
+  "name": "@djgrant/chatgpt/chat",
+  "description": "Reads the conversation in the open logged-out chatgpt.com tab: all user and assistant messages, plus the latest response. Never reloads the tab — a reload would erase a logged-out chat. An empty page returns an empty transcript. See @djgrant/chatgpt/send and @djgrant/chatgpt/clear.",
+  "url": "https://chatgpt.com/",
+  "returns": {
+    "type": "object",
+    "fields": {
+      "turns": {
+        "type": "array",
+        "items": {
+          "role": "string",
+          "text": "string"
+        }
+      },
+      "response": {
+        "type": "string",
+        "nullable": true
+      }
+    }
+  },
+  "effects": {
+    "reads": [
+      "chatgpt.com"
+    ],
+    "writes": [],
+    "idempotent": true,
+    "cache": 0
+  },
+  "resolve": [
+    {
+      "kind": "dom",
+      "item": "[data-turn]",
+      "fields": {
+        "role": {
+          "selector": ":self",
+          "attr": "data-turn"
+        },
+        "text": {
+          "selector": "[data-message-author-role]"
+        }
+      },
+      "post": "($t := [$.{ 'role': role, 'text': text }]; $a := [$t[role = 'assistant']]; { 'turns': $t, 'response': $count($a) > 0 ? $a[-1].text : null })"
+    },
+    {
+      "kind": "dom",
+      "fields": {
+        "composer": {
+          "selector": "#prompt-textarea"
+        }
+      },
+      "post": "{ 'turns': [], 'response': null }"
+    },
+    {
+      "kind": "llm",
+      "prompt": "This is a chatgpt.com conversation page. Return {turns, response}. turns is an array of {role, text} in reading order, where role is 'user' for messages under 'You said:' and 'assistant' for messages under 'ChatGPT said:'. response is the text of the last assistant turn, or null when there is none. If no conversation is visible, return {turns: [], response: null}."
+    }
+  ]
+}

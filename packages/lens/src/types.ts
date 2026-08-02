@@ -42,7 +42,46 @@ export interface LensSpec {
    */
   helpers?: Record<string, ExprString>;
   effects: LensEffects;
+  /**
+   * Write steps run once against the bound page, before the resolve walk.
+   * A step failure aborts the call — no tier runs, nothing retries (a second
+   * attempt could double-send). A document with `perform` always binds a
+   * browser.
+   */
+  perform?: PerformStep[];
   resolve: Resolver[];
+}
+
+/**
+ * A perform step's wait condition; exactly one of the three selector keys.
+ * `appears` is satisfied by ≥1 match, `gone` by 0 (immediately true when
+ * already satisfied), `increases` when the match count exceeds the baseline
+ * sampled at step entry — so place it immediately after the step that triggers
+ * the change, or it never fires.
+ */
+export interface PerformWait {
+  appears?: string;
+  gone?: string;
+  increases?: string;
+  /** how long to poll before the step fails, ms (default 10000) */
+  timeoutMs?: number;
+}
+
+export type PerformStep =
+  | { fill: string; value: string } // value is a JSONata expression over params
+  | { click: string }
+  | { press: string } // named key, e.g. "Enter"
+  | { wait: PerformWait }
+  | { navigate: "fresh" };
+
+/** What a host's `perform` reports back to the engine. */
+export interface PerformResult {
+  /** 0-based index of the step that failed; absent when every step succeeded */
+  failedStep?: number;
+  message?: string;
+  /** the page's location after the last executed step, used for detect on failure */
+  url?: string;
+  title?: string;
 }
 
 export type LensParamType = "string" | "number" | "integer" | "boolean";
@@ -222,13 +261,26 @@ export type LensResult =
       partial?: boolean;
       /** where the value was read from — the landed URL, not the requested one */
       observed?: string;
+      /** every perform step ran — the write committed; absence means it did not */
+      performed?: true;
     }
-  | { kind: "outcome"; name: string; value: unknown; resolver: Resolver["kind"] }
+  | {
+      kind: "outcome";
+      name: string;
+      value: unknown;
+      resolver: Resolver["kind"];
+      performed?: true;
+    }
   | {
       kind: "error";
       message: string;
       /** present when a resolved value failed its declared `returns` schema */
       issues?: ValidationIssue[];
+      /** "writes_not_allowed" is the host's consent gate; "perform_failed" is a step failure */
+      code?: "writes_not_allowed" | "perform_failed";
+      /** 0-based index of the perform step that failed */
+      step?: number;
+      performed?: true;
     };
 
 /** A concrete request an http tier asks its host to perform. */
@@ -255,6 +307,8 @@ export interface EngineIO {
   reload?(): Promise<void>;
   /** run a DOM extraction spec in the bound page */
   domExtract(spec: DomResolver): Promise<{ url: string; title: string; value: unknown }>;
+  /** execute perform steps against the bound page; absent when the host cannot act */
+  perform?(steps: PerformStep[]): Promise<PerformResult>;
   /** plain-text snapshot of the page for the LLM tier */
   snapshot(maxChars: number): Promise<{ url: string; title: string; text: string }>;
   /**
@@ -274,6 +328,8 @@ export type LensBridgeRequest =
       spec: LensSpec;
       params: Record<string, unknown>;
       timeoutMs: number;
+      /** consent for a spec with `perform` steps; default false at every layer */
+      allowWrites?: boolean;
     }
   | { type: "observe"; id: string; target: string; waitMs: number; html?: boolean }
   /**

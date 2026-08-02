@@ -16,5 +16,13 @@ export { validateSpec, specWarnings } from "./validate.js";
 export { errorMessage } from "./util.js";
 export { deriveJsonSchema, returnsSchema, validateResult } from "./schema.js";
 export { generateTsSdk } from "./generate.js";
-export { pageDomExtract, pageSnapshot, type PageSnapshot } from "./page-functions.js";
+export {
+  pageDomExtract,
+  pagePerformClick,
+  pagePerformCount,
+  pagePerformFill,
+  pagePerformPress,
+  pageSnapshot,
+  type PageSnapshot,
+} from "./page-functions.js";
 export * from "./extension-protocol.js";

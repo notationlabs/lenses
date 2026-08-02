@@ -25,10 +25,14 @@ import {
   tabMessage,
   type BoundTab,
 } from "./tabs.js";
+import { performSteps } from "./perform.js";
 
 interface SessionState {
   id: string;
   bound: BoundTab;
+  /** the expanded lens URL the session was bound to, for `navigate: "fresh"` */
+  target: string;
+  loadTimeoutMs: number;
 }
 
 export interface ExtensionSessionBackend {
@@ -57,7 +61,12 @@ export function createExtensionSessionBackend(): ExtensionSessionBackend {
         case "bind": {
           const bound = await bindTab(operation);
           const id = crypto.randomUUID();
-          sessions.set(id, { id, bound });
+          sessions.set(id, {
+            id,
+            bound,
+            target: operation.target,
+            loadTimeoutMs: operation.loadTimeoutMs,
+          });
           if (bound.created) {
             await rememberCreatedTab(bound.tabId, operation.target);
           }
@@ -95,6 +104,20 @@ export function createExtensionSessionBackend(): ExtensionSessionBackend {
             spec: operation.resolver,
           });
           return { name: "dom-extract", extraction };
+        }
+        case "perform": {
+          const active = session(operation.sessionId);
+          return {
+            name: "perform",
+            result: await performSteps(
+              {
+                tabId: active.bound.tabId,
+                target: active.target,
+                loadTimeoutMs: active.loadTimeoutMs,
+              },
+              operation.steps
+            ),
+          };
         }
         case "snapshot": {
           const snapshot = await checkedTabMessage<{

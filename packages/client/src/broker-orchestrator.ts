@@ -24,9 +24,21 @@ const MAX_HTTP_BODY_CHARS = 512 * 1024;
  * launch Chrome for it and the orchestrator must not wait for a backend.
  */
 export function specNeedsBrowser(spec: LensSpec): boolean {
+  if (spec.perform !== undefined) return true;
   return spec.resolve.some(
     (resolver) => resolver.kind !== "http" || resolver.credentials === true
   );
+}
+
+/**
+ * Consent gate for a spec with perform steps: default deny, opened only by
+ * the caller's explicit flag. Every write decision passes through here, so
+ * this is also where a future host policy (a config allow/deny list) belongs.
+ */
+function writesAllowed(
+  message: Extract<LensBridgeRequest, { type: "call" }>
+): boolean {
+  return message.allowWrites === true;
 }
 
 export type BrokerFrame =
@@ -81,9 +93,21 @@ export function createBrokerOrchestrator(
     message: Extract<LensBridgeRequest, { type: "call" }>,
     progress: (text: string) => void
   ): Promise<LensResult> {
-    const cacheTtlMs = (message.spec.effects.cache ?? 0) * 1000;
+    // Consent comes before everything — no page bind, no cache read, no tier:
+    // a denied write call must leave the browser exactly as it found it.
+    const performs = (message.spec.perform?.length ?? 0) > 0;
+    if (performs && !writesAllowed(message)) {
+      return {
+        kind: "error",
+        code: "writes_not_allowed",
+        message: `${message.spec.name} performs writes; call it with allowWrites: true to consent`,
+      };
+    }
+    // Enforced here, not trusted from the document: a perform result is never
+    // cached and never served from cache, whatever effects.cache claims.
+    const cacheTtlMs = performs ? 0 : (message.spec.effects.cache ?? 0) * 1000;
     const cacheKey = `${JSON.stringify(message.spec)}|${JSON.stringify(message.params)}`;
-    const cached = cache.get(cacheKey);
+    const cached = performs ? undefined : cache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) {
       return { ...cached.result, cached: true } as unknown as LensResult;
     }
@@ -116,9 +140,15 @@ export function createBrokerOrchestrator(
       session = await backend.bind({
         target,
         loadTimeoutMs,
-        navigation: message.spec.resolve.some((resolver) => resolver.kind === "intercept")
-          ? "fresh"
-          : "reuse",
+        // A document with perform steps binds with "reuse": a reload only
+        // ever comes from an explicit `navigate` step, so a send cannot
+        // reload the chat it is about to type into. Intercept-implies-fresh
+        // stays for read-only documents.
+        navigation: performs
+          ? "reuse"
+          : message.spec.resolve.some((resolver) => resolver.kind === "intercept")
+            ? "fresh"
+            : "reuse",
       });
       progress(`bound page${session.created ? " (created)" : " (existing)"}`);
       return session;
@@ -295,6 +325,9 @@ export function createSessionEngineIO(
       captures = [];
     },
     domExtract: async (resolver) => (await acquire()).domExtract(resolver),
+    // Lazy like domExtract: perform binds the page on first use, so the
+    // consent-denied path above it never touches the browser at all.
+    perform: async (steps) => (await acquire()).perform(steps),
     snapshot: async (maxChars) => (await acquire()).snapshot({ maxChars }),
     ...(httpFetch ? { httpFetch } : {}),
     async sleep(ms) {

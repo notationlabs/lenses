@@ -6,6 +6,10 @@ import {
   decodeBrokerExtensionMessage,
   decodeExtensionRpcRequest,
   pageDomExtract,
+  pagePerformClick,
+  pagePerformCount,
+  pagePerformFill,
+  pagePerformPress,
   pageSnapshot,
   type InterceptedResponse,
   type LensResult,
@@ -57,6 +61,25 @@ const captured = (suffix: string): InterceptedResponse => ({
   body: JSON.stringify({ suffix }),
   timestamp: Date.now(),
 });
+
+/**
+ * Shared perform state both fake pages read: recorded fill/click/press
+ * actions, and primed count sequences for the wait probe (successive polls
+ * shift the queue; the last value repeats).
+ */
+const performActions: string[] = [];
+const performCounts = new Map<string, number[]>();
+
+function resetPerformState(): void {
+  performActions.length = 0;
+  performCounts.clear();
+}
+
+function nextPerformCount(selector: string): number {
+  const queue = performCounts.get(selector);
+  if (!queue || queue.length === 0) return 0;
+  return queue.length > 1 ? (queue.shift() as number) : queue[0];
+}
 
 const domSpec: LensSpec = {
   name: "@example/web/shared",
@@ -132,6 +155,43 @@ for (const [name, createFixture] of [
       );
       await fixture.backend.finish(session, "close-if-created");
       expect(fixture.closed()).toBe(true);
+    });
+
+    it("performs steps through the shared page primitives", async () => {
+      fixture = await createFixture();
+      resetPerformState();
+      performCounts.set("#done", [0, 1]);
+      const session = await fixture.backend.bind({
+        target: "https://example.com/shared",
+        loadTimeoutMs: 1000,
+        navigation: "reuse",
+      });
+
+      const result = await session.perform([
+        { fill: "#input", value: "hello" },
+        { click: "#send" },
+        { press: "Enter" },
+        { wait: { appears: "#done" } },
+        { navigate: "fresh" },
+      ]);
+
+      expect(result).toEqual({ url: "https://example.com/shared", title: "" });
+      expect(performActions).toEqual([
+        "fill #input hello",
+        "click #send",
+        "press Enter",
+      ]);
+      expect(fixture.reloads()).toBe(1);
+
+      const failed = await session.perform([
+        { wait: { appears: "#never", timeoutMs: 1 } },
+      ]);
+      expect(failed).toMatchObject({
+        failedStep: 0,
+        message: expect.stringContaining('appears "#never"'),
+        url: "https://example.com/shared",
+      });
+      await fixture.backend.finish(session, "close-if-created");
     });
 
     it("derives a sign-in gate from a kept session", async () => {
@@ -312,6 +372,25 @@ class FakePage {
     fn: typeof pageDomExtract | typeof pageSnapshot | ((arg: never) => unknown),
     options: unknown
   ): Promise<unknown> {
+    // The perform primitives need a DOM, so the fake answers for them.
+    if (fn === pagePerformFill) {
+      const spec = options as { selector: string; value: string };
+      performActions.push(`fill ${spec.selector} ${spec.value}`);
+      return { ok: true };
+    }
+    if (fn === pagePerformClick) {
+      const spec = options as { selector: string };
+      performActions.push(`click ${spec.selector}`);
+      return { ok: true };
+    }
+    if (fn === pagePerformPress) {
+      const spec = options as { key: string };
+      performActions.push(`press ${spec.key}`);
+      return { ok: true };
+    }
+    if (fn === pagePerformCount) {
+      return nextPerformCount((options as { selector: string }).selector);
+    }
     // An inline function (the httpFetch page script) runs as-is against the
     // test's stubbed fetch, exercising its real body.
     if (fn !== pageDomExtract && fn !== pageSnapshot) {
@@ -591,6 +670,21 @@ function createChromeMock() {
         },
         async sendMessage(_tabId: number, message: any) {
           if (message.type === "ping") return { ok: true };
+          if (message.type === "perform_fill") {
+            performActions.push(`fill ${message.selector} ${message.value}`);
+            return { ok: true };
+          }
+          if (message.type === "perform_click") {
+            performActions.push(`click ${message.selector}`);
+            return { ok: true };
+          }
+          if (message.type === "perform_press") {
+            performActions.push(`press ${message.key}`);
+            return { ok: true };
+          }
+          if (message.type === "perform_count") {
+            return { count: nextPerformCount(message.selector) };
+          }
           if (message.type === "dom_extract") {
             return {
               url: "https://example.com/shared",
