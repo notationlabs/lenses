@@ -14,7 +14,7 @@ import {
   type InterceptedResponse,
   type LensResult,
   type LensSpec,
-} from "@djgrant/lens";
+} from "@djgrant/lenses-core";
 
 const cdpState = vi.hoisted(() => ({
   browser: undefined as FakeBrowser | undefined,

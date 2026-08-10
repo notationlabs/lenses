@@ -4,7 +4,7 @@ import {
   type AuthGate,
   type ExtensionRpcRequest,
   type ExtensionRpcResult,
-} from "@djgrant/lens";
+} from "@djgrant/lenses-core";
 import { readIntercepts } from "./intercepts.js";
 import {
   forgetCreatedTab,

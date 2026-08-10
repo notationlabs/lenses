@@ -1,0 +1,67 @@
+{
+  "name": "@djgrant/lenses",
+  "version": "0.1.0",
+  "description": "Typed webpage functions for TypeScript, CLI, and MCP consumers.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./core": {
+      "types": "./dist/core.d.ts",
+      "import": "./dist/core.js"
+    },
+    "./graphql": {
+      "types": "./dist/graphql.d.ts",
+      "import": "./dist/graphql.js"
+    },
+    "./page-stamp": {
+      "types": "./dist/page-stamp.d.ts",
+      "import": "./dist/page-stamp.js"
+    },
+    "./mcp": {
+      "types": "./dist/mcp.d.ts",
+      "import": "./dist/mcp.js"
+    }
+  },
+  "bin": {
+    "lens": "./dist/cli.js",
+    "lens-mcp": "./dist/mcp-cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "SKILL.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsup",
+    "pretest": "pnpm run build",
+    "test": "node --test test/package.test.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "2.0.0-beta.2",
+    "@types/node": "^22.20.0",
+    "graphql": "^17.0.2",
+    "jsonata": "^2.1.0",
+    "puppeteer-core": "^25.3.0",
+    "ws": "^8.18.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@djgrant/lenses-cli": "workspace:*",
+    "@djgrant/lenses-client": "workspace:*",
+    "@djgrant/lenses-core": "workspace:*",
+    "@djgrant/lenses-mcp": "workspace:*",
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3"
+  }
+}

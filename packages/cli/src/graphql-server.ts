@@ -7,8 +7,8 @@
  * call budget, and the calls it made are reported in response extensions.
  */
 import { createServer } from "node:http";
-import { buildLensSchema, createContext } from "@djgrant/lens/graphql";
-import { LensStore, type LensClient } from "@djgrant/lens-client";
+import { buildLensSchema, createContext } from "@djgrant/lenses-core/graphql";
+import { LensStore, type LensClient } from "@djgrant/lenses-client";
 import { graphql } from "graphql";
 
 export interface GraphQLServeOptions {

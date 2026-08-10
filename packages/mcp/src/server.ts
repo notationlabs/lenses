@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
-import { scanLensFiles, type LensClient } from "@djgrant/lens-client";
+import { scanLensFiles, type LensClient } from "@djgrant/lenses-client";
 
 export function createLensMcpServer(client: LensClient): McpServer {
   const server = new McpServer({ name: "lens-mcp", version: "0.1.0" });

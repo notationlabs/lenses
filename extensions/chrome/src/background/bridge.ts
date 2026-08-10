@@ -5,7 +5,7 @@ import {
   decodeExtensionRpcRequest,
   type ExtensionRpcErrorCode,
   type ExtensionRpcResponse,
-} from "@djgrant/lens";
+} from "@djgrant/lenses-core";
 import { formatError } from "../errors.js";
 import {
   createExtensionSessionBackend,

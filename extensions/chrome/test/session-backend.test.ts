@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   ExtensionRpcOperation,
   ExtensionRpcResult,
-} from "@djgrant/lens";
+} from "@djgrant/lenses-core";
 import { createFakeChrome, type FakeChrome } from "./fake-chrome.js";
 import {
   createExtensionSessionBackend,

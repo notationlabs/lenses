@@ -6,7 +6,7 @@ title: Materialise lens references
 
 ## Context
 
-A `returns` field declared as `{$lens, params?}` becomes a callable cross-lens reference in the result. Evidence: `packages/lens/src/materialise.ts`, `packages/lens/test/materialise.test.ts`.
+A `returns` field declared as `{$lens, params?}` becomes a callable cross-lens reference in the result. Evidence: `packages/core/src/materialise.ts`, `packages/core/test/materialise.test.ts`.
 
 ## Rules
 

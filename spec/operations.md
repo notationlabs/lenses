@@ -4,31 +4,31 @@ title: Operation declarations
 
 # Operation declarations
 
-`!validate` parses and validates a raw JSON document into a lens spec (`validateSpec`, `packages/lens/src/validate.ts`).
+`!validate` parses and validates a raw JSON document into a lens spec (`validateSpec`, `packages/core/src/validate.ts`).
 
 ```operation
 validate(raw: json): LensDocument
 ```
 
-`!deriveSchema` emits a standard JSON Schema for a lens's resolved value (`deriveJsonSchema`, `packages/lens/src/schema.ts`).
+`!deriveSchema` emits a standard JSON Schema for a lens's resolved value (`deriveJsonSchema`, `packages/core/src/schema.ts`).
 
 ```operation
 deriveSchema(doc: LensDocument): json
 ```
 
-`!checkResult` validates a resolved value against the lens's `returns` declaration (`validateResult`, `packages/lens/src/schema.ts`).
+`!checkResult` validates a resolved value against the lens's `returns` declaration (`validateResult`, `packages/core/src/schema.ts`).
 
 ```operation
 checkResult(doc: LensDocument, value: json): ValidationIssue[]
 ```
 
-`!execute` runs the resolver pipeline for one call inside the broker (`executeLens`, `packages/lens/src/engine.ts`).
+`!execute` runs the resolver pipeline for one call inside the broker (`executeLens`, `packages/core/src/engine.ts`).
 
 ```operation
 execute(doc: LensDocument, input: Record<string, json>): CallResult
 ```
 
-`!evaluateExpression` evaluates one sandboxed JSONata expression (`evaluate`, `packages/lens/src/expr.ts`).
+`!evaluateExpression` evaluates one sandboxed JSONata expression (`evaluate`, `packages/core/src/expr.ts`).
 
 ```operation
 evaluateExpression(expr: string, data: json, params: Record<string, json>): json

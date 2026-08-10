@@ -5,7 +5,7 @@
  * navigation live here in the service worker, where the timeout and the tab
  * APIs already are.
  */
-import { urlOrigin, type PerformResult, type PerformStep, type PerformWait } from "@djgrant/lens";
+import { urlOrigin, type PerformResult, type PerformStep, type PerformWait } from "@djgrant/lenses-core";
 import { navigateTab, reloadTab, tabMessage } from "./tabs.js";
 
 const PERFORM_POLL_MS = 150;

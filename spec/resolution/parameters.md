@@ -6,7 +6,7 @@ title: Validate call parameters
 
 ## Context
 
-!execute resolves the @caller's input against the document's `params` declarations before any tier runs (`resolveParams`, `packages/lens/src/engine.ts`). The resolved set feeds URL expansion and every resolver expression. A default may also be a $ParamLensDefault — a `{$lens, field, params?}` reference resolved by the @host (the client) before the engine runs, so the engine only ever sees concrete values (`packages/client/src/index.ts`, `packages/client/test/client.test.ts`).
+!execute resolves the @caller's input against the document's `params` declarations before any tier runs (`resolveParams`, `packages/core/src/engine.ts`). The resolved set feeds URL expansion and every resolver expression. A default may also be a $ParamLensDefault — a `{$lens, field, params?}` reference resolved by the @host (the client) before the engine runs, so the engine only ever sees concrete values (`packages/client/src/index.ts`, `packages/client/test/client.test.ts`).
 
 ## Rules
 

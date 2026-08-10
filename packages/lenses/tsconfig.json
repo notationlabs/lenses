@@ -1,0 +1,19 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@djgrant/lenses-core": ["../core/src/index.ts"],
+      "@djgrant/lenses-core/graphql": ["../core/src/graphql.ts"],
+      "@djgrant/lenses-core/page-stamp": ["../core/src/page-stamp.ts"],
+      "@djgrant/lenses-client": ["../client/src/index.ts"]
+    }
+  },
+  "include": [
+    "src/**/*.ts",
+    "../core/src/**/*.ts",
+    "../client/src/**/*.ts",
+    "../cli/src/**/*.ts",
+    "../mcp/src/**/*.ts"
+  ]
+}

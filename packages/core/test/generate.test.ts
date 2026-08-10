@@ -75,7 +75,7 @@ describe("generateTsSdk", () => {
     const source = generateTsSdk([spec({ name: "@example/web/page", returns: "string" })]);
     expect(source).toContain('Promise<Lenses[Name]["result"]>;');
     expect(source).toContain(
-      'export { LensOutcomeError, LensResultError } from "@djgrant/lens-client";'
+      'export { LensOutcomeError, LensResultError } from "@djgrant/lenses";'
     );
   });
 

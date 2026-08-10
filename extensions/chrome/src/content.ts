@@ -8,7 +8,7 @@ import {
   pagePerformPress,
   pageSnapshot,
   type DomResolver,
-} from "@djgrant/lens";
+} from "@djgrant/lenses-core";
 import { formatError } from "./errors.js";
 
 export {};

@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { WebSocket } from "ws";
-import type { LensBridgeRequest, LensResult, LensSpec } from "@djgrant/lens";
+import type { LensBridgeRequest, LensResult, LensSpec } from "@djgrant/lenses-core";
 import { coordinateRespawn } from "./broker-respawn.js";
 import { brokerBuildStamp } from "./broker-stamp.js";
 

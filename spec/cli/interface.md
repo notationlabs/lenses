@@ -5,7 +5,7 @@ title: Run the lens CLI
 
 ## Context
 
-`@djgrant/lens-cli` installs the `lens` command, a JSON adapter over the client. Evidence: `packages/cli/src/index.ts`, `packages/cli/src/graphql-server.ts`.
+`@djgrant/lenses` installs the `lens` command, a JSON adapter over the client. Evidence: `packages/cli/src/index.ts`, `packages/cli/src/graphql-server.ts`.
 
 ## Rules
 

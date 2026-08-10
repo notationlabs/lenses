@@ -1,6 +1,6 @@
 import { readdir, readFile } from "node:fs/promises";
 import { defineCommand } from "@pokit/core";
-import { validateSpec } from "@djgrant/lens";
+import { validateSpec } from "@djgrant/lenses-core";
 
 export const command = defineCommand({
   label: "Validate every lens spec in examples/ against the engine's validator",

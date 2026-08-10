@@ -6,7 +6,7 @@ title: Detect named outcomes
 
 ## Context
 
-A document-level `detect` block is shared by every tier; each resolver may declare its own. Evidence: `packages/lens/src/resolvers/outcome.ts`, `packages/lens/test/engine.test.ts`.
+A document-level `detect` block is shared by every tier; each resolver may declare its own. Evidence: `packages/core/src/resolvers/outcome.ts`, `packages/core/test/engine.test.ts`.
 
 ## Rules
 

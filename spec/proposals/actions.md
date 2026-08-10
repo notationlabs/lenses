@@ -61,10 +61,10 @@ Every `wait` form takes `timeoutMs` (default 10000). The poll interval is intern
 
 | Where | Change |
 |---|---|
-| `packages/lens/src/types.ts` | `PerformStep` union, `spec.perform`, result fields `code`/`performed`/`step` |
-| `packages/lens/src/validate.ts` | step union (fail closed), consent rules above |
-| `packages/lens/src/engine.ts` | run perform via `EngineIO.perform` before the tier walk; pre-perform detect; thread `performed` |
-| `packages/lens/src/page-functions.ts` | in-page step primitives shared by both backends (insertText fill, guarded click, wait probes) |
+| `packages/core/src/types.ts` | `PerformStep` union, `spec.perform`, result fields `code`/`performed`/`step` |
+| `packages/core/src/validate.ts` | step union (fail closed), consent rules above |
+| `packages/core/src/engine.ts` | run perform via `EngineIO.perform` before the tier walk; pre-perform detect; thread `performed` |
+| `packages/core/src/page-functions.ts` | in-page step primitives shared by both backends (insertText fill, guarded click, wait probes) |
 | `packages/client/src/browser-backend.ts` | `BrowserSession.perform(steps)` |
 | `packages/client/src/cdp-host.ts`, `extensions/chrome` | parity implementations — extension and CDP ship together |
 | `packages/client/src/broker-orchestrator.ts` | consent gate (policy hook), cache bypass, bind navigation policy, `specNeedsBrowser` includes `perform` |

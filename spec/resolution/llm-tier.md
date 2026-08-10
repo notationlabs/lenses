@@ -6,7 +6,7 @@ title: Resolve through the llm tier
 
 ## Context
 
-The llm tier hands extraction to the calling agent's own model. Evidence: `packages/lens/src/resolvers/llm.ts`.
+The llm tier hands extraction to the calling agent's own model. Evidence: `packages/core/src/resolvers/llm.ts`.
 
 ## Outcomes
 

@@ -6,7 +6,7 @@ title: Resolve through the dom tier
 
 ## Context
 
-A dom tier extracts fields from the rendered document with CSS selectors, executed inside the page. Evidence: `packages/lens/src/resolvers/dom.ts`, `packages/lens/src/page-functions.ts`, `packages/lens/test/page-functions.test.ts`.
+A dom tier extracts fields from the rendered document with CSS selectors, executed inside the page. Evidence: `packages/core/src/resolvers/dom.ts`, `packages/core/src/page-functions.ts`, `packages/core/test/page-functions.test.ts`.
 
 ## Rules
 

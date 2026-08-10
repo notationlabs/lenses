@@ -6,7 +6,7 @@ title: Derive and enforce the result schema
 
 ## Context
 
-A lens's `returns` declaration drives both !deriveSchema (the JSON Schema handed to external codegen and validation) and !checkResult (the check applied to every resolved value). Evidence: `packages/lens/src/schema.ts`, `packages/lens/test/schema.test.ts`.
+A lens's `returns` declaration drives both !deriveSchema (the JSON Schema handed to external codegen and validation) and !checkResult (the check applied to every resolved value). Evidence: `packages/core/src/schema.ts`, `packages/core/test/schema.test.ts`.
 
 ## Rules
 

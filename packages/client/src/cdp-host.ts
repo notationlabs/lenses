@@ -26,7 +26,7 @@ import {
   type PerformResult,
   type PerformStep,
   type PerformWait,
-} from "@djgrant/lens";
+} from "@djgrant/lenses-core";
 import type {
   BackendHttpRequest,
   BindRequest,

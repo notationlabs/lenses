@@ -4,7 +4,7 @@
  * preferring the Chrome extension and retaining CDP as the fallback backend.
  */
 import { WebSocket, WebSocketServer } from "ws";
-import type { LensBridgeRequest } from "@djgrant/lens";
+import type { LensBridgeRequest } from "@djgrant/lenses-core";
 import { createBrokerOrchestrator, specNeedsBrowser } from "./broker-orchestrator.js";
 import { createCdpBackend } from "./cdp-host.js";
 import { createExtensionBackend } from "./extension-backend.js";
