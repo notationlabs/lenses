@@ -6,7 +6,7 @@ title: Perform write steps before resolution
 
 ## Context
 
-A $LensDocument may declare a top-level `perform` block — an ordered list of write steps !execute runs once against the bound page, after bind and before the resolver walk. The resolve tiers then read the result back through the machinery that already exists; readback is not a second call. Evidence: `packages/lens/src/engine.ts`, `packages/lens/src/page-functions.ts`, `packages/lens/src/validate.ts`, `packages/lens/test/engine.test.ts`, `packages/lens/test/page-functions.test.ts`.
+A $LensDocument may declare a top-level `perform` block — an ordered list of write steps !execute runs once against the bound page, after bind and before the resolver walk. The resolve tiers then read the result back through the machinery that already exists; readback is not a second call. Evidence: `packages/core/src/engine.ts`, `packages/core/src/page-functions.ts`, `packages/core/src/validate.ts`, `packages/core/test/engine.test.ts`, `packages/core/test/page-functions.test.ts`.
 
 ## Rules
 

@@ -11,7 +11,7 @@ import {
   type LensSpec,
   type ParamLensDefault,
   type ValidationIssue,
-} from "@djgrant/lens";
+} from "@djgrant/lenses-core";
 import {
   BrowserBridge,
   type BrokerControlAction,

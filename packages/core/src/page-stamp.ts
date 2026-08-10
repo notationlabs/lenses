@@ -14,23 +14,24 @@ import { fileURLToPath } from "node:url";
  * instance, and the broker computes it live from its own copy.
  *
  * Comparing the artefacts on disk instead would not work. When this last bit,
- * both `packages/lens/dist/page-functions.js` and `extensions/chrome/dist/content.js`
+ * both `packages/core/dist/page-functions.js` and `extensions/chrome/dist/content.js`
  * were current and only Chrome's in-memory copy was stale, so any build-side or
  * mtime check would have reported a confident all-clear. The manifest version
  * cannot serve either, since a local rebuild never moves it.
  *
- * Hashing the module file rather than `Function.prototype.toString` is
- * deliberate: esbuild reformats what it bundles, so the two sides would never
- * agree on the text of the function itself.
+ * Hashing the canonical TypeScript source rather than emitted JavaScript is
+ * deliberate: different build tools format JavaScript differently. The public
+ * bundle ships that source as a stamp asset; workspace builds read it directly
+ * from `src/`, so both artefacts always hash identical bytes.
  */
 let cached: string | undefined;
 
 export function pageFunctionsStamp(): string {
   if (cached) return cached;
-  // dist/ for a built package, src/ under bun.
   const here = dirname(fileURLToPath(import.meta.url));
-  const built = join(here, "page-functions.js");
-  const file = existsSync(built) ? built : join(here, "page-functions.ts");
+  const packaged = join(here, "page-functions.ts");
+  const workspace = join(here, "../src/page-functions.ts");
+  const file = existsSync(packaged) ? packaged : workspace;
   cached = createHash("sha256").update(readFileSync(file)).digest("hex").slice(0, 16);
   return cached;
 }

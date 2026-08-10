@@ -7,7 +7,7 @@ import {
   type CaptureBuffer,
   type InterceptDelta,
   type InterceptedResponse,
-} from "@djgrant/lens";
+} from "@djgrant/lenses-core";
 
 const buffers = new Map<number, CaptureBuffer>();
 

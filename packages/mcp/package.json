@@ -1,6 +1,7 @@
 {
-  "name": "@djgrant/lens-mcp",
+  "name": "@djgrant/lenses-mcp",
   "version": "0.1.0",
+  "private": true,
   "type": "module",
   "engines": {
     "node": ">=22.12.0"
@@ -17,7 +18,7 @@
     "build": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@djgrant/lens-client": "workspace:*",
+    "@djgrant/lenses-client": "workspace:*",
     "@modelcontextprotocol/server": "2.0.0-beta.2",
     "zod": "^4.0.0"
   },

@@ -8,7 +8,7 @@ import type {
   PageSnapshot,
   PerformResult,
   PerformStep,
-} from "@djgrant/lens";
+} from "@djgrant/lenses-core";
 import {
   createBrokerOrchestrator,
   createSessionEngineIO,

@@ -6,7 +6,7 @@ title: Execute the resolver pipeline
 
 ## Context
 
-!execute runs a $LensDocument's resolver tiers against a bound browser session (or the broker's own process for credential-free http). Evidence: `packages/lens/src/engine.ts`, `packages/lens/src/reconcile.ts`, `packages/lens/test/engine.test.ts`, `packages/lens/test/reconcile.test.ts`.
+!execute runs a $LensDocument's resolver tiers against a bound browser session (or the broker's own process for credential-free http). Evidence: `packages/core/src/engine.ts`, `packages/core/src/reconcile.ts`, `packages/core/test/engine.test.ts`, `packages/core/test/reconcile.test.ts`.
 
 ## Rules
 

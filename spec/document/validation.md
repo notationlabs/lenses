@@ -6,7 +6,7 @@ title: Validate a lens document
 
 ## Context
 
-The @author writes a lens as one JSON file. !validate accepts the raw JSON and returns the parsed $LensDocument or throws. Evidence: `packages/lens/src/validate.ts`, `packages/lens/test/validate.test.ts`.
+The @author writes a lens as one JSON file. !validate accepts the raw JSON and returns the parsed $LensDocument or throws. Evidence: `packages/core/src/validate.ts`, `packages/core/test/validate.test.ts`.
 
 ## Rules
 

@@ -1,6 +1,6 @@
 import { build } from "esbuild";
 import { copyFile, mkdir } from "node:fs/promises";
-import { pageFunctionsStamp } from "@djgrant/lens/page-stamp";
+import { pageFunctionsStamp } from "@djgrant/lenses-core/page-stamp";
 
 // The extension bundles the page functions, so it must be able to say which
 // copy it bundled. Injected as a constant, it ships inside the bundle and

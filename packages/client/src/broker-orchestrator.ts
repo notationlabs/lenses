@@ -8,7 +8,7 @@ import {
   type LensBridgeRequest,
   type LensResult,
   type LensSpec,
-} from "@djgrant/lens";
+} from "@djgrant/lenses-core";
 import type {
   BrowserBackend,
   BrowserSession,

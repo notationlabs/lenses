@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { pageFunctionsStamp } from "@djgrant/lens/page-stamp";
+import { pageFunctionsStamp } from "@djgrant/lenses-core/page-stamp";
 import { pageStampNote } from "../src/extension-backend.js";
-import type { ExtensionHello } from "@djgrant/lens";
+import type { ExtensionHello } from "@djgrant/lenses-core";
 
 const hello = (pageStamp?: string): ExtensionHello => ({
   type: "extension-hello",

@@ -5,7 +5,7 @@ title: Generate the TypeScript SDK
 
 ## Context
 
-`lens gen ts-sdk` compiles one or more catalogs into typed bindings (`generateTsSdk`, `packages/lens/src/generate.ts`; `packages/lens/test/generate.test.ts`). `--out` writes the source to a file, otherwise it goes to stdout.
+`lens gen ts-sdk` compiles one or more catalogs into typed bindings (`generateTsSdk`, `packages/core/src/generate.ts`; `packages/core/test/generate.test.ts`). `--out` writes the source to a file, otherwise it goes to stdout.
 
 ## Rules
 

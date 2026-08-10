@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import { readFile, writeFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
-import { errorMessage, evaluate, generateTsSdk, type LensSpec } from "@djgrant/lens";
-import { createLensClient, LensStore } from "@djgrant/lens-client";
+import { errorMessage, evaluate, generateTsSdk, type LensSpec } from "@djgrant/lenses-core";
+import { createLensClient, LensStore } from "@djgrant/lenses-client";
 import { serveGraphql } from "./graphql-server.js";
 import { skillMarkdown } from "./skill.js";
 

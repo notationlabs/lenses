@@ -6,7 +6,7 @@ title: Observe a page for authoring
 
 ## Context
 
-!observe loads a target URL and reports what a lens author needs: the text snapshot and the JSON requests the page made. Evidence: `packages/client/src/index.ts` (`LensClient.observe`), `packages/lens/src/page-functions.ts` (`pageSnapshot`).
+!observe loads a target URL and reports what a lens author needs: the text snapshot and the JSON requests the page made. Evidence: `packages/client/src/index.ts` (`LensClient.observe`), `packages/core/src/page-functions.ts` (`pageSnapshot`).
 
 ## Rules
 

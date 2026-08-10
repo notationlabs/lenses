@@ -6,7 +6,7 @@ title: Resolve through the http tier
 
 ## Context
 
-An http tier fires its own requests through the host instead of reading a page's, so a call it satisfies never binds a page. Evidence: `packages/lens/src/resolvers/http.ts`, `packages/lens/test/engine.test.ts`.
+An http tier fires its own requests through the host instead of reading a page's, so a call it satisfies never binds a page. Evidence: `packages/core/src/resolvers/http.ts`, `packages/core/test/engine.test.ts`.
 
 ## Rules
 

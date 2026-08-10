@@ -6,7 +6,7 @@ title: Evaluate lens expressions
 
 ## Context
 
-Every executable field in a lens document (`map`, `detect`, `items`, `post`, helper bodies, `$lens` param expressions) is a JSONata expression string, never JavaScript, so the host can trust the `effects` declaration without parsing per-site code. !evaluateExpression is the one evaluator (`packages/lens/src/expr.ts`); `lens eval` runs it offline.
+Every executable field in a lens document (`map`, `detect`, `items`, `post`, helper bodies, `$lens` param expressions) is a JSONata expression string, never JavaScript, so the host can trust the `effects` declaration without parsing per-site code. !evaluateExpression is the one evaluator (`packages/core/src/expr.ts`); `lens eval` runs it offline.
 
 ## Rules
 

@@ -96,7 +96,7 @@ type LlmResolver = {
 type Resolver = HttpResolver | InterceptResolver | DomResolver | LlmResolver
 ```
 
-`$LensDocument` is the canonical JSON lens spec (`packages/lens/src/types.ts`).
+`$LensDocument` is the canonical JSON lens spec (`packages/core/src/types.ts`).
 
 ```entity
 type LensDocument = {

@@ -6,7 +6,7 @@ title: Resolve through the intercept tier
 
 ## Context
 
-An intercept tier reads JSON responses the bound page already fetched; it never fires requests of its own. Evidence: `packages/lens/src/resolvers/intercept.ts`, `packages/lens/src/url-pattern.ts`, `packages/lens/test/engine.test.ts`, `packages/lens/test/url-pattern.test.ts`.
+An intercept tier reads JSON responses the bound page already fetched; it never fires requests of its own. Evidence: `packages/core/src/resolvers/intercept.ts`, `packages/core/src/url-pattern.ts`, `packages/core/test/engine.test.ts`, `packages/core/test/url-pattern.test.ts`.
 
 ## Rules
 

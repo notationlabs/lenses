@@ -45,7 +45,7 @@ pnpm install
 pnpm build
 ```
 
-For the streamlined path, run `pnpm --filter @djgrant/lens-extension-chrome build`, open `chrome://extensions`, enable Developer mode, choose **Load unpacked**, and select `extensions/chrome/dist`. Calls run through a persistent local broker on port 4319; the first client starts it automatically, and CLI, MCP, and library clients share the extension connection.
+For the streamlined path, run `pnpm --filter @djgrant/lenses-extension-chrome build`, open `chrome://extensions`, enable Developer mode, choose **Load unpacked**, and select `extensions/chrome/dist`. Calls run through a persistent local broker on port 4319; the first client starts it automatically, and CLI, MCP, and library clients share the extension connection.
 
 If Chrome is not running when a call arrives, the broker starts it in the background with the `Default` profile (a bare launch would stall on Chrome's profile picker). Set a different profile in `~/.config/lenses/config.json` with `{ "browser": { "profile": "Profile 2" } }`, or set `LENS_BROKER_AUTO_LAUNCH=0` to never launch Chrome. The configured profile must be the one holding the lens extension.
 
@@ -53,10 +53,14 @@ Chrome 144+ remote debugging is always available as the fallback. Enable it at `
 
 ## TypeScript client
 
-`@djgrant/lens-client` is the primary API:
+`@djgrant/lenses` is the single public package. Its root export is the primary client API:
+
+```sh
+npm install @djgrant/lenses
+```
 
 ```ts
-import { createLensClient } from "@djgrant/lens-client";
+import { createLensClient } from "@djgrant/lenses";
 
 await using lenses = await createLensClient({
   catalog: [
@@ -98,7 +102,7 @@ const observation = await lenses.observe({
 
 ## CLI
 
-`@djgrant/lens-cli` installs the `lens` command. It prints JSON to stdout and uses a
+`@djgrant/lenses` also installs the `lens` command. It prints JSON to stdout and uses a
 non-zero exit status for command and lens errors. Pass `--verbose` to write timestamped
 broker and call diagnostics to stderr without contaminating the JSON output. Every
 command has focused help, for example `lens call --help`.
@@ -150,7 +154,7 @@ if (result.kind === "outcome") result.name; // e.g. "needs_auth"
 `value()` throws `LensOutcomeError` (`{outcome, value, hint}` — `hint` carries the
 remediation text declared in the lens document's `outcomes`) for outcome results, and
 `LensResultError` (`{message, issues}`) for error results. Both classes are exported
-from `@djgrant/lens-client` and from the generated SDK, so callers can catch and
+from `@djgrant/lenses` and from the generated SDK, so callers can catch and
 branch on `error.outcome`.
 
 Resolved values are validated against the same derived schema. A violation is an
@@ -177,15 +181,14 @@ bun packages/cli/src/index.ts call hn/top
 
 ## MCP
 
-`@djgrant/lens-mcp` is a thin stdio adapter over `@djgrant/lens-client`. Configure it
-with the lens catalog and built entry point:
+The `lens-mcp` binary in `@djgrant/lenses` is a thin stdio adapter over the client. After installing
+the package globally, configure it with the lens catalog:
 
 ```json
 {
   "mcpServers": {
     "lenses": {
-      "command": "node",
-      "args": ["/absolute/path/to/packages/mcp/dist/index.js"],
+      "command": "lens-mcp",
       "env": { "LENS_CATALOG": "/absolute/path/to/examples,git:github.com/notationlabs/lenses#main/examples" }
     }
   }
@@ -216,9 +219,9 @@ expression can be iterated on offline before it goes into a lens document.
 
 ```text
 application ─┐                                              ┌─ extension ─► Chrome
-lens CLI ────┼─► @djgrant/lens-client ── WebSocket ──► broker ┤
-lens MCP ────┘                                │             └─ CDP fallback
-                                  @djgrant/lens resolver engine
+lens CLI ────┼─► @djgrant/lenses ── WebSocket ──► broker ┤
+lens MCP ────┘                           │             └─ CDP fallback
+                              core resolver engine
 ```
 
 The broker hosts the resolver engine, caching, retry policy, and page-retention policy once. Credential-free `http` tiers run in the broker process itself; everything else pins the call to one session backend: the extension is preferred when its protocol and capabilities are compatible, while the CDP backend supplies the same page lifecycle, network capture, and in-page extraction primitives as a fallback. The page is bound lazily — a call an `http` tier satisfies never launches or touches the browser.
@@ -395,11 +398,12 @@ Run `pok lens validate` to validate every document under `examples/`.
 
 | path | package | responsibility |
 |---|---|---|
-| `packages/lens` | `@djgrant/lens` | Specs, validation, JSONata, resolver engine |
-| `packages/client` | `@djgrant/lens-client` | Lens orchestration and persistent browser broker |
-| `packages/cli` | `@djgrant/lens-cli` | JSON command-line adapter |
-| `packages/mcp` | `@djgrant/lens-mcp` | stdio MCP adapter |
-| `extensions/chrome` | `@djgrant/lens-extension-chrome` | Preferred Chrome session backend |
+| `packages/lenses` | `@djgrant/lenses` | Bundled public package: client, core, CLI, and MCP |
+| `packages/core` | private workspace | Specs, validation, JSONata, resolver engine |
+| `packages/client` | private workspace | Lens orchestration and persistent browser broker |
+| `packages/cli` | private workspace | JSON command-line adapter |
+| `packages/mcp` | private workspace | stdio MCP adapter |
+| `extensions/chrome` | private workspace | Preferred Chrome session backend |
 | `examples` | — | Example lens catalog |
 
 Planned work lives in [ROADMAP.md](./ROADMAP.md).

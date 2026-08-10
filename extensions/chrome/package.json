@@ -1,6 +1,6 @@
 {
-  "name": "@djgrant/lens-extension-chrome",
-  "version": "0.3.0",
+  "name": "@djgrant/lenses-extension-chrome",
+  "version": "0.3.1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,7 +8,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@djgrant/lens": "workspace:*"
+    "@djgrant/lenses-core": "workspace:*"
   },
   "devDependencies": {
     "@types/chrome": "^0.0.280",

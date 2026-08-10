@@ -10,8 +10,8 @@ import {
   type ExtensionRpcResponse,
   type ExtensionRpcResult,
   type PerformStep,
-} from "@djgrant/lens";
-import { pageFunctionsStamp } from "@djgrant/lens/page-stamp";
+} from "@djgrant/lenses-core";
+import { pageFunctionsStamp } from "@djgrant/lenses-core/page-stamp";
 import type {
   BindRequest,
   BrowserBackend,
