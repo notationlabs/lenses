@@ -338,6 +338,18 @@ class ExtensionSession implements BrowserSession {
     assertResult(result, "snapshot");
     return result.snapshot;
   }
+
+  async recordingState() {
+    const result = await this.rpc({ name: "recording-state", sessionId: this.id });
+    assertResult(result, "recording-state");
+    return result.state;
+  }
+
+  async recordingScreenshot(): Promise<string> {
+    const result = await this.rpc({ name: "recording-screenshot", sessionId: this.id });
+    assertResult(result, "recording-screenshot");
+    return result.pngBase64;
+  }
 }
 
 /**

@@ -22,6 +22,11 @@ import {
 } from "./bridge.js";
 import { LensStore, type CatalogUpdate } from "./lens-store.js";
 import { parseCatalogSource, scanLensFiles, type CatalogSource, type LensFile } from "./catalog.js";
+import {
+  createRecordingRun,
+  type RecordingHandle,
+  type RecordingOptions,
+} from "./recording.js";
 
 const DEFAULT_PORT_START = 4319;
 
@@ -124,6 +129,8 @@ const REF_DEFAULT_MAX_CALLS = 8;
 const REF_DEFAULT_MAX_DEPTH = 4;
 
 interface RefDefaultContext {
+  /** Recorder selected when the outer call was made; stopping affects only later calls. */
+  recordingPath?: string;
   /** shared across the whole outer call, including nested default chains */
   budget: { remaining: number };
   depth: number;
@@ -131,7 +138,8 @@ interface RefDefaultContext {
   stack: Set<string>;
 }
 
-const freshRefDefaultContext = (): RefDefaultContext => ({
+const freshRefDefaultContext = (recordingPath?: string): RefDefaultContext => ({
+  recordingPath,
   budget: { remaining: REF_DEFAULT_MAX_CALLS },
   depth: 0,
   stack: new Set(),
@@ -173,6 +181,8 @@ function checkRefDefaultTarget(
 export class LensClient {
   private readonly cache = new Map<string, CacheEntry>();
   private transportPromise?: Promise<LensTransport>;
+  private activeRecording?: RecordingHandle;
+  private recordingCallSequence = 0;
 
   constructor(
     private readonly store: LensStore,
@@ -224,7 +234,31 @@ export class LensClient {
   }
 
   async call(input: LensCall): Promise<LensCallResult> {
-    return this.callWithin(input, freshRefDefaultContext());
+    return this.callWithin(input, freshRefDefaultContext(this.activeRecording?.path));
+  }
+
+  /** Start one recorder scoped to calls made through this client instance. */
+  record(options: true | RecordingOptions = true): RecordingHandle {
+    if (this.activeRecording) throw new Error("this lens client already has an active recording");
+    if (
+      options !== true &&
+      (typeof options !== "object" ||
+        options === null ||
+        typeof options.path !== "string" ||
+        !options.path ||
+        Object.keys(options).some((key) => key !== "path"))
+    ) {
+      throw new Error('record() accepts only true or { path: "…" }');
+    }
+    const path = createRecordingRun(options === true ? undefined : options.path);
+    const handle: RecordingHandle = {
+      path,
+      stop: () => {
+        if (this.activeRecording === handle) this.activeRecording = undefined;
+      },
+    };
+    this.activeRecording = handle;
+    return handle;
   }
 
   private async callWithin(input: LensCall, refs: RefDefaultContext): Promise<LensCallResult> {
@@ -276,7 +310,14 @@ export class LensClient {
       spec,
       params,
       input.timeoutMs,
-      input.allowWrites
+      input.allowWrites,
+      refs.recordingPath
+        ? {
+            path: refs.recordingPath,
+            callId: `recording-call-${String(++this.recordingCallSequence).padStart(6, "0")}`,
+            lens: spec.name,
+          }
+        : undefined
     );
     if (result.kind === "value" && !result.partial && !result.cached && ttl > 0) {
       this.cache.set(key, { result, expiresAt: Date.now() + ttl });
@@ -313,7 +354,12 @@ export class LensClient {
       this.log(`resolving ${via}`);
       const result = await this.callWithin(
         { lens: ref.$lens, params: ref.params ?? {} },
-        { budget: refs.budget, depth: refs.depth + 1, stack: refs.stack }
+        {
+          recordingPath: refs.recordingPath,
+          budget: refs.budget,
+          depth: refs.depth + 1,
+          stack: refs.stack,
+        }
       );
       if (result.kind === "outcome") throw new Error(`${via}: returned outcome "${result.name}"`);
       if (result.kind === "error") throw new Error(`${via}: ${result.message}`);
@@ -550,4 +596,6 @@ export type {
   LensLogger,
   LensTransport,
   LensTransportResult,
+  RecordingHandle,
+  RecordingOptions,
 };

@@ -13,6 +13,7 @@ export const REQUIRED_EXTENSION_CAPABILITIES = [
   "cursor-delta",
   "dom-extract",
   "snapshot-html",
+  "recording",
 ] as const;
 /**
  * Capabilities the broker uses when present but can work without. find-gate
@@ -85,6 +86,8 @@ export type ExtensionRpcOperation =
       html?: boolean;
       maxHtmlChars?: number;
     }
+  | { name: "recording-state"; sessionId: string }
+  | { name: "recording-screenshot"; sessionId: string }
   | {
       name: "finish";
       sessionId: string;
@@ -145,6 +148,11 @@ export type ExtensionRpcResult =
     }
   | { name: "perform"; result: PerformResult }
   | { name: "snapshot"; snapshot: PageSnapshot }
+  | {
+      name: "recording-state";
+      state: { url: string; title: string; documentRevision: number; loading: boolean };
+    }
+  | { name: "recording-screenshot"; pngBase64: string }
   | { name: "finish" }
   | { name: "find-gate"; gate: AuthGate | null }
   | { name: "http-fetch"; response: InterceptedResponse };
@@ -282,6 +290,14 @@ const operationSchema = z.discriminatedUnion("name", [
     maxHtmlChars: z.number().int().nonnegative().optional(),
   }),
   z.strictObject({
+    name: z.literal("recording-state"),
+    sessionId: z.string().min(1),
+  }),
+  z.strictObject({
+    name: z.literal("recording-screenshot"),
+    sessionId: z.string().min(1),
+  }),
+  z.strictObject({
     name: z.literal("finish"),
     sessionId: z.string().min(1),
     disposition: z.enum(["close-if-created", "keep"]),
@@ -355,6 +371,19 @@ const rpcResultSchema = z.discriminatedUnion("name", [
   z.strictObject({
     name: z.literal("snapshot"),
     snapshot: snapshotSchema,
+  }),
+  z.strictObject({
+    name: z.literal("recording-state"),
+    state: z.strictObject({
+      url: z.string(),
+      title: z.string(),
+      documentRevision: z.number().int().nonnegative(),
+      loading: z.boolean(),
+    }),
+  }),
+  z.strictObject({
+    name: z.literal("recording-screenshot"),
+    pngBase64: z.string(),
   }),
   z.strictObject({ name: z.literal("finish") }),
   z.strictObject({

@@ -11,6 +11,7 @@ import {
   type LensTransport,
   type LensTransportResult,
 } from "../src/index.js";
+import type { RecordingTarget } from "../src/recording.js";
 
 class FakeTransport implements LensTransport {
   connected = true;
@@ -19,17 +20,20 @@ class FakeTransport implements LensTransport {
   calls = 0;
   lastParams: Record<string, unknown> | undefined;
   lastAllowWrites: boolean | undefined;
+  lastRecording: RecordingTarget | undefined;
   result: LensTransportResult = { kind: "value", value: { ok: true }, resolver: "dom" };
 
   async call(
     _spec: LensSpec,
     params: Record<string, unknown>,
     _timeoutMs?: number,
-    allowWrites?: boolean
+    allowWrites?: boolean,
+    recording?: RecordingTarget
   ): Promise<LensResult> {
     this.calls++;
     this.lastParams = params;
     this.lastAllowWrites = allowWrites;
+    this.lastRecording = recording;
     return this.result;
   }
 
@@ -68,6 +72,26 @@ async function fixtureDirectory(
 const titledReturns = { type: "object", fields: { title: "string", score: "number" } };
 
 describe("LensClient", () => {
+  it("scopes one recording to calls made before its handle stops", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lens-recordings-"));
+    const transport = new FakeTransport();
+    const client = new LensClient(new LensStore(await fixtureDirectory(true)), transport);
+    const recording = client.record({ path: root });
+
+    expect(recording.path).toMatch(new RegExp(`^${root}/lenses-recording-`));
+    expect(() => client.record(true)).toThrow("already has an active recording");
+    await client.call({ lens: "web/page", params: { page: "home" } });
+    expect(transport.lastRecording).toMatchObject({
+      path: recording.path,
+      callId: "recording-call-000001",
+      lens: "@example/web/page",
+    });
+
+    recording.stop();
+    await client.call({ lens: "web/page", params: { page: "other" } });
+    expect(transport.lastRecording).toBeUndefined();
+  });
+
   it("lists local lenses without exposing storage details", async () => {
     const client = new LensClient(new LensStore(await fixtureDirectory()), new FakeTransport());
     expect(await client.list()).toEqual([

@@ -9,6 +9,8 @@ import {
   type LensResult,
   type LensSpec,
 } from "@djgrant/lenses-core";
+import { RecordingMonitor } from "./recording-monitor.js";
+import { appendRecordingCheckpoint } from "./recording.js";
 import type {
   BrowserBackend,
   BrowserSession,
@@ -133,6 +135,7 @@ export function createBrokerOrchestrator(
     // The page is bound on first use, so a call an http tier satisfies never
     // touches the browser at all.
     let session: BrowserSession | undefined;
+    let recording: RecordingMonitor | undefined;
     const ensureSession = async (): Promise<BrowserSession> => {
       if (session) return session;
       backend ??= await selectBackend();
@@ -151,6 +154,13 @@ export function createBrokerOrchestrator(
             : "reuse",
       });
       progress(`bound page${session.created ? " (created)" : " (existing)"}`);
+      if (message.recording) {
+        recording = new RecordingMonitor(session, (checkpoint) =>
+          appendRecordingCheckpoint(message.recording!, checkpoint)
+        );
+        await recording.start();
+        progress(`recording browser states in ${message.recording.path}`);
+      }
       return session;
     };
     const httpFetch = async (
@@ -181,7 +191,11 @@ export function createBrokerOrchestrator(
       return result;
     } finally {
       if (backend && session) {
-        await finishQuietly(backend, session, dispositionFor(result));
+        try {
+          if (recording) await recording.finish();
+        } finally {
+          await finishQuietly(backend, session, dispositionFor(result));
+        }
       }
     }
   }

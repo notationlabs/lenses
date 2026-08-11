@@ -60,7 +60,7 @@ describe("broker-extension protocol", () => {
         capabilities: ["sessions"],
       })
     ).toThrow(
-      "extension is missing required capabilities: cursor-delta, dom-extract, snapshot-html"
+      "extension is missing required capabilities: cursor-delta, dom-extract, snapshot-html, recording"
     );
   });
 
@@ -99,6 +99,7 @@ describe("broker-extension protocol", () => {
           "cursor-delta",
           "dom-extract",
           "snapshot-html",
+          "recording",
           "future-capability",
         ],
       }).capabilities

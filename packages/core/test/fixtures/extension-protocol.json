@@ -3,7 +3,7 @@
     "type": "extension-hello",
     "protocolMajor": 1,
     "extensionVersion": "0.1.0",
-    "capabilities": ["sessions", "cursor-delta", "dom-extract", "snapshot-html"],
+    "capabilities": ["sessions", "cursor-delta", "dom-extract", "snapshot-html", "recording"],
     "epoch": "epoch_fixture",
     "ua": "Chrome/144"
   },
