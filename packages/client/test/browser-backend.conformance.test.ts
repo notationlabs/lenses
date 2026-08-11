@@ -376,7 +376,8 @@ class FakePage {
     return "";
   }
 
-  async screenshot(): Promise<string> {
+  async screenshot(options: { fullPage?: boolean }): Promise<string> {
+    expect(options).toMatchObject({ fullPage: true });
     return Buffer.from("fake png").toString("base64");
   }
 
@@ -665,8 +666,15 @@ function createChromeMock() {
       },
       debugger: {
         async attach() {},
-        async sendCommand(_target: unknown, command: string) {
+        async sendCommand(_target: unknown, command: string, params?: unknown) {
+          if (command === "Page.getLayoutMetrics") {
+            return { cssContentSize: { width: 1200, height: 3400 } };
+          }
           expect(command).toBe("Page.captureScreenshot");
+          expect(params).toMatchObject({
+            captureBeyondViewport: true,
+            clip: { x: 0, y: 0, width: 1200, height: 3400, scale: 1 },
+          });
           return { data: Buffer.from("fake png").toString("base64") };
         },
         async detach() {},

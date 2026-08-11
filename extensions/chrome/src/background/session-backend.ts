@@ -259,8 +259,21 @@ async function captureTab(tabId: number): Promise<string> {
   const target = { tabId };
   await chrome.debugger.attach(target, "1.3");
   try {
+    const metrics = (await chrome.debugger.sendCommand(
+      target,
+      "Page.getLayoutMetrics"
+    )) as {
+      cssContentSize?: { width: number; height: number };
+      contentSize?: { width: number; height: number };
+    };
+    const content = metrics.cssContentSize ?? metrics.contentSize;
+    if (!content || content.width <= 0 || content.height <= 0) {
+      throw new Error(`Chrome returned no page dimensions for tab ${tabId}`);
+    }
     const result = (await chrome.debugger.sendCommand(target, "Page.captureScreenshot", {
       format: "png",
+      captureBeyondViewport: true,
+      clip: { x: 0, y: 0, width: content.width, height: content.height, scale: 1 },
     })) as { data?: string };
     if (!result.data) throw new Error(`Chrome returned no screenshot for tab ${tabId}`);
     return result.data;
