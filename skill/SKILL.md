@@ -5,10 +5,13 @@ description: Read live web pages as typed function calls through the lens CLI. U
 
 # Lenses
 
-A lens turns a webpage into a typed function. Calls run through the user's own browser, preferring the Lens Chrome extension and falling back to Chrome's remote-debugging protocol, so signed-in sessions work without exporting cookies. Lenses observe what a page already does; a lens acts on the page only through a declared `perform` block, and only when you pass `--allow-writes`.
+A lens turns a webpage into a typed function. Calls run through the user's own browser, preferring the Lens Chrome extension and falling back to Chrome's remote-debugging protocol, so signed-in sessions work.
 
-Every command prints JSON to stdout and exits non-zero on errors. Pass a catalog
-directory with `--catalog <path>` (or ask the user where their lens catalog is).
+## CLI Behaviour
+
+Every command prints JSON to stdout and exits non-zero on errors. 
+
+Pass a catalog directory with `--catalog <path>` (or ask the user where their lens catalog is).
 
 ## Calling a lens
 
