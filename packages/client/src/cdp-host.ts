@@ -87,6 +87,7 @@ interface CdpSession extends BrowserSession {
   target: string;
   captures: CaptureBuffer;
   closed: boolean;
+  stopRecordingState: () => void;
 }
 
 export function createCdpBackend(
@@ -272,6 +273,18 @@ export function createCdpBackend(
     target: string,
     loadTimeoutMs: number
   ): CdpSession {
+    let documentRevision = 0;
+    let loading = false;
+    const navigationStarted = (request: { isNavigationRequest(): boolean; frame(): unknown }) => {
+      if (!request.isNavigationRequest() || request.frame() !== page.mainFrame()) return;
+      documentRevision += 1;
+      loading = true;
+    };
+    const loaded = () => {
+      loading = false;
+    };
+    page.on("request", navigationStarted);
+    page.on("load", loaded);
     const session: CdpSession = {
       id: `cdp_${++sessionSequence}`,
       created,
@@ -280,6 +293,10 @@ export function createCdpBackend(
       target,
       captures: captures(page),
       closed: false,
+      stopRecordingState: () => {
+        page.off?.("request", navigationStarted);
+        page.off?.("load", loaded);
+      },
       async reload(loadTimeoutMs) {
         assertOpen(session);
         await reloadPage(page, loadTimeoutMs);
@@ -304,6 +321,20 @@ export function createCdpBackend(
       async snapshot(options) {
         assertOpen(session);
         return page.evaluate(pageSnapshot, options);
+      },
+      async recordingState() {
+        assertOpen(session);
+        return {
+          url: page.url(),
+          title: await page.title(),
+          documentRevision,
+          loading,
+        };
+      },
+      async recordingScreenshot() {
+        assertOpen(session);
+        const png = await page.screenshot({ type: "png", encoding: "base64" });
+        return typeof png === "string" ? png : Buffer.from(png).toString("base64");
       },
     };
     return session;
@@ -455,6 +486,7 @@ export function createCdpBackend(
     ): Promise<void> {
       const cdpSession = session as CdpSession;
       cdpSession.closed = true;
+      cdpSession.stopRecordingState();
       wakeCaptureWaiters(cdpSession.captures);
       if (disposition === "keep" && !cdpSession.page.isClosed()) {
         keptGates.set(cdpSession.page, {

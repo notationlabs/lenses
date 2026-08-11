@@ -73,6 +73,19 @@ class FakeSession implements BrowserSession {
   async snapshot(_options: SnapshotOptions): Promise<PageSnapshot> {
     return this.snapshotResult;
   }
+
+  async recordingState() {
+    return {
+      url: this.snapshotResult.url,
+      title: this.snapshotResult.title,
+      documentRevision: 0,
+      loading: false,
+    };
+  }
+
+  async recordingScreenshot(): Promise<string> {
+    return Buffer.from("fake png").toString("base64");
+  }
 }
 
 class FakeBackend implements BrowserBackend {

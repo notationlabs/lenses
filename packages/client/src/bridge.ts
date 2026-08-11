@@ -4,6 +4,7 @@ import { WebSocket } from "ws";
 import type { LensBridgeRequest, LensResult, LensSpec } from "@djgrant/lenses-core";
 import { coordinateRespawn } from "./broker-respawn.js";
 import { brokerBuildStamp } from "./broker-stamp.js";
+import type { RecordingTarget } from "./recording.js";
 
 const BROKER_START_WAIT_MS = 3_000;
 const BROKER_SHUTDOWN_WAIT_MS = 12_000;
@@ -24,7 +25,8 @@ export interface LensTransport {
     params: Record<string, unknown>,
     timeoutMs?: number,
     /** consent for a spec with `perform` steps; the broker denies without it */
-    allowWrites?: boolean
+    allowWrites?: boolean,
+    recording?: RecordingTarget
   ): Promise<LensTransportResult>;
   observe(
     target: string,
@@ -129,7 +131,8 @@ export class BrowserBridge implements LensTransport {
     spec: LensSpec,
     params: Record<string, unknown>,
     timeoutMs = 90_000,
-    allowWrites?: boolean
+    allowWrites?: boolean,
+    recording?: RecordingTarget
   ): Promise<LensTransportResult> {
     return this.request(
       (id) => ({
@@ -139,6 +142,7 @@ export class BrowserBridge implements LensTransport {
         params,
         timeoutMs,
         ...(allowWrites !== undefined ? { allowWrites } : {}),
+        ...(recording ? { recording } : {}),
       }),
       timeoutMs
     );

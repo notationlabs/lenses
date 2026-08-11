@@ -330,6 +330,8 @@ export type LensBridgeRequest =
       timeoutMs: number;
       /** consent for a spec with `perform` steps; default false at every layer */
       allowWrites?: boolean;
+      /** Per-call target supplied only by the client instance with an active recorder. */
+      recording?: { path: string; callId: string; lens: string };
     }
   | { type: "observe"; id: string; target: string; waitMs: number; html?: boolean }
   /**

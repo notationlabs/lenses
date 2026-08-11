@@ -124,6 +124,14 @@ for (const [name, createFixture] of [
         title: "Shared",
         value: { title: "Shared" },
       });
+      await expect(session.recordingState()).resolves.toMatchObject({
+        url: "https://example.com/shared",
+        documentRevision: 0,
+        loading: false,
+      });
+      await expect(session.recordingScreenshot()).resolves.toBe(
+        Buffer.from("fake png").toString("base64")
+      );
       await expect(
         session.snapshot({ maxChars: 6000, html: true })
       ).resolves.toEqual({
@@ -358,6 +366,18 @@ class FakePage {
 
   on(event: string, listener: (response: FakeResponse) => void): void {
     if (event === "response") this.responseListener = listener;
+  }
+
+  mainFrame(): this {
+    return this;
+  }
+
+  async title(): Promise<string> {
+    return "";
+  }
+
+  async screenshot(): Promise<string> {
+    return Buffer.from("fake png").toString("base64");
   }
 
   async goto(url: string): Promise<void> {
@@ -642,6 +662,14 @@ function createChromeMock() {
     api: {
       runtime: {
         onMessage: runtimeMessages,
+      },
+      debugger: {
+        async attach() {},
+        async sendCommand(_target: unknown, command: string) {
+          expect(command).toBe("Page.captureScreenshot");
+          return { data: Buffer.from("fake png").toString("base64") };
+        },
+        async detach() {},
       },
       tabs: {
         onUpdated: tabUpdates,

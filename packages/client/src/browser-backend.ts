@@ -41,6 +41,22 @@ export interface SnapshotOptions {
 
 export type FinishDisposition = "close-if-created" | "keep";
 
+export interface RecordingPageState {
+  url: string;
+  title: string;
+  /** Changes when a top-level document navigation starts, including same-URL reloads. */
+  documentRevision: number;
+  loading: boolean;
+}
+
+export interface RecordingCheckpoint {
+  kind: "bind" | "navigation" | "final";
+  url: string;
+  title: string;
+  timestamp: number;
+  pngBase64: string;
+}
+
 export interface BrowserSession {
   readonly id: string;
   readonly created: boolean;
@@ -55,6 +71,10 @@ export interface BrowserSession {
    */
   perform(steps: PerformStep[]): Promise<PerformResult>;
   snapshot(options: SnapshotOptions): Promise<PageSnapshot>;
+  /** Cheap top-level state probe used only while a scoped recorder is active. */
+  recordingState(): Promise<RecordingPageState>;
+  /** PNG of this session's tab; implementations must not capture another tab. */
+  recordingScreenshot(): Promise<string>;
 }
 
 export interface BrowserBackend {

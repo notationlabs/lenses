@@ -33,6 +33,8 @@ interface SessionState {
   /** the expanded lens URL the session was bound to, for `navigate: "fresh"` */
   target: string;
   loadTimeoutMs: number;
+  documentRevision: number;
+  loading: boolean;
 }
 
 export interface ExtensionSessionBackend {
@@ -47,6 +49,18 @@ export async function reapAbandonedTabLeases(): Promise<void> {
 
 export function createExtensionSessionBackend(): ExtensionSessionBackend {
   const sessions = new Map<string, SessionState>();
+  const trackNavigation = (tabId: number, info: chrome.tabs.TabChangeInfo) => {
+    for (const active of sessions.values()) {
+      if (active.bound.tabId !== tabId) continue;
+      if (info.status === "loading") {
+        active.documentRevision += 1;
+        active.loading = true;
+      } else if (info.status === "complete") {
+        active.loading = false;
+      }
+    }
+  };
+  chrome.tabs.onUpdated.addListener(trackNavigation);
 
   const session = (sessionId: string): SessionState => {
     const found = sessions.get(sessionId);
@@ -66,6 +80,8 @@ export function createExtensionSessionBackend(): ExtensionSessionBackend {
             bound,
             target: operation.target,
             loadTimeoutMs: operation.loadTimeoutMs,
+            documentRevision: 0,
+            loading: false,
           });
           if (bound.created) {
             await rememberCreatedTab(bound.tabId, operation.target);
@@ -133,6 +149,26 @@ export function createExtensionSessionBackend(): ExtensionSessionBackend {
           });
           return { name: "snapshot", snapshot };
         }
+        case "recording-state": {
+          const active = session(operation.sessionId);
+          const tab = await chrome.tabs.get(active.bound.tabId);
+          return {
+            name: "recording-state",
+            state: {
+              url: tab.url ?? "",
+              title: tab.title ?? "",
+              documentRevision: active.documentRevision,
+              loading: active.loading || tab.status === "loading",
+            },
+          };
+        }
+        case "recording-screenshot": {
+          const active = session(operation.sessionId);
+          return {
+            name: "recording-screenshot",
+            pngBase64: await captureTab(active.bound.tabId),
+          };
+        }
         case "finish": {
           const active = session(operation.sessionId);
           sessions.delete(operation.sessionId);
@@ -199,6 +235,7 @@ export function createExtensionSessionBackend(): ExtensionSessionBackend {
       }
     },
     async close() {
+      chrome.tabs.onUpdated.removeListener(trackNavigation);
       const active = [...sessions.values()];
       sessions.clear();
       await Promise.all(
@@ -211,6 +248,25 @@ export function createExtensionSessionBackend(): ExtensionSessionBackend {
       );
     },
   };
+}
+
+/**
+ * captureVisibleTab can only capture whichever tab is active. The debugger API
+ * is the smallest Chrome API that can capture the participating background tab
+ * without briefly selecting it (and risking an unrelated-tab screenshot).
+ */
+async function captureTab(tabId: number): Promise<string> {
+  const target = { tabId };
+  await chrome.debugger.attach(target, "1.3");
+  try {
+    const result = (await chrome.debugger.sendCommand(target, "Page.captureScreenshot", {
+      format: "png",
+    })) as { data?: string };
+    if (!result.data) throw new Error(`Chrome returned no screenshot for tab ${tabId}`);
+    return result.data;
+  } finally {
+    await chrome.debugger.detach(target).catch(() => {});
+  }
 }
 
 async function recordCurrentUrlAsKept(tabId: number): Promise<void> {

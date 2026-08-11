@@ -76,6 +76,34 @@ const result = await lenses.call({
 });
 ```
 
+### Record browser calls
+
+Start one recorder on a client to save the stable page states reached by its browser-backed calls:
+
+```ts
+const recording = lenses.record(); // same as record(true); root defaults to ./screenshots
+// Or: const recording = lenses.record({ path: "./artifacts" });
+
+await lenses.call({ lens: "claude/usage" });
+recording.stop();
+console.log(recording.path); // absolute lenses-recording-<UTC timestamp> run path
+```
+
+A run contains `index.json` and numbered PNGs. It records the stable state after binding,
+after settled top-level document or SPA URL transitions, and at call completion. HTTP-only
+calls and tabs unrelated to the bound call are not captured. Identical PNG bytes are stored
+once while every ordered checkpoint remains in the index. PNG names use the event sequence,
+host/path, and hash prefix (never query or fragment); `index.json` retains the full URL, title,
+timestamp, lens, call ID, and SHA-256. Calling `stop()` affects new calls; a call started while
+the handle was active remains part of that run.
+
+The Chrome extension uses Chrome's `debugger` permission for screenshots. Chrome only lets
+`captureVisibleTab` capture the active tab, so using it would either miss background lens tabs
+or briefly expose and risk capturing an unrelated tab. The debugger API captures the bound
+background tab without activating it; Chrome may show its standard debugging indicator, and
+a tab already attached to DevTools or another debugger cannot be recorded. The CDP fallback
+uses its existing debugging connection.
+
 Catalog sources are tried in order. A source is a directory path (`file:` optional), a
 `git:host/owner/repo[#ref][/subdir]` reference (`git:/abs/path` clones a local
 repository), or the URL of an HTTP catalog index —
