@@ -36,6 +36,8 @@ export interface FakeChrome {
   /** Every notification created, in order. */
   notifications: { id: string; title: string; message: string }[];
   reloads: number[];
+  debuggerAttached: Set<number>;
+  debuggerDetaches: number[];
   storage: Map<string, unknown>;
   /** Seed a tab the extension did not open, e.g. one the user already had. */
   addTab(url: string): FakeTab;
@@ -63,6 +65,8 @@ export function createFakeChrome(): FakeChrome {
   const onNotificationClicked = new FakeEvent<[string]>();
   let osFocused = true;
   const reloads: number[] = [];
+  const debuggerAttached = new Set<number>();
+  const debuggerDetaches: number[] = [];
   const storage = new Map<string, unknown>();
   const onUpdated = new FakeEvent<
     [number, { status?: string }, FakeTab]
@@ -90,6 +94,25 @@ export function createFakeChrome(): FakeChrome {
 
   const api = {
     runtime: { onMessage },
+    debugger: {
+      async attach({ tabId }: { tabId: number }) {
+        if (debuggerAttached.has(tabId)) {
+          throw new Error(`Another debugger is already attached to the tab with id: ${tabId}`);
+        }
+        debuggerAttached.add(tabId);
+      },
+      async sendCommand(_target: unknown, command: string) {
+        if (command === "Page.getLayoutMetrics") {
+          return { cssContentSize: { width: 1200, height: 3400 } };
+        }
+        if (command === "Page.captureScreenshot") return { data: "fake-png" };
+        throw new Error(`unexpected debugger command ${command}`);
+      },
+      async detach({ tabId }: { tabId: number }) {
+        if (!debuggerAttached.delete(tabId)) throw new Error("Debugger is not attached");
+        debuggerDetaches.push(tabId);
+      },
+    },
     tabs: {
       onUpdated,
       onRemoved,
@@ -192,6 +215,8 @@ export function createFakeChrome(): FakeChrome {
     focusedWindows,
     notifications,
     reloads,
+    debuggerAttached,
+    debuggerDetaches,
     storage,
     addTab,
     setUrl(tabId, url) {
