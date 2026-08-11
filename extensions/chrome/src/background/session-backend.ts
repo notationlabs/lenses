@@ -367,6 +367,7 @@ async function captureTabNow(
       const result = (await chrome.debugger.sendCommand(target, "Page.captureScreenshot", {
         format: "png",
         captureBeyondViewport: true,
+        optimizeForSpeed: true,
         clip: { x: 0, y: 0, width: content.width, height: content.height, scale: 1 },
       })) as { data?: string };
       if (!result.data) throw new Error(`Chrome returned no screenshot for tab ${tabId}`);

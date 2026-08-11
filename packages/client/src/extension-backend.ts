@@ -93,7 +93,11 @@ export function createExtensionBackend(
     return new Promise<ExtensionRpcResult>((resolve, reject) => {
       const timer = setTimeout(() => {
         pending.delete(requestId);
-        reject(new Error(`extension RPC ${requestId} deadline exceeded`));
+        reject(
+          new Error(
+            `extension RPC ${requestId} (${operation.name}) deadline exceeded`
+          )
+        );
       }, Math.max(0, deadline - Date.now()));
       pending.set(requestId, { resolve, reject, timer });
       current.send(JSON.stringify(request), (error) => {
@@ -345,8 +349,13 @@ class ExtensionSession implements BrowserSession {
     return result.state;
   }
 
-  async recordingScreenshot(): Promise<string> {
-    const result = await this.rpc({ name: "recording-screenshot", sessionId: this.id });
+  async recordingScreenshot(
+    deadline = Date.now() + DEFAULT_RPC_TIMEOUT_MS
+  ): Promise<string> {
+    const result = await this.rpc(
+      { name: "recording-screenshot", sessionId: this.id },
+      deadline
+    );
     assertResult(result, "recording-screenshot");
     return result.pngBase64;
   }

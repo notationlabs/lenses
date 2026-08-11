@@ -21,7 +21,8 @@ export class RecordingMonitor {
 
   constructor(
     private readonly session: BrowserSession,
-    private readonly emit: (checkpoint: RecordingCheckpoint) => Promise<void>
+    private readonly emit: (checkpoint: RecordingCheckpoint) => Promise<void>,
+    private readonly deadline = Date.now() + 30_000
   ) {}
 
   async start(): Promise<void> {
@@ -102,7 +103,7 @@ export class RecordingMonitor {
     generation: number,
     state: RecordingPageState
   ): Promise<boolean> {
-    const pngBase64 = await this.session.recordingScreenshot();
+    const pngBase64 = await this.session.recordingScreenshot(this.deadline);
     const after = await this.session.recordingState();
     this.observe(after);
     if (
