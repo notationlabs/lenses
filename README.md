@@ -89,7 +89,7 @@ recording.stop();
 console.log(recording.path); // absolute lenses-recording-<UTC timestamp> run path
 ```
 
-A run contains `index.json` and numbered PNGs. It records the stable state after binding,
+A run contains `index.json` and numbered full-page PNGs. It records the stable state after binding,
 after settled top-level document or SPA URL transitions, and at call completion. HTTP-only
 calls and tabs unrelated to the bound call are not captured. Identical PNG bytes are stored
 once while every ordered checkpoint remains in the index. PNG names use the event sequence,

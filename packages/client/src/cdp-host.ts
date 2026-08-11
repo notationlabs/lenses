@@ -333,7 +333,11 @@ export function createCdpBackend(
       },
       async recordingScreenshot() {
         assertOpen(session);
-        const png = await page.screenshot({ type: "png", encoding: "base64" });
+        const png = await page.screenshot({
+          type: "png",
+          encoding: "base64",
+          fullPage: true,
+        });
         return typeof png === "string" ? png : Buffer.from(png).toString("base64");
       },
     };
