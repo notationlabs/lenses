@@ -14,18 +14,24 @@ describe("RecordingMonitor", () => {
       loading: false,
     };
     const events: RecordingCheckpoint[] = [];
+    const screenshotDeadlines: Array<number | undefined> = [];
     const session = {
       navigated: true,
       async recordingState() {
         return { ...state };
       },
-      async recordingScreenshot() {
+      async recordingScreenshot(deadline?: number) {
+        screenshotDeadlines.push(deadline);
         return Buffer.from(state.url).toString("base64");
       },
     } as BrowserSession;
-    const monitor = new RecordingMonitor(session, async (event) => {
-      events.push(event);
-    });
+    const monitor = new RecordingMonitor(
+      session,
+      async (event) => {
+        events.push(event);
+      },
+      12345
+    );
 
     await monitor.start();
     state = { ...state, url: "https://example.com/redirect", title: "Redirect" };
@@ -47,5 +53,6 @@ describe("RecordingMonitor", () => {
       url: "https://example.com/landed",
       title: "Landed",
     });
+    expect(screenshotDeadlines).toEqual(screenshotDeadlines.map(() => 12345));
   });
 });

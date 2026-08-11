@@ -95,6 +95,10 @@ export function createBrokerOrchestrator(
     message: Extract<LensBridgeRequest, { type: "call" }>,
     progress: (text: string) => void
   ): Promise<LensResult> {
+    // The client timeout covers the complete call, including recorder setup
+    // and final capture; screenshot RPCs must use its remaining budget rather
+    // than an unrelated 30-second default.
+    const callDeadline = Date.now() + message.timeoutMs;
     // Consent comes before everything — no page bind, no cache read, no tier:
     // a denied write call must leave the browser exactly as it found it.
     const performs = (message.spec.perform?.length ?? 0) > 0;
@@ -155,8 +159,10 @@ export function createBrokerOrchestrator(
       });
       progress(`bound page${session.created ? " (created)" : " (existing)"}`);
       if (message.recording) {
-        recording = new RecordingMonitor(session, (checkpoint) =>
-          appendRecordingCheckpoint(message.recording!, checkpoint)
+        recording = new RecordingMonitor(
+          session,
+          (checkpoint) => appendRecordingCheckpoint(message.recording!, checkpoint),
+          callDeadline
         );
         await recording.start();
         progress(`recording browser states in ${message.recording.path}`);

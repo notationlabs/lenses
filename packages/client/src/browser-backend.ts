@@ -74,7 +74,7 @@ export interface BrowserSession {
   /** Cheap top-level state probe used only while a scoped recorder is active. */
   recordingState(): Promise<RecordingPageState>;
   /** PNG of this session's tab; implementations must not capture another tab. */
-  recordingScreenshot(): Promise<string>;
+  recordingScreenshot(deadline?: number): Promise<string>;
 }
 
 export interface BrowserBackend {
