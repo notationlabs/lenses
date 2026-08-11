@@ -209,15 +209,17 @@ async function onBridgeMessage(
 
   try {
     const result = await backend.handle(request);
-    socket.send(
-      JSON.stringify({
-        type: "extension-rpc-result",
-        requestId: request.requestId,
-        epoch,
-        ok: true,
-        result,
-      })
-    );
+    if (socket.readyState === WebSocket.OPEN) {
+      socket.send(
+        JSON.stringify({
+          type: "extension-rpc-result",
+          requestId: request.requestId,
+          epoch,
+          ok: true,
+          result,
+        })
+      );
+    }
   } catch (error) {
     sendError(
       socket,
@@ -235,6 +237,7 @@ function sendError(
   code: ExtensionRpcErrorCode,
   message: string
 ): void {
+  if (socket.readyState !== WebSocket.OPEN) return;
   const response: ExtensionRpcResponse = {
     type: "extension-rpc-result",
     requestId,

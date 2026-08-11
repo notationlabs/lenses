@@ -35,6 +35,8 @@ interface SessionState {
   loadTimeoutMs: number;
   documentRevision: number;
   loading: boolean;
+  captureAbort: AbortController;
+  captures: Set<Promise<string>>;
 }
 
 export interface ExtensionSessionBackend {
@@ -82,6 +84,8 @@ export function createExtensionSessionBackend(): ExtensionSessionBackend {
             loadTimeoutMs: operation.loadTimeoutMs,
             documentRevision: 0,
             loading: false,
+            captureAbort: new AbortController(),
+            captures: new Set(),
           });
           if (bound.created) {
             await rememberCreatedTab(bound.tabId, operation.target);
@@ -164,14 +168,26 @@ export function createExtensionSessionBackend(): ExtensionSessionBackend {
         }
         case "recording-screenshot": {
           const active = session(operation.sessionId);
-          return {
-            name: "recording-screenshot",
-            pngBase64: await captureTab(active.bound.tabId),
-          };
+          const capture = captureTab(
+            active.bound.tabId,
+            request.deadline,
+            active.captureAbort.signal
+          );
+          active.captures.add(capture);
+          try {
+            return {
+              name: "recording-screenshot",
+              pngBase64: await capture,
+            };
+          } finally {
+            active.captures.delete(capture);
+          }
         }
         case "finish": {
           const active = session(operation.sessionId);
           sessions.delete(operation.sessionId);
+          active.captureAbort.abort();
+          await Promise.allSettled(active.captures);
           if (operation.disposition === "keep") {
             // The lease is the gate's durable memory: while the tab stays at
             // this place, find-gate reports the site as blocked, whatever
@@ -238,6 +254,8 @@ export function createExtensionSessionBackend(): ExtensionSessionBackend {
       chrome.tabs.onUpdated.removeListener(trackNavigation);
       const active = [...sessions.values()];
       sessions.clear();
+      for (const item of active) item.captureAbort.abort();
+      await Promise.allSettled(active.flatMap((item) => [...item.captures]));
       await Promise.all(
         active
           .filter((item) => item.bound.created)
@@ -255,30 +273,115 @@ export function createExtensionSessionBackend(): ExtensionSessionBackend {
  * is the smallest Chrome API that can capture the participating background tab
  * without briefly selecting it (and risking an unrelated-tab screenshot).
  */
-async function captureTab(tabId: number): Promise<string> {
+const captureTails = new Map<number, Promise<void>>();
+
+/** Serialize captures for a tab, including captures requested by another broker. */
+function captureTab(
+  tabId: number,
+  deadline: number,
+  signal: AbortSignal
+): Promise<string> {
+  const previous = captureTails.get(tabId) ?? Promise.resolve();
+  const capture = previous
+    .catch(() => {})
+    .then(() => captureTabNow(tabId, deadline, signal));
+  const tail = capture.then(
+    () => {},
+    () => {}
+  );
+  captureTails.set(tabId, tail);
+  void tail.then(() => {
+    if (captureTails.get(tabId) === tail) captureTails.delete(tabId);
+  });
+  return capture;
+}
+
+async function captureTabNow(
+  tabId: number,
+  deadline: number,
+  signal: AbortSignal
+): Promise<string> {
   const target = { tabId };
-  await chrome.debugger.attach(target, "1.3");
-  try {
-    const metrics = (await chrome.debugger.sendCommand(
-      target,
-      "Page.getLayoutMetrics"
-    )) as {
-      cssContentSize?: { width: number; height: number };
-      contentSize?: { width: number; height: number };
-    };
-    const content = metrics.cssContentSize ?? metrics.contentSize;
-    if (!content || content.width <= 0 || content.height <= 0) {
-      throw new Error(`Chrome returned no page dimensions for tab ${tabId}`);
+  let attached = false;
+  let detached: Promise<void> | undefined;
+  let cancelled = signal.aborted;
+  let rejectCancellation: ((error: Error) => void) | undefined;
+
+  const detach = (): Promise<void> => {
+    if (!attached) return Promise.resolve();
+    detached ??= chrome.debugger
+      .detach(target)
+      .catch(() => {})
+      .then(() => {
+        attached = false;
+      });
+    return detached;
+  };
+  const cancel = (message: string) => {
+    if (cancelled) return;
+    cancelled = true;
+    void detach().then(() => rejectCancellation?.(new Error(message)));
+  };
+  const cancellation = new Promise<never>((_resolve, reject) => {
+    rejectCancellation = reject;
+    if (cancelled) reject(new Error(`screenshot for tab ${tabId} was cancelled`));
+  });
+  const onAbort = () => cancel(`screenshot for tab ${tabId} was cancelled`);
+  signal.addEventListener("abort", onAbort, { once: true });
+  const timeout = setTimeout(
+    () => cancel(`screenshot for tab ${tabId} deadline exceeded`),
+    Math.max(0, deadline - Date.now())
+  );
+
+  const work = (async () => {
+    if (cancelled || Date.now() >= deadline) {
+      throw new Error(`screenshot for tab ${tabId} deadline exceeded`);
     }
-    const result = (await chrome.debugger.sendCommand(target, "Page.captureScreenshot", {
-      format: "png",
-      captureBeyondViewport: true,
-      clip: { x: 0, y: 0, width: content.width, height: content.height, scale: 1 },
-    })) as { data?: string };
-    if (!result.data) throw new Error(`Chrome returned no screenshot for tab ${tabId}`);
-    return result.data;
+    try {
+      await chrome.debugger.attach(target, "1.3");
+    } catch (error) {
+      // An interrupted service worker can leave this extension's debugger
+      // attached. detach() cannot remove DevTools or another extension, so a
+      // successful detach identifies an attachment that is safe to recover.
+      try {
+        await chrome.debugger.detach(target);
+      } catch {
+        throw error;
+      }
+      await chrome.debugger.attach(target, "1.3");
+    }
+    attached = true;
+    if (cancelled) throw new Error(`screenshot for tab ${tabId} was cancelled`);
+    try {
+      const metrics = (await chrome.debugger.sendCommand(
+        target,
+        "Page.getLayoutMetrics"
+      )) as {
+        cssContentSize?: { width: number; height: number };
+        contentSize?: { width: number; height: number };
+      };
+      const content = metrics.cssContentSize ?? metrics.contentSize;
+      if (!content || content.width <= 0 || content.height <= 0) {
+        throw new Error(`Chrome returned no page dimensions for tab ${tabId}`);
+      }
+      const result = (await chrome.debugger.sendCommand(target, "Page.captureScreenshot", {
+        format: "png",
+        captureBeyondViewport: true,
+        clip: { x: 0, y: 0, width: content.width, height: content.height, scale: 1 },
+      })) as { data?: string };
+      if (!result.data) throw new Error(`Chrome returned no screenshot for tab ${tabId}`);
+      return result.data;
+    } finally {
+      await detach();
+    }
+  })();
+
+  try {
+    return await Promise.race([work, cancellation]);
   } finally {
-    await chrome.debugger.detach(target).catch(() => {});
+    clearTimeout(timeout);
+    signal.removeEventListener("abort", onAbort);
+    await detach();
   }
 }
 

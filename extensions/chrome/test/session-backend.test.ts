@@ -174,6 +174,78 @@ describe("created-tab leases", () => {
   });
 });
 
+describe("recording debugger cleanup", () => {
+  it("detaches after every successful screenshot", async () => {
+    const session = await bind();
+
+    await expect(
+      run({ name: "recording-screenshot", sessionId: session.id })
+    ).resolves.toMatchObject({ name: "recording-screenshot", pngBase64: "fake-png" });
+
+    expect(chrome.debuggerAttached.size).toBe(0);
+    expect(chrome.debuggerDetaches).toEqual([1]);
+  });
+
+  it("cancels and detaches an in-flight screenshot before finishing", async () => {
+    const session = await bind();
+    const debuggerApi = (chrome.api as {
+      debugger: { sendCommand(target: unknown, command: string): Promise<unknown> };
+    }).debugger;
+    const original = debuggerApi.sendCommand.bind(debuggerApi);
+    debuggerApi.sendCommand = (target, command) =>
+      command === "Page.captureScreenshot"
+        ? new Promise(() => {})
+        : original(target, command);
+
+    const screenshot = run({ name: "recording-screenshot", sessionId: session.id });
+    const screenshotRejected = expect(screenshot).rejects.toThrow("cancelled");
+    await vi.waitFor(() => expect(chrome.debuggerAttached.has(1)).toBe(true));
+
+    await expect(finish(session.id, "close-if-created")).resolves.toMatchObject({
+      name: "finish",
+    });
+    await screenshotRejected;
+    expect(chrome.debuggerAttached.size).toBe(0);
+    expect(chrome.debuggerDetaches).toEqual([1]);
+  });
+
+  it("detaches when the screenshot RPC reaches its deadline", async () => {
+    const session = await bind();
+    const debuggerApi = (chrome.api as {
+      debugger: { sendCommand(target: unknown, command: string): Promise<unknown> };
+    }).debugger;
+    const original = debuggerApi.sendCommand.bind(debuggerApi);
+    debuggerApi.sendCommand = (target, command) =>
+      command === "Page.captureScreenshot"
+        ? new Promise(() => {})
+        : original(target, command);
+
+    const screenshot = backend.handle({
+      type: "extension-rpc",
+      requestId: "deadline-test",
+      epoch: "test-epoch",
+      deadline: Date.now() + 20,
+      operation: { name: "recording-screenshot", sessionId: session.id },
+    });
+
+    await expect(screenshot).rejects.toThrow("deadline exceeded");
+    expect(chrome.debuggerAttached.size).toBe(0);
+    expect(chrome.debuggerDetaches).toEqual([1]);
+  });
+
+  it("recovers an attachment this extension left on the tab", async () => {
+    const session = await bind();
+    chrome.debuggerAttached.add(1);
+
+    await expect(
+      run({ name: "recording-screenshot", sessionId: session.id })
+    ).resolves.toMatchObject({ name: "recording-screenshot" });
+
+    expect(chrome.debuggerAttached.size).toBe(0);
+    expect(chrome.debuggerDetaches).toEqual([1, 1]);
+  });
+});
+
 describe("find-gate", () => {
   const ORIGIN = "https://example.com";
   const findGate = async (origin = ORIGIN) => {
