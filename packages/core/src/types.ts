@@ -328,6 +328,8 @@ export type LensBridgeRequest =
       spec: LensSpec;
       params: Record<string, unknown>;
       timeoutMs: number;
+      /** Absolute client-side deadline, so time spent queued at the broker counts. */
+      deadline?: number;
       /** consent for a spec with `perform` steps; default false at every layer */
       allowWrites?: boolean;
       /** Per-call target supplied only by the client instance with an active recorder. */

@@ -342,6 +342,24 @@ describe("LensClient", () => {
     });
   });
 
+  it("throws a LensResultError with transport call identity", async () => {
+    const transport = new FakeTransport();
+    transport.result = {
+      kind: "error",
+      message: "call call_7 for @example/web/page timed out",
+      lens: "@example/web/page",
+      callId: "call_7",
+    };
+    const client = new LensClient(new LensStore(await fixtureDirectory()), transport);
+
+    const thrown = await client.value({ lens: "web/page" }).catch((error) => error);
+    expect(thrown).toBeInstanceOf(LensResultError);
+    expect(thrown).toMatchObject({
+      lens: "@example/web/page",
+      callId: "call_7",
+    });
+  });
+
   it("throws a LensResultError preserving schema issues", async () => {
     const transport = new FakeTransport();
     transport.result = { kind: "value", value: { title: 7, score: 3 }, resolver: "dom" };
@@ -355,6 +373,7 @@ describe("LensClient", () => {
     expect(thrown).toMatchObject({
       message: "@example/web/page result failed its schema at /title",
       issues: [{ path: "/title", message: "Invalid input: expected string, received number" }],
+      lens: "web/page",
     });
   });
 

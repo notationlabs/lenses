@@ -12,7 +12,13 @@ const BROKER_SHUTDOWN_WAIT_MS = 12_000;
 const BROKER_BIND_ATTEMPTS = 3;
 
 export type LensLogger = (message: string) => void;
-export type LensTransportResult = LensResult & { cached?: boolean };
+export type LensTransportResult = LensResult & {
+  cached?: boolean;
+  /** Broker request identity, attached to errors for correlation with diagnostics. */
+  callId?: string;
+  /** Canonical lens name, attached to call errors. */
+  lens?: string;
+};
 export type BrokerLease = "held" | "released" | "disconnected";
 export type BrokerControlAction = "release" | "acquire" | "status" | "shutdown";
 
@@ -62,7 +68,13 @@ export class BrowserBridge implements LensTransport {
   private browserLease: BrokerLease = "disconnected";
   private readonly pending = new Map<
     string,
-    { resolve: (result: LensResult) => void; timer: NodeJS.Timeout; control?: boolean }
+    {
+      resolve: (result: LensTransportResult) => void;
+      timer: NodeJS.Timeout;
+      control?: boolean;
+      description: string;
+      lastProgress?: string;
+    }
   >();
   private readonly connectionWaiters = new Set<() => void>();
   private readonly closeListeners = new Set<() => void>();
@@ -141,6 +153,7 @@ export class BrowserBridge implements LensTransport {
         spec,
         params,
         timeoutMs,
+        deadline: Date.now() + timeoutMs,
         ...(allowWrites !== undefined ? { allowWrites } : {}),
         ...(recording ? { recording } : {}),
       }),
@@ -208,13 +221,28 @@ export class BrowserBridge implements LensTransport {
     const id = `call_${++this.sequence}`;
     const message = make(id);
     const startedAt = Date.now();
-    this.log(`sending ${message.type} ${id} through the lens broker`);
+    const description = requestDescription(message, id);
+    this.log(`sending ${description} through the lens broker`);
     return new Promise<LensTransportResult>((resolve) => {
       const timer = setTimeout(() => {
+        const active = this.pending.get(id);
         this.pending.delete(id);
-        resolve({ kind: "error", message: `${message.type} timed out after ${timeoutMs}ms` });
+        const progress = active?.lastProgress
+          ? `; last progress: ${active.lastProgress}`
+          : "; no progress received from broker";
+        resolve({
+          kind: "error",
+          message: `${description} timed out after ${timeoutMs}ms${progress}`,
+          callId: id,
+          ...(message.type === "call" ? { lens: message.spec.name } : {}),
+        });
       }, timeoutMs);
-      this.pending.set(id, { resolve, timer, control: message.type === "control" });
+      this.pending.set(id, {
+        resolve,
+        timer,
+        control: message.type === "control",
+        description,
+      });
       this.socket.send(JSON.stringify(message), (error) => {
         if (!error) return;
         const pending = this.pending.get(id);
@@ -224,8 +252,16 @@ export class BrowserBridge implements LensTransport {
         pending.resolve({ kind: "error", message: `sending ${message.type}: ${error.message}` });
       });
     }).then((result) => {
-      this.log(`${message.type} ${id} completed in ${Date.now() - startedAt}ms (${result.kind})`);
-      return result;
+      const contextual =
+        result.kind === "error"
+          ? {
+              ...result,
+              callId: result.callId ?? id,
+              ...(message.type === "call" ? { lens: result.lens ?? message.spec.name } : {}),
+            }
+          : result;
+      this.log(`${description} completed in ${Date.now() - startedAt}ms (${result.kind})`);
+      return contextual;
     });
   }
 
@@ -253,6 +289,8 @@ export class BrowserBridge implements LensTransport {
       return;
     }
     if (message.type === "progress") {
+      const pending = this.pending.get(message.id);
+      if (pending) pending.lastProgress = message.message;
       this.log(`browser ${message.id}: ${message.message}`);
       return;
     }
@@ -271,6 +309,12 @@ export class BrowserBridge implements LensTransport {
       this.pending.delete(id);
     }
   }
+}
+
+function requestDescription(message: LensBridgeRequest, id: string): string {
+  if (message.type !== "call") return `${message.type} ${id}`;
+  const recording = message.recording ? `, recording ${message.recording.callId}` : "";
+  return `call ${id} for ${message.spec.name}${recording}`;
 }
 
 interface BrokerConnection {

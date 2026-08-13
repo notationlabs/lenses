@@ -98,7 +98,7 @@ export function createBrokerOrchestrator(
     // The client timeout covers the complete call, including recorder setup
     // and final capture; screenshot RPCs must use its remaining budget rather
     // than an unrelated 30-second default.
-    const callDeadline = Date.now() + message.timeoutMs;
+    const callDeadline = message.deadline ?? Date.now() + message.timeoutMs;
     // Consent comes before everything — no page bind, no cache read, no tier:
     // a denied write call must leave the browser exactly as it found it.
     const performs = (message.spec.perform?.length ?? 0) > 0;
@@ -257,15 +257,23 @@ export function createBrokerOrchestrator(
 
   return {
     async handle(message, emit) {
-      const progress = (text: string) =>
-        emit({ type: "progress", id: message.id, message: text });
+      let completed = false;
+      const progress = (text: string) => {
+        if (!completed) emit({ type: "progress", id: message.id, message: text });
+      };
       try {
+        const work =
+          message.type === "call"
+            ? call(message, progress)
+            : observe(message, progress);
         const result =
           message.type === "call"
-            ? await call(message, progress)
-            : await observe(message, progress);
+            ? await withinCallDeadline(work, message)
+            : await work;
+        completed = true;
         emit({ type: "result", id: message.id, result });
       } catch (error) {
+        completed = true;
         emit({
           type: "result",
           id: message.id,
@@ -274,6 +282,28 @@ export function createBrokerOrchestrator(
       }
     },
   };
+}
+
+async function withinCallDeadline(
+  work: Promise<LensResult>,
+  message: Extract<LensBridgeRequest, { type: "call" }>
+): Promise<LensResult> {
+  const remaining = Math.max(0, (message.deadline ?? Date.now() + message.timeoutMs) - Date.now());
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<LensResult>((resolve) => {
+    timer = setTimeout(() => {
+      const recording = message.recording ? `, recording ${message.recording.callId}` : "";
+      resolve({
+        kind: "error",
+        message: `call ${message.id} for ${message.spec.name}${recording} timed out after ${message.timeoutMs}ms`,
+      });
+    }, remaining);
+  });
+  try {
+    return await Promise.race([work, timedOut]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 function waitForPreferredBackend(

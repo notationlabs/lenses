@@ -26,4 +26,4 @@ The @caller invokes !call (or !value) on the TypeScript client; the client owns 
 
 - **Bad input is a result:** An unknown lens parameter, missing parameter, or unexpandable URL hole returns an error result rather than throwing.
 - **Outcome throw:** !value throws `LensOutcomeError` for an outcome result, carrying the outcome name, its value, and the `hint` string from the document's outcome declaration — `hint` is the only key read from a declaration.
-- **Error throw:** !value throws `LensResultError` for an error result, carrying the message and any validation issues.
+- **Error throw:** !value throws `LensResultError` for an error result, carrying the message, any validation issues, the lens name, and the broker call ID when available.
