@@ -197,6 +197,31 @@ describe("recording debugger cleanup", () => {
     expect(chrome.debuggerDetaches).toEqual([1]);
   });
 
+  it("scales a very long full-page capture to a bounded raster", async () => {
+    const session = await bind();
+    const debuggerApi = (chrome.api as {
+      debugger: { sendCommand(target: unknown, command: string, params?: unknown): Promise<unknown> };
+    }).debugger;
+    const original = debuggerApi.sendCommand.bind(debuggerApi);
+    let captureParams: { clip?: { scale?: number } } | undefined;
+    debuggerApi.sendCommand = async (target, command, params) => {
+      if (command === "Page.getLayoutMetrics") {
+        return { cssContentSize: { width: 1512, height: 21321 } };
+      }
+      if (command === "Page.captureScreenshot") {
+        captureParams = params as typeof captureParams;
+      }
+      return original(target, command);
+    };
+
+    await run({ name: "recording-screenshot", sessionId: session.id });
+
+    // This exact page previously produced a 3024×42642 (129 MP) raster and
+    // hung on the sixth sequential capture. Its longest output edge is now at
+    // most 8192 CSS px (16384 device px at the observed DPR 2).
+    expect(captureParams?.clip?.scale).toBeCloseTo(8192 / 21321, 5);
+  });
+
   it("cancels and detaches an in-flight screenshot before finishing", async () => {
     const session = await bind();
     const debuggerApi = (chrome.api as {
@@ -242,6 +267,35 @@ describe("recording debugger cleanup", () => {
     await expect(screenshot).rejects.toThrow("deadline exceeded");
     expect(chrome.debuggerAttached.size).toBe(0);
     expect(chrome.debuggerDetaches).toEqual([1]);
+  });
+
+  it("settles the session when both capture and detach are wedged", async () => {
+    const session = await bind();
+    const debuggerApi = (chrome.api as {
+      debugger: {
+        sendCommand(target: unknown, command: string): Promise<unknown>;
+        detach(target: unknown): Promise<void>;
+      };
+    }).debugger;
+    const originalSend = debuggerApi.sendCommand.bind(debuggerApi);
+    debuggerApi.sendCommand = (target, command) =>
+      command === "Page.captureScreenshot"
+        ? new Promise(() => {})
+        : originalSend(target, command);
+    debuggerApi.detach = () => new Promise(() => {});
+
+    const screenshot = backend.handle({
+      type: "extension-rpc",
+      requestId: "wedged-debugger-test",
+      epoch: "test-epoch",
+      deadline: Date.now() + 20,
+      operation: { name: "recording-screenshot", sessionId: session.id },
+    });
+    await expect(screenshot).rejects.toThrow("deadline exceeded");
+
+    await expect(
+      finish(session.id, "close-if-created")
+    ).resolves.toMatchObject({ name: "finish" });
   });
 
   it("recovers an attachment this extension left on the tab", async () => {

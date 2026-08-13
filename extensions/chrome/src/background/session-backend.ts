@@ -274,6 +274,15 @@ export function createExtensionSessionBackend(): ExtensionSessionBackend {
  * without briefly selecting it (and risking an unrelated-tab screenshot).
  */
 const captureTails = new Map<number, Promise<void>>();
+// Full-resolution captures of very long pages can make Chrome allocate several
+// hundred MB (the 91bc page was 1512×21321 CSS px at DPR 2) and leave
+// Page.captureScreenshot pending until the whole call expires. Keep the CSS
+// surface near 8 MP and its longest edge within 8192 px; at DPR 2 that bounds
+// the encoded raster to roughly 32 MP / 128 MB while retaining a readable
+// full-page image.
+const MAX_SCREENSHOT_CSS_PIXELS = 8_000_000;
+const MAX_SCREENSHOT_CSS_EDGE = 8_192;
+const DEBUGGER_DETACH_TIMEOUT_MS = 1_000;
 
 /** Serialize captures for a tab, including captures requested by another broker. */
 function captureTab(
@@ -308,19 +317,25 @@ async function captureTabNow(
   let rejectCancellation: ((error: Error) => void) | undefined;
 
   const detach = (): Promise<void> => {
-    if (!attached) return Promise.resolve();
-    detached ??= chrome.debugger
-      .detach(target)
-      .catch(() => {})
-      .then(() => {
-        attached = false;
-      });
+    if (!attached) return detached ?? Promise.resolve();
+    // Mark it released before calling Chrome: a wedged debugger command can
+    // also wedge detach. Cleanup remains best-effort, but must never prevent
+    // the screenshot deadline from settling the RPC and broker queue.
+    attached = false;
+    const operation = chrome.debugger.detach(target).catch(() => {});
+    detached = Promise.race([
+      operation,
+      new Promise<void>((resolve) =>
+        setTimeout(resolve, DEBUGGER_DETACH_TIMEOUT_MS)
+      ),
+    ]).then(() => {});
     return detached;
   };
   const cancel = (message: string) => {
     if (cancelled) return;
     cancelled = true;
-    void detach().then(() => rejectCancellation?.(new Error(message)));
+    rejectCancellation?.(new Error(message));
+    void detach();
   };
   const cancellation = new Promise<never>((_resolve, reject) => {
     rejectCancellation = reject;
@@ -364,11 +379,24 @@ async function captureTabNow(
       if (!content || content.width <= 0 || content.height <= 0) {
         throw new Error(`Chrome returned no page dimensions for tab ${tabId}`);
       }
+      const scale = Math.min(
+        1,
+        Math.sqrt(
+          MAX_SCREENSHOT_CSS_PIXELS / (content.width * content.height)
+        ),
+        MAX_SCREENSHOT_CSS_EDGE / Math.max(content.width, content.height)
+      );
       const result = (await chrome.debugger.sendCommand(target, "Page.captureScreenshot", {
         format: "png",
         captureBeyondViewport: true,
         optimizeForSpeed: true,
-        clip: { x: 0, y: 0, width: content.width, height: content.height, scale: 1 },
+        clip: {
+          x: 0,
+          y: 0,
+          width: content.width,
+          height: content.height,
+          scale,
+        },
       })) as { data?: string };
       if (!result.data) throw new Error(`Chrome returned no screenshot for tab ${tabId}`);
       return result.data;
