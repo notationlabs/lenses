@@ -94,7 +94,14 @@ export interface LensSummary {
   warnings?: string[];
 }
 
-export type LensCallResult = LensResult & { cached?: boolean; warnings?: ValidationIssue[] };
+export type LensCallResult = LensResult & {
+  cached?: boolean;
+  warnings?: ValidationIssue[];
+  /** Canonical lens name on transport errors. */
+  lens?: string;
+  /** Broker request ID on transport errors. */
+  callId?: string;
+};
 
 /** A named outcome, thrown by `value()`. `hint` is the remediation text declared in the lens document. */
 export class LensOutcomeError extends Error {
@@ -108,11 +115,13 @@ export class LensOutcomeError extends Error {
   }
 }
 
-/** An error result, thrown by `value()`. `issues` names failing JSON pointers, when present. */
+/** An error result, thrown by `value()`. Includes call identity for broker diagnostics. */
 export class LensResultError extends Error {
   constructor(
     message: string,
-    readonly issues?: ValidationIssue[]
+    readonly issues?: ValidationIssue[],
+    readonly lens?: string,
+    readonly callId?: string
   ) {
     super(message);
     this.name = "LensResultError";
@@ -395,7 +404,7 @@ export class LensClient {
         typeof hint === "string" ? hint : undefined
       );
     }
-    throw new LensResultError(result.message, result.issues);
+    throw new LensResultError(result.message, result.issues, result.lens ?? input.lens, result.callId);
   }
 
   /** Validate a value result against the schema derived from `returns`. */

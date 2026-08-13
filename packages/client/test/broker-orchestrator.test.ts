@@ -166,6 +166,32 @@ async function request(
 }
 
 describe("broker orchestration", () => {
+  it("bounds a stuck call and identifies it in the timeout", async () => {
+    const backend = new FakeBackend("extension");
+    backend.bind = async () => new Promise<BrowserSession>(() => {});
+    const orchestrator = createBrokerOrchestrator([backend]);
+
+    const result = await request(orchestrator, {
+      type: "call",
+      id: "call_7",
+      spec: domSpec({ name: "@example/messages" }),
+      params: {},
+      timeoutMs: 20,
+      deadline: Date.now() + 20,
+      recording: {
+        path: "/tmp/recording",
+        callId: "recording-call-000007",
+        lens: "@example/messages",
+      },
+    });
+
+    expect(result).toEqual({
+      kind: "error",
+      message:
+        "call call_7 for @example/messages, recording recording-call-000007 timed out after 20ms",
+    });
+  });
+
   it("pins a selected backend for the whole call", async () => {
     const preferred = new FakeBackend("extension");
     const fallback = new FakeBackend("cdp");

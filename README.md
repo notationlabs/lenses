@@ -181,7 +181,7 @@ if (result.kind === "outcome") result.name; // e.g. "needs_auth"
 
 `value()` throws `LensOutcomeError` (`{outcome, value, hint}` — `hint` carries the
 remediation text declared in the lens document's `outcomes`) for outcome results, and
-`LensResultError` (`{message, issues}`) for error results. Both classes are exported
+`LensResultError` (`{message, issues, lens, callId}`) for error results. Broker timeout messages also include the recording call ID (when recording) and last reported progress. Both classes are exported
 from `@djgrant/lenses` and from the generated SDK, so callers can catch and
 branch on `error.outcome`.
 

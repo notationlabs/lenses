@@ -24,6 +24,8 @@ Every client shares one detached broker process per port (default 4319) that hos
 
 ## Failures
 
+- **Whole-call deadline:** A call carries its absolute client-side deadline, so queue time counts and a stuck backend operation cannot permanently block the broker's serial request queue.
+- **Timeout diagnostics:** Timeout errors identify the canonical lens, broker call ID, recording call ID when present, and the last broker progress message observed by the client.
 - **Broker disconnect:** When the broker socket closes, every pending call resolves as an error result `lens broker disconnected`.
 
 ## Invariants
