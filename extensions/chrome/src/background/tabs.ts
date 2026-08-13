@@ -32,14 +32,29 @@ export async function bindTab(
   );
   if (exact) return bindExisting(exact, request);
 
-  const created = await chrome.tabs.create({
-    url: request.target,
-    active: false,
-  });
+  const created = await createTabOrWindow(request.target);
   if (created.id === undefined) throw new Error("could not create tab");
   resetIntercepts(created.id);
   await waitForLoad(created.id, request.loadTimeoutMs);
   return { tabId: created.id, created: true, navigated: true };
+}
+
+/**
+ * A Chrome process can remain alive after its last window closes. In that
+ * state the extension is connected, but tabs.create rejects with "No current
+ * window". Establish a background window instead of leaking that browser
+ * implementation detail to the lens call.
+ */
+async function createTabOrWindow(url: string): Promise<chrome.tabs.Tab> {
+  try {
+    return await chrome.tabs.create({ url, active: false });
+  } catch (error) {
+    if (!/\bNo current window\b/i.test(formatError(error))) throw error;
+    const createdWindow = await chrome.windows.create({ url, focused: false });
+    const createdTab = createdWindow.tabs?.[0];
+    if (!createdTab) throw new Error("could not create Chrome window");
+    return createdTab;
+  }
 }
 
 async function leasedTabFor(

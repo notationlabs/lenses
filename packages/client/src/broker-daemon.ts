@@ -212,9 +212,9 @@ function onClientMessage(client: WebSocket, raw: string): void {
   if (message.type !== "call" && message.type !== "observe") return;
   // Only work that needs a browser triggers a launch; a status query must not,
   // and neither must a call whose every tier is a credential-free http request.
-  if (message.type === "observe" || specNeedsBrowser(message.spec)) {
-    void ensureBrowser();
-  }
+  // The launch is part of the queued work below: dispatching to a backend first
+  // races Chrome startup and can expose transient browser errors to the call.
+  const needsBrowser = message.type === "observe" || specNeedsBrowser(message.spec);
   if (shuttingDown) {
     send(client, {
       type: "result",
@@ -225,7 +225,10 @@ function onClientMessage(client: WebSocket, raw: string): void {
   }
   beginWork();
   void requestQueue
-    .run(() => handleClientMessage(client, message))
+    .run(async () => {
+      if (needsBrowser) await ensureBrowser();
+      await handleClientMessage(client, message);
+    })
     .catch((error) => console.error("broker request failed:", error))
     .finally(endWork);
 }

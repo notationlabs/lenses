@@ -21,7 +21,7 @@ lens list --catalog ./examples    # discover lenses, their params and outcomes
 lens call hn/item --params '{"id":"42"}' --catalog ./examples
 ```
 
-If `status` reports the browser is unreachable, Chrome is probably not running or the extension is not connected. Launch Chrome — on macOS `open -na "Google Chrome" --args --profile-directory=Default`, or the equivalent on other operating systems. If the Lens extension is not installed, ask the user to enable the CDP fallback at `chrome://inspect/#remote-debugging`, then retry `status`; the first fallback call may show a permission dialog in Chrome and the user must click Allow.
+`status` only reports browser availability; it deliberately does not launch Chrome. Proceed with `call` or `observe`: browser-backed work automatically starts Chrome with the configured profile and establishes a window when needed. If automatic launch fails, check that `LENS_BROKER_AUTO_LAUNCH` is not `0` and that Chrome is installed. If the Lens extension is not installed, ask the user to enable the CDP fallback at `chrome://inspect/#remote-debugging`; the first fallback call may show a permission dialog in Chrome and the user must click Allow.
 
 A call result is one of:
 

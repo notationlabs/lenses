@@ -71,6 +71,17 @@ describe("created-tab leases", () => {
     expect(leases()).toEqual([]);
   });
 
+  it("establishes a Chrome window when the process has no current window", async () => {
+    chrome.closeCurrentWindow();
+
+    const session = await bind();
+
+    expect(session).toMatchObject({ created: true, navigated: true });
+    expect(chrome.createdUrls).toEqual([]);
+    expect(chrome.createdWindowUrls).toEqual([TARGET]);
+    expect(leases()).toEqual([{ tabId: 1, target: TARGET }]);
+  });
+
   it("keeps a created tab and its lease on a keep finish", async () => {
     const session = await bind();
 
