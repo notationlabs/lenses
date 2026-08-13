@@ -36,15 +36,18 @@ const extension = createExtensionBackend();
 // An extension that has handshaked here before is worth waiting for: its
 // service worker may be dormant and needs its reconnect alarm to fire. Without
 // that history, CDP is the only hope and there is nothing to wait for.
-// Held in memory, never written back: the marker can be stale (removed
-// extension), and one broker that waited in vain is reason enough to stop
-// waiting — but not to demote the next one.
+// Held in memory, never written back. A stale marker does not block a live CDP
+// fallback, while an unavailable fallback leaves the expected extension
+// eligible until each request's own deadline.
 let extensionExpected = extensionSeenRecently();
 const extensionGraceMs =
   Number(process.env.LENS_BROKER_EXTENSION_GRACE_MS ?? "") ||
   (extensionExpected ? 35_000 : 2_000);
 const orchestrator = createBrokerOrchestrator([extension, cdp], {
   preferredWaitMs: () => (extensionExpected ? extensionGraceMs : 0),
+  // Race CDP preparation against a late extension handshake. CDP failure is
+  // not proof that the expected extension will miss this request's deadline.
+  prepareFallback: () => cdp.acquire(),
 });
 let ensureBrowserInFlight: Promise<void> | undefined;
 let browserPresent: boolean | undefined;
@@ -98,10 +101,7 @@ function ensureBrowser(): Promise<void> {
 
 async function checkAndLaunch(): Promise<void> {
   browserPresent = await browserRunning();
-  if (browserPresent) {
-    armExtensionStrike();
-    return;
-  }
+  if (browserPresent) return;
   const profile = browserProfile();
   if (!autoLaunchEnabled() || !(await launchBrowser(profile))) {
     // Nothing is coming, so do not make the call wait out the grace for it.
@@ -110,14 +110,6 @@ async function checkAndLaunch(): Promise<void> {
   }
   browserPresent = true;
   console.error(`started Chrome with profile "${profile}"`);
-  armExtensionStrike();
-}
-
-/** One strike: a grace spent without a handshake means stop expecting one. */
-function armExtensionStrike(): void {
-  setTimeout(() => {
-    if (!extension.available()) concedeToCdp("the extension did not attach");
-  }, extensionGraceMs).unref?.();
 }
 
 function concedeToCdp(reason: string): void {

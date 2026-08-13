@@ -46,6 +46,9 @@ const CONNECT_RETRY_MS = 2_000;
 const CONNECT_ATTEMPT_MS = 10_000;
 const ENDPOINT_POLL_MS = 500;
 const RECONNECT_BACKOFF_MAX_MS = 30_000;
+const STALE_ENDPOINT_MESSAGE =
+  "Chrome remote debugging is not responding. Open chrome://inspect/#remote-debugging in Chrome, " +
+  "re-enable Remote Debugging, then retry.";
 
 function defaultUserDataDir(): string {
   switch (process.platform) {
@@ -91,7 +94,8 @@ interface CdpSession extends BrowserSession {
 }
 
 export function createCdpBackend(
-  log: (message: string) => void = () => {}
+  log: (message: string) => void = () => {},
+  probeEndpoint?: () => Promise<boolean>
 ): CdpBackend {
   let browser: Browser | undefined;
   let browserVersion = "";
@@ -112,8 +116,27 @@ export function createCdpBackend(
    */
   const keptGates = new Map<Page, { target: string; keptUrl: string }>();
 
-  const endpointAvailable = () =>
-    existsSync(join(defaultUserDataDir(), "DevToolsActivePort"));
+  const endpointPath = join(defaultUserDataDir(), "DevToolsActivePort");
+  const endpointAvailable = () => existsSync(endpointPath);
+  const endpointLive = probeEndpoint ?? (async (): Promise<boolean> => {
+    let endpointPort: number;
+    try {
+      const [first] = readFileSync(endpointPath, "utf8").split("\n");
+      endpointPort = Number(first);
+    } catch {
+      return false;
+    }
+    if (!Number.isSafeInteger(endpointPort) || endpointPort < 1) return false;
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:${endpointPort}/json/version`,
+        { signal: AbortSignal.timeout(1_000) }
+      );
+      return response.ok;
+    } catch {
+      return false;
+    }
+  });
   const available = () => browser?.connected === true;
   const notifyStatusChange = () => {
     for (const listener of statusListeners) listener();
@@ -178,6 +201,7 @@ export function createCdpBackend(
   async function connectBrowser(
     progress: (message: string) => void
   ): Promise<Browser> {
+    if (!(await endpointLive())) throw new Error(STALE_ENDPOINT_MESSAGE);
     progress(
       "connecting to Chrome (a permission dialog may appear — click Allow)"
     );
@@ -191,6 +215,7 @@ export function createCdpBackend(
         );
         break;
       } catch (error) {
+        if (!(await endpointLive())) throw new Error(STALE_ENDPOINT_MESSAGE);
         if (Date.now() >= deadline) {
           const reason =
             error instanceof Error ? error.message : String(error);
@@ -351,27 +376,7 @@ export function createCdpBackend(
     lease: () =>
       available() ? "held" : released ? "released" : "disconnected",
     async browserLive() {
-      if (available()) return true;
-      let endpointPort: number;
-      try {
-        const [first] = readFileSync(
-          join(defaultUserDataDir(), "DevToolsActivePort"),
-          "utf8"
-        ).split("\n");
-        endpointPort = Number(first);
-      } catch {
-        return false;
-      }
-      if (!Number.isSafeInteger(endpointPort) || endpointPort < 1) return false;
-      try {
-        const response = await fetch(
-          `http://127.0.0.1:${endpointPort}/json/version`,
-          { signal: AbortSignal.timeout(1_000) }
-        );
-        return response.ok;
-      } catch {
-        return false;
-      }
+      return available() || endpointLive();
     },
     async release() {
       released = true;

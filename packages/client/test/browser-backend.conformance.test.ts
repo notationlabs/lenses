@@ -500,7 +500,7 @@ class FakeBrowser {
 async function createCdpFixture(): Promise<BackendFixture> {
   const browser = new FakeBrowser();
   cdpState.browser = browser;
-  const backend = createCdpBackend();
+  const backend = createCdpBackend(() => {}, async () => true);
   return {
     backend,
     async emitCapture(capture) {
