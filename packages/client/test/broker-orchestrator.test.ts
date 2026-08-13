@@ -98,6 +98,7 @@ class FakeBackend implements BrowserBackend {
   authGate?: { url: string; target: string };
   onBind?: () => void;
   httpFetch?: BrowserBackend["httpFetch"];
+  private readonly statusListeners = new Set<() => void>();
 
   constructor(name: string, available = true, session = new FakeSession()) {
     this.name = name;
@@ -113,8 +114,14 @@ class FakeBackend implements BrowserBackend {
     return { name: this.name };
   }
 
-  onStatusChange(): () => void {
-    return () => {};
+  onStatusChange(listener: () => void): () => void {
+    this.statusListeners.add(listener);
+    return () => this.statusListeners.delete(listener);
+  }
+
+  setAvailable(available: boolean): void {
+    this.isAvailable = available;
+    for (const listener of this.statusListeners) listener();
   }
 
   async findAuthGate(origin: string) {
@@ -425,6 +432,127 @@ describe("broker orchestration", () => {
     expect(result).toEqual({ kind: "error", message: "extension disconnected" });
     expect(extension.finishes).toEqual(["close-if-created"]);
     expect(cdp.binds).toHaveLength(0);
+  });
+
+  it.each(["absent", "stale"])(
+    "keeps rendezvousing after an %s fallback fails immediately",
+    async (failure) => {
+      vi.useFakeTimers();
+      try {
+        const extension = new FakeBackend("extension", false);
+        const cdp = new FakeBackend("cdp", false);
+        const prepareFallback = vi.fn(async () => {
+          throw new Error(`CDP endpoint ${failure}`);
+        });
+        const result = request(
+          createBrokerOrchestrator([extension, cdp], {
+            preferredWaitMs: 35_000,
+            prepareFallback,
+          }),
+          {
+            type: "call",
+            id: "91bc-ordering",
+            spec: domSpec(),
+            params: {},
+            timeoutMs: 90_000,
+            deadline: Date.now() + 90_000,
+          }
+        );
+
+        // Actual ordering: the extension had scanned before the broker existed;
+        // its nominal 30s alarm was delayed beyond the broker's 35s grace.
+        await vi.advanceTimersByTimeAsync(35_000);
+        expect(prepareFallback).toHaveBeenCalledOnce();
+        expect(cdp.binds).toHaveLength(0);
+
+        // The immediate fallback rejection does not end the rendezvous. The
+        // 91bc handshake landed 48.8s after broker startup.
+        await vi.advanceTimersByTimeAsync(13_800);
+        extension.setAvailable(true);
+        await vi.advanceTimersByTimeAsync(0);
+
+        await expect(result).resolves.toMatchObject({ kind: "value" });
+        expect(extension.binds).toHaveLength(1);
+        expect(cdp.binds).toHaveLength(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    }
+  );
+
+  it("selects a live fallback that becomes available during rendezvous", async () => {
+    vi.useFakeTimers();
+    try {
+      const extension = new FakeBackend("extension", false);
+      const cdp = new FakeBackend("cdp", false);
+      const prepareFallback = vi.fn(async () => cdp.setAvailable(true));
+      const result = request(
+        createBrokerOrchestrator([extension, cdp], {
+          preferredWaitMs: 35_000,
+          prepareFallback,
+        }),
+        {
+          type: "call",
+          id: "live-cdp",
+          spec: domSpec(),
+          params: {},
+          timeoutMs: 90_000,
+          deadline: Date.now() + 90_000,
+        }
+      );
+
+      await vi.advanceTimersByTimeAsync(35_000);
+
+      await expect(result).resolves.toMatchObject({ kind: "value" });
+      expect(prepareFallback).toHaveBeenCalledOnce();
+      expect(cdp.binds).toHaveLength(1);
+      expect(extension.binds).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("bounds an unavailable extension and failed fallback by the call deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      const extension = new FakeBackend("extension", false);
+      const cdp = new FakeBackend("cdp", false);
+      const result = request(
+        createBrokerOrchestrator([extension, cdp], {
+          preferredWaitMs: 35_000,
+          prepareFallback: async () => {
+            throw new Error("CDP unavailable");
+          },
+        }),
+        {
+          type: "call",
+          id: "bounded-rendezvous",
+          spec: domSpec(),
+          params: {},
+          timeoutMs: 60_000,
+          deadline: Date.now() + 60_000,
+        }
+      );
+
+      await vi.advanceTimersByTimeAsync(59_999);
+      let settled = false;
+      void result.then(() => {
+        settled = true;
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(settled).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(result).resolves.toEqual({
+        kind: "error",
+        message:
+          "call bounded-rendezvous for @example/page timed out after 60000ms",
+      });
+      expect(extension.binds).toHaveLength(0);
+      expect(cdp.binds).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("uses an available fallback without waiting for a preferred backend", async () => {

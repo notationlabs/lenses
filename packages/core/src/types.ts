@@ -335,7 +335,14 @@ export type LensBridgeRequest =
       /** Per-call target supplied only by the client instance with an active recorder. */
       recording?: { path: string; callId: string; lens: string };
     }
-  | { type: "observe"; id: string; target: string; waitMs: number; html?: boolean }
+  | {
+      type: "observe";
+      id: string;
+      target: string;
+      waitMs: number;
+      html?: boolean;
+      deadline?: number;
+    }
   /**
    * Broker lease control. "release" drops the CDP connection so other tools can
    * use Chrome's single consented debugging slot; "acquire" reconnects (Chrome

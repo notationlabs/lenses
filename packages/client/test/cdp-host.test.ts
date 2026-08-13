@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const state = vi.hoisted(() => ({
   endpointAvailable: false,
@@ -54,6 +54,12 @@ function fakeBrowser(): FakeBrowser {
 beforeEach(() => {
   state.endpointAvailable = false;
   state.connect = undefined;
+  vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 200 })));
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 describe("CDP host connection lifecycle", () => {
@@ -121,6 +127,23 @@ describe("CDP host connection lifecycle", () => {
 
     expect(state.connect).toHaveBeenCalledTimes(2);
     expect(host.lease()).toBe("held");
+  });
+
+  it("fails fast with actionable advice for a stale saved endpoint", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new Error("connection refused");
+    }));
+    state.endpointAvailable = true;
+    state.connect = vi.fn(async () => {
+      throw new Error("connect should not be attempted for a dead endpoint");
+    });
+
+    await expect(createCdpBackend().acquire()).rejects.toThrow(
+      "Chrome remote debugging is not responding. " +
+        "Open chrome://inspect/#remote-debugging in Chrome, " +
+        "re-enable Remote Debugging, then retry."
+    );
+    expect(state.connect).not.toHaveBeenCalled();
   });
 
   it("shares an in-flight connection between monitoring and a request", async () => {

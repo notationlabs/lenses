@@ -167,7 +167,17 @@ export class BrowserBridge implements LensTransport {
     timeoutMs = 60_000,
     html = false
   ): Promise<LensTransportResult> {
-    return this.request((id) => ({ type: "observe", id, target, waitMs, html }), timeoutMs);
+    return this.request(
+      (id) => ({
+        type: "observe",
+        id,
+        target,
+        waitMs,
+        html,
+        deadline: Date.now() + timeoutMs,
+      }),
+      timeoutMs
+    );
   }
 
   /**

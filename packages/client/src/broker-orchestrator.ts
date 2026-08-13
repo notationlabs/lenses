@@ -61,7 +61,15 @@ export function createBrokerOrchestrator(
    * knows no preferred backend is coming, so a call concedes to the fallback
    * immediately instead of paying the full grace.
    */
-  options: { preferredWaitMs?: number | (() => number) } = {}
+  options: {
+    preferredWaitMs?: number | (() => number);
+    /**
+     * Start making the fallback available after the preferred grace. Selection
+     * still races that work against a late preferred attachment, so an
+     * unavailable fallback is never pinned merely because the grace elapsed.
+     */
+    prepareFallback?: () => Promise<void>;
+  } = {}
 ): BrokerOrchestrator {
   if (backends.length === 0) throw new Error("broker orchestrator requires a browser backend");
   const cache = new Map<string, { result: LensResult; expiresAt: number }>();
@@ -70,7 +78,7 @@ export function createBrokerOrchestrator(
     return backends.find((backend) => backend.available()) ?? backends[backends.length - 1];
   }
 
-  async function selectBackend(): Promise<BrowserBackend> {
+  async function selectBackend(rendezvousDeadline: number): Promise<BrowserBackend> {
     const selected = currentBackend();
     const preferredWaitMs =
       (typeof options.preferredWaitMs === "function"
@@ -84,11 +92,24 @@ export function createBrokerOrchestrator(
     ) {
       return selected;
     }
+    const preferred = backends.slice(0, -1);
     await waitForPreferredBackend(
-      backends.slice(0, -1),
-      preferredWaitMs
+      preferred,
+      Math.min(preferredWaitMs, Math.max(0, rendezvousDeadline - Date.now()))
     );
-    return currentBackend();
+    const afterGrace = currentBackend();
+    if (afterGrace.available() || !options.prepareFallback) return afterGrace;
+
+    // The grace controls when fallback preparation starts, not when the
+    // expected extension stops being eligible. Until the request deadline,
+    // whichever backend actually becomes available first wins; a failed CDP
+    // probe is merely remembered for the bounded no-backend failure.
+    return waitForAvailableBackend(
+      backends,
+      options.prepareFallback,
+      rendezvousDeadline,
+      currentBackend
+    );
   }
 
   async function call(
@@ -123,7 +144,7 @@ export function createBrokerOrchestrator(
     const loadTimeoutMs = message.spec.loadTimeoutMs ?? 30_000;
     let backend: BrowserBackend | undefined;
     if (specNeedsBrowser(message.spec)) {
-      backend = await selectBackend();
+      backend = await selectBackend(callDeadline);
       // The gate is derived from the browser, not remembered here: a kept tab
       // still sitting where a needs_* outcome left it blocks its whole site,
       // and it keeps doing so across broker restarts.
@@ -142,7 +163,7 @@ export function createBrokerOrchestrator(
     let recording: RecordingMonitor | undefined;
     const ensureSession = async (): Promise<BrowserSession> => {
       if (session) return session;
-      backend ??= await selectBackend();
+      backend ??= await selectBackend(callDeadline);
       progress(`binding browser page for ${target} via ${backend.name}`);
       session = await backend.bind({
         target,
@@ -176,7 +197,7 @@ export function createBrokerOrchestrator(
         progress(`fetching ${request.url} directly`);
         return directHttpFetch(request, loadTimeoutMs);
       }
-      backend ??= await selectBackend();
+      backend ??= await selectBackend(callDeadline);
       progress(`fetching ${request.url} with browser cookies via ${backend.name}`);
       // Strip the engine's `credentials` flag: the backend request crosses the
       // extension's strict protocol schema, which rejects unknown keys.
@@ -230,7 +251,9 @@ export function createBrokerOrchestrator(
     message: Extract<LensBridgeRequest, { type: "observe" }>,
     progress: (text: string) => void
   ): Promise<LensResult> {
-    const backend = await selectBackend();
+    const backend = await selectBackend(
+      message.deadline ?? Date.now() + 60_000
+    );
     progress(`binding browser page for ${message.target} via ${backend.name}`);
     const session = await backend.bind({
       target: message.target,
@@ -328,6 +351,53 @@ function waitForPreferredBackend(
       unsubscribes.push(backend.onStatusChange(changed));
     }
     timer = setTimeout(finish, timeoutMs);
+    changed();
+  });
+}
+
+function waitForAvailableBackend(
+  backends: BrowserBackend[],
+  prepareFallback: () => Promise<void>,
+  deadline: number,
+  currentBackend: () => BrowserBackend
+): Promise<BrowserBackend> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let fallbackError: unknown;
+    const unsubscribes: Array<() => void> = [];
+    const timer = setTimeout(
+      () =>
+        finish(
+          undefined,
+          fallbackError ??
+            new Error(
+              "no browser backend became available before the request deadline"
+            )
+        ),
+      Math.max(0, deadline - Date.now())
+    );
+    const finish = (backend?: BrowserBackend, error?: unknown) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      for (const unsubscribe of unsubscribes) unsubscribe();
+      if (backend) resolve(backend);
+      else reject(error);
+    };
+    const changed = () => {
+      const backend = currentBackend();
+      if (backend.available()) finish(backend);
+    };
+    for (const backend of backends) {
+      unsubscribes.push(backend.onStatusChange(changed));
+    }
+    void Promise.resolve()
+      .then(prepareFallback)
+      .then(changed, (error) => {
+        // CDP absence/failure must not end an expected extension's rendezvous.
+        fallbackError = error;
+        changed();
+      });
     changed();
   });
 }
