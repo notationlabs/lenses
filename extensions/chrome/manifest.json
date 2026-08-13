@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Lens Host",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "description": "Executes lens calls from local clients in your own browser session.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAuYEW0Zg4BUH2VMXFk/4RBzJU8e+IK8NOMIrogtAPBQTvHP483QjNLWmTNGu9WqkqUAPnwd5aUVXIeHzvyyKGcYepuPY1lI5+5V/3+jdDtu8J3gJb9iSE8wGO7V7yr8eDuK84RmTTwxNJT1se8I5rOVG6Niyi6Ahjp8HNSgacxCtkf+GKXoscNilaaJxsBzva0eGjKDWJWXJ7esABFXdjbrViT4VK0VTft5YKNZ3CwQqR4jtNUCzBW0UKYnncLoqwGImJfYB04Kg7LwXv/tK1qllOt5GXRWJzz/q3pDhPmm3DUbLCr6NOur3/pl4ldR+dvigOax+jkzwnQD8bFnAkNQIDAQAB",
   "background": {

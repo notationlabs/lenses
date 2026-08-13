@@ -27,6 +27,8 @@ export interface FakeChrome {
   removed: number[];
   /** Every url passed to chrome.tabs.create, in order. */
   createdUrls: string[];
+  /** Every url used to establish a new Chrome window, in order. */
+  createdWindowUrls: string[];
   /** Every [tabId, url] passed to chrome.tabs.update, in order. */
   navigations: [number, string][];
   /** Every tab id activated via chrome.tabs.update, in order. */
@@ -45,6 +47,8 @@ export interface FakeChrome {
   setUrl(tabId: number, url: string): void;
   /** Whether a Chrome window holds OS focus; defaults to true. */
   setOsFocus(focused: boolean): void;
+  /** Simulate Chrome running in the background after its last window closed. */
+  closeCurrentWindow(): void;
   /** Simulate the user clicking a notification. */
   clickNotification(id: string): void;
   /**
@@ -58,12 +62,14 @@ export function createFakeChrome(): FakeChrome {
   const tabs = new Map<number, FakeTab>();
   const removed: number[] = [];
   const createdUrls: string[] = [];
+  const createdWindowUrls: string[] = [];
   const navigations: [number, string][] = [];
   const activated: number[] = [];
   const focusedWindows: number[] = [];
   const notifications: { id: string; title: string; message: string }[] = [];
   const onNotificationClicked = new FakeEvent<[string]>();
   let osFocused = true;
+  let hasCurrentWindow = true;
   const reloads: number[] = [];
   const debuggerAttached = new Set<number>();
   const debuggerDetaches: number[] = [];
@@ -120,6 +126,7 @@ export function createFakeChrome(): FakeChrome {
         return [...tabs.values()].map((tab) => ({ ...tab }));
       },
       async create({ url }: { url: string }) {
+        if (!hasCurrentWindow) throw new Error("No current window");
         createdUrls.push(url);
         const tab = addTab(url);
         completeSoon(tab);
@@ -166,6 +173,13 @@ export function createFakeChrome(): FakeChrome {
       },
     },
     windows: {
+      async create({ url }: { url: string; focused?: boolean }) {
+        createdWindowUrls.push(url);
+        hasCurrentWindow = true;
+        const tab = addTab(url);
+        completeSoon(tab);
+        return { id: 1, tabs: [{ ...tab, windowId: 1 }] };
+      },
       async update(windowId: number, { focused }: { focused?: boolean }) {
         if (focused) focusedWindows.push(windowId);
       },
@@ -210,6 +224,7 @@ export function createFakeChrome(): FakeChrome {
     tabs,
     removed,
     createdUrls,
+    createdWindowUrls,
     navigations,
     activated,
     focusedWindows,
@@ -226,6 +241,10 @@ export function createFakeChrome(): FakeChrome {
     },
     setOsFocus(focused) {
       osFocused = focused;
+    },
+    closeCurrentWindow() {
+      hasCurrentWindow = false;
+      tabs.clear();
     },
     clickNotification(id) {
       onNotificationClicked.emit(id);
