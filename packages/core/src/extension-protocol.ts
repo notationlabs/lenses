@@ -26,6 +26,7 @@ export const OPTIONAL_EXTENSION_CAPABILITIES = [
   "find-gate",
   "http-fetch",
   "http-fetch-body",
+  "same-origin-page-fetch",
 ] as const;
 export const EXTENSION_CAPABILITIES = [
   ...REQUIRED_EXTENSION_CAPABILITIES,
@@ -105,9 +106,22 @@ export type ExtensionRpcOperation =
    */
   | {
       name: "http-fetch";
-      request: { method: string; url: string; headers?: Record<string, string>; body?: HttpFetchBody };
+      request: ExtensionHttpFetchRequest;
+      maxBodyChars?: number;
+    }
+  /** A fetch executed in the MAIN world of an existing same-origin tab. */
+  | {
+      name: "same-origin-page-fetch";
+      request: ExtensionHttpFetchRequest;
       maxBodyChars?: number;
     };
+
+export interface ExtensionHttpFetchRequest {
+  method: string;
+  url: string;
+  headers?: Record<string, string>;
+  body?: HttpFetchBody;
+}
 
 /**
  * A sign-in gate: a tab an earlier needs_* outcome kept open, still sitting
@@ -160,7 +174,8 @@ export type ExtensionRpcResult =
   | { name: "recording-screenshot"; pngBase64: string }
   | { name: "finish" }
   | { name: "find-gate"; gate: AuthGate | null }
-  | { name: "http-fetch"; response: InterceptedResponse };
+  | { name: "http-fetch"; response: InterceptedResponse }
+  | { name: "same-origin-page-fetch"; response: InterceptedResponse | null };
 
 export type ExtensionRpcErrorCode =
   | "invalid-request"
@@ -263,6 +278,19 @@ const performResultSchema = z.strictObject({
   title: z.string().optional(),
 });
 
+const extensionHttpFetchRequestSchema = z.strictObject({
+  method: z.string().min(1),
+  url: z.string().url(),
+  headers: z.record(z.string(), z.string()).optional(),
+  body: z.discriminatedUnion("kind", [
+    z.strictObject({ kind: z.enum(["json", "text"]), value: z.string() }),
+    z.strictObject({
+      kind: z.enum(["form", "search"]),
+      entries: z.array(z.tuple([z.string(), z.string()])),
+    }),
+  ]).optional(),
+});
+
 const operationSchema = z.discriminatedUnion("name", [
   z.strictObject({
     name: z.literal("bind"),
@@ -317,18 +345,12 @@ const operationSchema = z.discriminatedUnion("name", [
   }),
   z.strictObject({
     name: z.literal("http-fetch"),
-    request: z.strictObject({
-      method: z.string().min(1),
-      url: z.string().url(),
-      headers: z.record(z.string(), z.string()).optional(),
-      body: z.discriminatedUnion("kind", [
-        z.strictObject({ kind: z.enum(["json", "text"]), value: z.string() }),
-        z.strictObject({
-          kind: z.enum(["form", "search"]),
-          entries: z.array(z.tuple([z.string(), z.string()])),
-        }),
-      ]).optional(),
-    }),
+    request: extensionHttpFetchRequestSchema,
+    maxBodyChars: z.number().int().positive().optional(),
+  }),
+  z.strictObject({
+    name: z.literal("same-origin-page-fetch"),
+    request: extensionHttpFetchRequestSchema,
     maxBodyChars: z.number().int().positive().optional(),
   }),
 ]);
@@ -411,6 +433,10 @@ const rpcResultSchema = z.discriminatedUnion("name", [
   z.strictObject({
     name: z.literal("http-fetch"),
     response: interceptedResponseSchema,
+  }),
+  z.strictObject({
+    name: z.literal("same-origin-page-fetch"),
+    response: interceptedResponseSchema.nullable(),
   }),
 ]);
 

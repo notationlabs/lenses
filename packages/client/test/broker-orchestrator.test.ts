@@ -798,6 +798,7 @@ describe("write consent and execution", () => {
     expect(cdpRequests).toEqual([
       expect.objectContaining({
         method: "POST",
+        context: "same-origin-page",
         headers: { "X-CSRF-Token": "csrf-1" },
       }),
     ]);
@@ -805,6 +806,42 @@ describe("write consent and execution", () => {
       type: "progress",
       message: "executing credentialed POST in same-origin page context via cdp",
     }));
+  });
+
+  it("uses a capable extension for same-origin page requests without CDP", async () => {
+    const extension = new FakeBackend("extension");
+    extension.sameOriginPageRequests = true;
+    const sent: unknown[] = [];
+    extension.httpFetch = async (httpRequest) => {
+      sent.push(httpRequest);
+      return {
+        url: httpRequest.url,
+        method: httpRequest.method,
+        status: 200,
+        body: '{"deleted":true}',
+        timestamp: Date.now(),
+      };
+    };
+    const result = await request(createBrokerOrchestrator([extension]), {
+      type: "call",
+      id: "same-origin-extension",
+      spec: {
+        name: "@example/delete",
+        url: "https://example.com/items/1",
+        effects: { reads: ["example.com"], writes: ["example.com"] },
+        resolve: [{
+          kind: "http",
+          credentials: "same-origin-page",
+          request: "DELETE https://example.com/items/1",
+        }],
+      },
+      params: {},
+      timeoutMs: 1000,
+      allowWrites: true,
+    });
+
+    expect(result).toMatchObject({ kind: "value", value: { deleted: true } });
+    expect(sent).toEqual([expect.objectContaining({ context: "same-origin-page" })]);
   });
 
   it("fails a same-origin page request before transmission when no backend qualifies", async () => {

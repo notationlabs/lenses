@@ -333,6 +333,42 @@ describe("backend httpFetch", () => {
     }
   });
 
+  it("extension executes same-origin requests in an existing tab's MAIN world", async () => {
+    const fixture = await createExtensionFixture();
+    try {
+      const request = {
+        method: "POST",
+        url: "https://example.com/api/items",
+        context: "same-origin-page" as const,
+        body: { kind: "search" as const, entries: [["_method", "delete"]] as [string, string][] },
+      };
+      const init = stubFetch('<html>deleted</html>');
+      await expect(fixture.backend.httpFetch!(request)).resolves.toBeUndefined();
+      expect(init).toHaveLength(0);
+
+      await fixture.backend.bind({
+        target: "https://example.com/shared",
+        loadTimeoutMs: 1000,
+        navigation: "fresh",
+      });
+      await expect(fixture.backend.httpFetch!(request)).resolves.toMatchObject({
+        method: "POST",
+        url: "https://example.com/api/items",
+        status: 200,
+        body: "<html>deleted</html>",
+      });
+      expect(init[0]).toMatchObject({
+        credentials: "include",
+        redirect: "follow",
+      });
+      expect(String(init[0].body)).toBe("_method=delete");
+      expect(fixture.backend.info().sameOriginPageRequests).toBe(true);
+      expect(fixture.backend.supports?.("same-origin-page-http")).toBe(true);
+    } finally {
+      await fixture.close();
+    }
+  });
+
   it("extension fetches through the service worker without binding a tab", async () => {
     const fixture = await createExtensionFixture();
     try {
@@ -712,6 +748,20 @@ function createChromeMock() {
     api: {
       runtime: {
         onMessage: runtimeMessages,
+      },
+      scripting: {
+        async executeScript(injection: {
+          target: { tabId: number };
+          world: string;
+          func: (...args: any[]) => unknown;
+          args: any[];
+        }) {
+          expect(injection.world).toBe("MAIN");
+          const tab = tabs.get(injection.target.tabId);
+          if (!tab) throw new Error("missing injection tab");
+          vi.stubGlobal("location", new URL(tab.url));
+          return [{ frameId: 0, result: await injection.func(...injection.args) }];
+        },
       },
       debugger: {
         async attach() {},

@@ -252,7 +252,7 @@ lens MCP ────┘                           │             └─ CDP fa
                               core resolver engine
 ```
 
-The broker hosts the resolver engine, caching, retry policy, and page-retention policy once. Credential-free `http` tiers run in the broker process itself. Bound-page work pins the call to one session backend, while chained HTTP requests select a backend per source so an extension read can precede a same-origin CDP mutation. The extension is otherwise preferred when compatible, with CDP as fallback. Pages are bound lazily.
+The broker hosts the resolver engine, caching, retry policy, and page-retention policy once. Credential-free `http` tiers run in the broker process itself. Bound-page work pins the call to one session backend, while chained HTTP requests select a backend per source. Both the extension and CDP execute same-origin requests in an existing matching page; the extension is preferred when compatible, with CDP as fallback. Pages are bound lazily.
 
 Browser calls use one explicit **serial queue** across clients; there is never concurrent mutation of the shared browser session. Queue time counts against each request deadline, and an expired queued request is rejected before browser work begins. If backend work outlives its caller timeout, subsequent calls receive `code: "broker_busy"` until that work settles rather than overlapping it. `lens status` / `broker_status` reports the policy, active call, queue depth, each backend's version and capabilities, last backend error, CDP reconnect attempts, and separate Chrome/extension reachability (unknown Chrome reachability is omitted until probed).
 
@@ -395,8 +395,8 @@ repeated fields.
   request or browser bind.
 - `credentials` accepts `false`, `true`, or `"same-origin-page"`. `true` sends
   browser cookies through any capable backend. `"same-origin-page"` also requires
-  the request to execute in a page whose origin matches its URL; currently CDP
-  provides this using an already-open matching tab. If no qualifying backend or
+  the request to execute in a page whose origin matches its URL. The extension
+  and CDP provide this using an already-open matching tab. If no qualifying backend or
   page exists, the call fails before transmission with
   `code: "required_backend_unavailable"`.
 - A source may override the resolver's `credentials` and declare `headers` whose
