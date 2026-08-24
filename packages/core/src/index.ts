@@ -23,6 +23,7 @@ export {
   pagePerformCount,
   pagePerformFill,
   pagePerformPress,
+  pagePerformSubmit,
   pageSnapshot,
   type PageSnapshot,
 } from "./page-functions.js";

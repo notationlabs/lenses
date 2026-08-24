@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { pageDomExtract } from "../src/page-functions.js";
+import { pageDomExtract, pagePerformSubmit } from "../src/page-functions.js";
 
 /**
  * A shim rather than a DOM: it fixes what `innerText` returns instead of
@@ -38,6 +38,14 @@ function extractOne(el: FakeElement | null): string | null {
 afterEach(() => {
   delete (globalThis as Record<string, unknown>).document;
   delete (globalThis as Record<string, unknown>).location;
+  for (const name of [
+    "HTMLFormElement",
+    "HTMLInputElement",
+    "HTMLTextAreaElement",
+    "HTMLSelectElement",
+    "Element",
+    "InputEvent",
+  ]) delete (globalThis as Record<string, unknown>)[name];
 });
 
 /**
@@ -88,6 +96,95 @@ function panelPage(rows: { own: string; next?: string }[], panelYear: string) {
   };
   (globalThis as Record<string, unknown>).location = { href: "https://example.com/" };
 }
+
+describe("pagePerformSubmit", () => {
+  it("uses native requestSubmit so validation and submit events are preserved", () => {
+    let submissions = 0;
+    class FakeForm {
+      requestSubmit() { submissions += 1; }
+    }
+    const form = new FakeForm();
+    (globalThis as Record<string, unknown>).HTMLFormElement = FakeForm;
+    (globalThis as Record<string, unknown>).document = {
+      querySelectorAll: () => [form],
+    };
+
+    expect(pagePerformSubmit({ selector: "#checkout" })).toEqual({ ok: true });
+    expect(submissions).toBe(1);
+  });
+
+  it("populates native controls, adds missing hidden fields, then submits", () => {
+    const events: string[] = [];
+    class FakeElement {
+      dispatchEvent(event: Event) { events.push(event.type); return true; }
+    }
+    class FakeInput extends FakeElement {
+      type = "text";
+      name = "";
+      private currentValue = "";
+      private currentChecked = false;
+      get value() { return this.currentValue; }
+      set value(value: string) { this.currentValue = value; }
+      get checked() { return this.currentChecked; }
+      set checked(value: boolean) { this.currentChecked = value; }
+    }
+    class FakeTextArea extends FakeElement {
+      private currentValue = "";
+      get value() { return this.currentValue; }
+      set value(value: string) { this.currentValue = value; }
+    }
+    class FakeSelect extends FakeTextArea {}
+    const description = new FakeInput();
+    const appended: FakeInput[] = [];
+    let submittedValue: string | undefined;
+    class FakeForm extends FakeElement {
+      elements = {
+        namedItem: (name: string) => name === "journal_set[description]" ? description : null,
+      };
+      appendChild(input: FakeInput) { appended.push(input); }
+      requestSubmit() { submittedValue = description.value; }
+    }
+    const form = new FakeForm();
+    Object.assign(globalThis, {
+      Element: FakeElement,
+      HTMLFormElement: FakeForm,
+      HTMLInputElement: FakeInput,
+      HTMLTextAreaElement: FakeTextArea,
+      HTMLSelectElement: FakeSelect,
+      InputEvent: class extends Event {},
+      document: {
+        querySelectorAll: () => [form],
+        createElement: () => new FakeInput(),
+      },
+    });
+
+    expect(pagePerformSubmit({
+      selector: "#journal_set",
+      form: {
+        "journal_set[description]": "published",
+        "journal_set[token]": "secret",
+      },
+    })).toEqual({ ok: true });
+    expect(submittedValue).toBe("published");
+    expect(events).toEqual(["input", "change"]);
+    expect(appended).toMatchObject([
+      { type: "hidden", name: "journal_set[token]", value: "secret" },
+    ]);
+  });
+
+  it("rejects a non-form target", () => {
+    class FakeForm {}
+    (globalThis as Record<string, unknown>).HTMLFormElement = FakeForm;
+    (globalThis as Record<string, unknown>).document = {
+      querySelectorAll: () => [{}],
+    };
+
+    expect(pagePerformSubmit({ selector: "#checkout" })).toEqual({
+      ok: false,
+      message: 'submit "#checkout" target is not a form',
+    });
+  });
+});
 
 describe("pageDomExtract field scope", () => {
   it("reaches an ancestor a descendant selector cannot", () => {

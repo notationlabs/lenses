@@ -264,6 +264,7 @@ describe("validateSpec", () => {
           { wait: { appears: "[data-testid='send']" } },
           { fill: "#composer", value: "$message" },
           { click: "[data-testid='send']" },
+          { submit: "#composer-form", form: { description: "$page" } },
           { press: "Enter" },
           { wait: { increases: ".turn", timeoutMs: 30000 } },
           { wait: { gone: ".spinner" } },
@@ -271,6 +272,34 @@ describe("validateSpec", () => {
         ],
       };
       expect(validateSpec(spec)).toEqual(spec);
+    });
+
+    it("accepts declared params in all perform selector forms", () => {
+      const spec = {
+        ...writeSpec,
+        params: { page: "string", row: "integer" },
+        perform: [
+          { fill: "#input-{row}", value: "$page" },
+          { click: "#button-{row}" },
+          { submit: "#form-{row}", form: { description: "$page" } },
+          { wait: { appears: ".result-{row}" } },
+        ],
+      };
+      expect(validateSpec(spec)).toEqual(spec);
+    });
+
+    it("rejects non-expression values in a submit form map", () => {
+      expect(() => validateSpec({
+        ...writeSpec,
+        perform: [{ submit: "#form", form: { description: 42 } }],
+      })).toThrow(/form\/description/);
+    });
+
+    it("rejects undeclared holes in perform selectors", () => {
+      expect(() => validateSpec({
+        ...writeSpec,
+        perform: [{ wait: { gone: ".spinner-{row}" } }],
+      })).toThrow(/selector parameter "row" is not declared/);
     });
 
     it("rejects an empty step list", () => {

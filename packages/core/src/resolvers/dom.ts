@@ -2,6 +2,7 @@ import type { DomResolver, EngineIO, LensResult, LensSpec, ResolverMiss } from "
 import { evaluate } from "../expr.js";
 import { expandTemplate } from "../url-pattern.js";
 import { detectOutcome, mergeDetect } from "./outcome.js";
+import { satisfiesReturns } from "../reconcile.js";
 
 /**
  * Substitute declared params into every selector before the spec crosses into
@@ -45,7 +46,14 @@ export async function runDom(
 
   let value = extracted.value;
   if (value === undefined || value === null) return miss;
-  if (Array.isArray(value) && value.length === 0) return miss;
+  // An empty repeating extraction is meaningful when the declared contract is
+  // an array: it says the page currently has zero rows, not that extraction
+  // failed. Without that contract, preserve legacy fall-through semantics.
+  if (
+    Array.isArray(value) &&
+    value.length === 0 &&
+    (spec.returns === undefined || !satisfiesReturns(value, spec.returns, spec.$defs))
+  ) return miss;
   if (r.post) value = await evaluate(r.post, value, params, spec.helpers);
   if (value === undefined || value === null) return miss;
   return { kind: "value", value, resolver: "dom", observed: extracted.url };

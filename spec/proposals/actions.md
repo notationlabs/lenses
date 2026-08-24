@@ -23,12 +23,13 @@ Tier semantics are read semantics: miss → fall through, fields accumulate, res
 
 ## Steps
 
-Values (only `fill.value` in v1) are JSONata expressions over declared params — `"$message"`, not a `{hole}` template — matching the rest of the engine. Validation is a strict discriminated union over the step opcodes; unknown keys fail closed.
+`fill.value` and each value in `submit.form` are JSONata expressions over declared params — `"$message"`, not a `{hole}` template — matching the rest of the engine; an empty string is accepted directly as the empty literal. Selector fields on `fill`, `click`, `submit`, and every `wait` form expand declared `{param}` holes. Validation is a strict discriminated union over the step opcodes; unknown keys and undeclared selector holes fail closed.
 
 | Step | Semantics |
 |---|---|
 | `{ "fill": sel, "value": expr }` | Focus → select-all → `insertText` (never `value=`; ProseMirror-style editors ignore property writes). The selector must resolve to exactly one element or the step hard-errors. |
 | `{ "click": sel }` | Click the first visible match; error on zero matches or a disabled/`aria-disabled` target. |
+| `{ "submit": sel, "form"?: { field: expr } }` | Match exactly one `<form>`, evaluate optional field expressions, populate its named native controls (adding hidden controls for absent names), then call native `requestSubmit()`, preserving constraint validation and cancellable submit-event semantics. |
 | `{ "press": key }` | Named keys (`Enter`, `Meta+Enter`), never key codes. |
 | `{ "wait": { "appears": sel } }` | ≥1 match present. Plain presence, no baseline memory. |
 | `{ "wait": { "gone": sel } }` | 0 matches. Stateless: immediately true when already satisfied. |

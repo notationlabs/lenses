@@ -247,6 +247,10 @@ const performWaitSchema = z.strictObject({
 const performStepSchema = z.union([
   z.strictObject({ fill: z.string().min(1), value: z.string() }),
   z.strictObject({ click: z.string().min(1) }),
+  z.strictObject({
+    submit: z.string().min(1),
+    form: z.record(z.string(), z.string()).optional(),
+  }),
   z.strictObject({ press: z.string().min(1) }),
   z.strictObject({ wait: performWaitSchema }),
   z.strictObject({ navigate: z.literal("fresh") }),

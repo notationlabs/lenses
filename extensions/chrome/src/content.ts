@@ -6,6 +6,7 @@ import {
   pagePerformCount,
   pagePerformFill,
   pagePerformPress,
+  pagePerformSubmit,
   pageSnapshot,
   type DomResolver,
 } from "@djgrant/lenses-core";
@@ -67,6 +68,10 @@ chrome.runtime.onMessage.addListener(
       }
       if (message.type === "perform_click") {
         sendResponse(pagePerformClick({ selector: message.selector }));
+        return false;
+      }
+      if (message.type === "perform_submit") {
+        sendResponse(pagePerformSubmit({ selector: message.selector, form: message.form }));
         return false;
       }
       if (message.type === "perform_press") {

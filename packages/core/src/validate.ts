@@ -98,7 +98,8 @@ const waitSchema = z
 
 const PERFORM_HINT =
   'must be one perform step: {"fill": <sel>, "value": <expr>}, {"click": <sel>}, ' +
-  '{"press": <key>}, {"wait": {"appears" | "gone" | "increases": <sel>, "timeoutMs"?: <ms>}}, ' +
+  '{"submit": <form-sel>, "form"?: {<field>: <expr>}}, {"press": <key>}, ' +
+  '{"wait": {"appears" | "gone" | "increases": <sel>, "timeoutMs"?: <ms>}}, ' +
   'or {"navigate": "fresh"}';
 
 // A closed opcode set: unknown keys and unknown opcodes fail here rather than
@@ -107,7 +108,7 @@ const PERFORM_HINT =
 const performStepSchema = z
   .record(z.string(), z.unknown(), { error: PERFORM_HINT })
   .refine(
-    (step) => ["fill", "click", "press", "wait", "navigate"].some((opcode) => opcode in step),
+    (step) => ["fill", "click", "submit", "press", "wait", "navigate"].some((opcode) => opcode in step),
     { message: PERFORM_HINT }
   )
   .pipe(
@@ -115,6 +116,7 @@ const performStepSchema = z
       [
         z.strictObject({ fill: z.string(), value: expression }),
         z.strictObject({ click: z.string() }),
+        z.strictObject({ submit: z.string(), form: bodyFields.optional() }),
         z.strictObject({ press: z.string() }),
         z.strictObject({ wait: waitSchema }),
         z.strictObject({ navigate: z.literal("fresh") }),
@@ -345,21 +347,31 @@ export function validateSpec(raw: unknown): LensSpec {
       bindable.add(name);
     }
   }
-  // Selectors take the same holes. Catching an undeclared one here beats a
-  // selector that silently keeps its braces and misses everything at runtime.
+  // DOM and perform selectors take the same holes. Catching an undeclared one
+  // here beats a selector that silently keeps its braces and misses at runtime.
+  const selectors: string[] = [];
   for (const resolver of result.data.resolve) {
     if (resolver.kind !== "dom") continue;
-    const selectors = [
+    selectors.push(
       ...(resolver.item ? [resolver.item] : []),
       ...Object.values(resolver.fields ?? {}).flatMap((field) =>
         field.scope ? [field.selector, field.scope] : [field.selector]
-      ),
-    ];
-    for (const selector of selectors) {
-      for (const hole of holesIn(selector)) {
-        if (!result.data.params?.[hole]) {
-          throw new Error(`invalid lens spec:\n  selector parameter "${hole}" is not declared`);
-        }
+      )
+    );
+  }
+  for (const step of result.data.perform ?? []) {
+    if ("fill" in step) selectors.push(step.fill);
+    else if ("click" in step) selectors.push(step.click);
+    else if ("submit" in step) selectors.push(step.submit);
+    else if ("wait" in step) {
+      const selector = step.wait.appears ?? step.wait.gone ?? step.wait.increases;
+      if (selector !== undefined) selectors.push(selector);
+    }
+  }
+  for (const selector of selectors) {
+    for (const hole of holesIn(selector)) {
+      if (!result.data.params?.[hole]) {
+        throw new Error(`invalid lens spec:\n  selector parameter "${hole}" is not declared`);
       }
     }
   }

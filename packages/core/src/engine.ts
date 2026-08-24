@@ -17,6 +17,7 @@ import { runDom } from "./resolvers/dom.js";
 import { runLlm } from "./resolvers/llm.js";
 import { isPlainObject } from "./util.js";
 import { fillAbsent, satisfiesReturns } from "./reconcile.js";
+import { expandTemplate } from "./url-pattern.js";
 
 /**
  * Run resolvers in cost order, filling fields until `returns` is satisfied.
@@ -68,16 +69,58 @@ async function runPerform(
   // Expressions are the document's trust boundary: they resolve here, so a
   // host only ever receives literal strings.
   const steps: PerformStep[] = [];
+  // An empty declarative value is already the empty literal; JSONata otherwise
+  // treats an empty source string as a syntax error. This applies equally to
+  // fill values and native form fields.
+  const performValue = (expr: string) =>
+    expr === "" ? Promise.resolve("") : evaluate(expr, params, params, spec.helpers);
   for (const step of perform) {
-    if (!("fill" in step)) {
+    if ("fill" in step) {
+      const value = await performValue(step.value);
+      if (value === undefined) {
+        return { kind: "error", message: `perform fill value "${step.value}" produced nothing` };
+      }
+      steps.push({ fill: expandTemplate(step.fill, params), value: String(value) });
+    } else if ("click" in step) {
+      steps.push({ click: expandTemplate(step.click, params) });
+    } else if ("submit" in step) {
+      const form: Record<string, string> = {};
+      for (const [name, expr] of Object.entries(step.form ?? {})) {
+        const value = await performValue(expr);
+        if (value === undefined) {
+          return {
+            kind: "error",
+            message: `perform submit field "${name}" value "${expr}" produced nothing`,
+          };
+        }
+        // Field names are caller-facing HTML names and may be "__proto__";
+        // define an own data property rather than invoking Object.prototype's setter.
+        Object.defineProperty(form, name, {
+          value: String(value),
+          enumerable: true,
+          configurable: true,
+          writable: true,
+        });
+      }
+      steps.push({
+        submit: expandTemplate(step.submit, params),
+        ...(step.form !== undefined ? { form } : {}),
+      });
+    } else if ("wait" in step) {
+      const wait = step.wait;
+      steps.push({
+        wait: {
+          ...(wait.appears !== undefined
+            ? { appears: expandTemplate(wait.appears, params) }
+            : wait.gone !== undefined
+              ? { gone: expandTemplate(wait.gone, params) }
+              : { increases: expandTemplate(wait.increases!, params) }),
+          ...(wait.timeoutMs !== undefined ? { timeoutMs: wait.timeoutMs } : {}),
+        },
+      });
+    } else {
       steps.push(step);
-      continue;
     }
-    const value = await evaluate(step.value, params, params, spec.helpers);
-    if (value === undefined) {
-      return { kind: "error", message: `perform fill value "${step.value}" produced nothing` };
-    }
-    steps.push({ fill: step.fill, value: String(value) });
   }
   io.log?.(`performing ${steps.length} step${steps.length === 1 ? "" : "s"}`);
   const result = await io.perform(steps);

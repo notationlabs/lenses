@@ -70,6 +70,7 @@ export interface PerformWait {
 export type PerformStep =
   | { fill: string; value: string } // value is a JSONata expression over params
   | { click: string }
+  | { submit: string; form?: Record<string, ExprString> } // values resolve before requestSubmit()
   | { press: string } // named key, e.g. "Enter"
   | { wait: PerformWait }
   | { navigate: "fresh" };
