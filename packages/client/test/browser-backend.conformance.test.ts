@@ -267,8 +267,8 @@ for (const [name, createFixture] of [
 
 describe("backend httpFetch", () => {
   function stubFetch(body: string) {
-    const init: { credentials?: string }[] = [];
-    vi.stubGlobal("fetch", async (_url: string, options: { credentials?: string }) => {
+    const init: RequestInit[] = [];
+    vi.stubGlobal("fetch", async (_url: string, options: RequestInit) => {
       init.push(options);
       return new Response(body, { status: 200 });
     });
@@ -305,6 +305,31 @@ describe("backend httpFetch", () => {
     }
   });
 
+  it("CDP materialises JSON bodies in the page fetch", async () => {
+    const fixture = await createCdpFixture();
+    try {
+      await fixture.backend.bind({
+        target: "https://example.com/shared",
+        loadTimeoutMs: 1000,
+        navigation: "fresh",
+      });
+      const init = stubFetch('{"ok":true}');
+      await fixture.backend.httpFetch!({
+        method: "POST",
+        url: "https://example.com/api/items",
+        body: { kind: "json", value: '{"name":"new"}' },
+      });
+      expect(init).toEqual([expect.objectContaining({
+        credentials: "include",
+        body: '{"name":"new"}',
+        headers: { "content-type": "application/json" },
+      })]);
+    } finally {
+      vi.unstubAllGlobals();
+      await fixture.close();
+    }
+  });
+
   it("extension fetches through the service worker without binding a tab", async () => {
     const fixture = await createExtensionFixture();
     try {
@@ -318,6 +343,22 @@ describe("backend httpFetch", () => {
         body: '{"me":true}',
       });
       expect(init).toEqual([expect.objectContaining({ credentials: "include" })]);
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it("extension materialises URLSearchParams bodies", async () => {
+    const fixture = await createExtensionFixture();
+    try {
+      const init = stubFetch('{"ok":true}');
+      await fixture.backend.httpFetch!({
+        method: "PATCH",
+        url: "https://example.com/api/items",
+        body: { kind: "search", entries: [["tag", "a"], ["tag", "b"]] },
+      });
+      expect(init[0]).toMatchObject({ credentials: "include" });
+      expect(String(init[0].body)).toBe("tag=a&tag=b");
     } finally {
       await fixture.close();
     }

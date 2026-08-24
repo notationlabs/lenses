@@ -209,6 +209,48 @@ describe("validateSpec", () => {
     ).toThrow(/at \/resolve\/0\/fields\/title\/selector/);
   });
 
+  describe("HTTP writes and bodies", () => {
+    const writeHttp = (body?: unknown) => ({
+      ...validSpec,
+      effects: { reads: ["example.com"], writes: ["example.com"] },
+      resolve: [{
+        kind: "http",
+        request: "POST https://example.com/api",
+        ...(body ? { body } : {}),
+      }],
+    });
+
+    it.each([
+      { json: "{ 'page': $page }" },
+      { form: { page: "$page" } },
+      { search: { page: "$page" } },
+      { text: "$page" },
+    ])("accepts a declarative request body: %j", (body) => {
+      expect(validateSpec(writeHttp(body))).toMatchObject({ resolve: [{ body }] });
+    });
+
+    it("rejects a mutating method without a writes declaration", () => {
+      expect(() => validateSpec({
+        ...writeHttp(),
+        effects: { reads: ["example.com"], writes: [] },
+      })).toThrow(/effects\.writes/);
+    });
+
+    it("rejects caching a mutating method", () => {
+      expect(() => validateSpec({
+        ...writeHttp(),
+        effects: { reads: ["example.com"], writes: ["example.com"], cache: 60 },
+      })).toThrow(/must not be cached/);
+    });
+
+    it("rejects bodies on GET and HEAD", () => {
+      expect(() => validateSpec({
+        ...writeHttp({ json: "{}" }),
+        resolve: [{ kind: "http", request: "GET https://example.com/api", body: { json: "{}" } }],
+      })).toThrow(/GET request cannot declare a body/);
+    });
+  });
+
   describe("perform", () => {
     const writeSpec = {
       ...validSpec,

@@ -49,7 +49,7 @@ export interface LensCall {
   params?: Record<string, unknown>;
   timeoutMs?: number;
   /**
-   * Consent for a lens with `perform` steps (writes). Default false: the
+   * Consent for a lens with `perform` steps or mutating HTTP methods. Default false: the
    * broker denies with code "writes_not_allowed". Never inherited by nested
    * calls or {$lens} parameter defaults.
    */

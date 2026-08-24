@@ -131,6 +131,8 @@ export interface HttpResolver {
   /** "METHOD url-template" with named holes, e.g. "GET https://api.example.com/items/{id}".
    *  Omitted (and without `sources`), the resolver GETs the lens's canonical `url`. */
   request?: string;
+  /** Request body for the single-request form. Each value is JSONata over params. */
+  body?: HttpBody;
   /**
    * Chain several requests, fired in declaration order. Each source binds its
    * body (through its `items` expression) as a JSONata variable `$name` for
@@ -138,7 +140,7 @@ export interface HttpResolver {
    * `{name}` holes in the request templates of the sources after it — which is
    * how an id only another response knows (an organisation UUID) reaches a URL.
    */
-  sources?: Record<string, InterceptSource>;
+  sources?: Record<string, HttpSource>;
   /** extra request headers; values take the same named holes as `request` */
   headers?: Record<string, string>;
   /** send the browser's cookies with the request */
@@ -149,6 +151,21 @@ export interface HttpResolver {
   map?: MapSpec;
   /** outcome name -> JSONata over {status, url, body}; truthy triggers the outcome */
   detect?: Record<string, ExprString>;
+}
+
+/** A declarative request body. `form` is multipart FormData; `search` is URL-encoded. */
+export type HttpBody =
+  | { json: ExprString }
+  | { form: Record<string, ExprString> }
+  | { search: Record<string, ExprString> }
+  | { text: ExprString };
+
+/** One named direct request in an HTTP chain. */
+export interface HttpSource {
+  request: string;
+  body?: HttpBody;
+  /** JSONata over the parsed response body producing this source's bound value */
+  items?: ExprString;
 }
 
 /** One named network response to capture within an intercept tier. */
@@ -284,10 +301,17 @@ export type LensResult =
     };
 
 /** A concrete request an http tier asks its host to perform. */
+export type HttpFetchBody =
+  | { kind: "json"; value: string }
+  | { kind: "text"; value: string }
+  | { kind: "form"; entries: [string, string][] }
+  | { kind: "search"; entries: [string, string][] };
+
 export interface HttpFetchRequest {
   method: string;
   url: string;
   headers?: Record<string, string>;
+  body?: HttpFetchBody;
   /** true asks for the browser's cookies; hosts without a browser resolve undefined */
   credentials: boolean;
 }

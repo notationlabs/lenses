@@ -922,6 +922,31 @@ describe("http tier", () => {
     });
   });
 
+  it.each([
+    [{ json: "{ 'id': $id, 'tags': ['a', 'b'] }" }, { kind: "json", value: '{"id":"42","tags":["a","b"]}' }],
+    [{ text: "$id" }, { kind: "text", value: "42" }],
+    [{ search: { id: "$id", tag: "['a', 'b']" } }, { kind: "search", entries: [["id", "42"], ["tag", "a"], ["tag", "b"]] }],
+    [{ form: { id: "$id" } }, { kind: "form", entries: [["id", "42"]] }],
+  ] as const)("materialises request body %j", async (declaration, expected) => {
+    const requests: unknown[] = [];
+    const writeSpec = validateSpec({
+      ...httpSpec,
+      effects: { reads: ["example.com"], writes: ["api.example.com"] },
+      resolve: [{
+        kind: "http",
+        request: "POST https://api.example.com/things/{id}",
+        body: declaration,
+      }],
+    });
+    await executeLens(writeSpec, { id: "42" }, io({
+      httpFetch: async (request) => {
+        requests.push(request);
+        return { url: request.url, method: request.method, status: 200, body: "{}", timestamp: Date.now() };
+      },
+    }));
+    expect(requests).toEqual([expect.objectContaining({ method: "POST", body: expected })]);
+  });
+
   it("defaults to a GET of the lens's canonical url", async () => {
     const urls: string[] = [];
     const bare = validateSpec({ ...httpSpec, resolve: [{ kind: "http", items: "things" }] });

@@ -223,10 +223,31 @@ export function createExtensionSessionBackend(): ExtensionSessionBackend {
           // Runs in the service worker, so host_permissions exempt it from
           // CORS and the browser attaches the site's cookies — one request
           // where the page tiers would cost a whole tab.
-          const { method, url, headers } = operation.request;
+          const { method, url } = operation.request;
+          const headers = { ...operation.request.headers };
+          const declared = operation.request.body;
+          let requestBody: BodyInit | undefined;
+          if (declared?.kind === "json" || declared?.kind === "text") {
+            requestBody = declared.value;
+            const hasContentType = Object.keys(headers).some(
+              (name) => name.toLowerCase() === "content-type"
+            );
+            if (!hasContentType) {
+              headers["content-type"] = declared.kind === "json"
+                ? "application/json"
+                : "text/plain;charset=UTF-8";
+            }
+          } else if (declared?.kind === "search") {
+            requestBody = new URLSearchParams(declared.entries);
+          } else if (declared?.kind === "form") {
+            const form = new FormData();
+            for (const [name, value] of declared.entries) form.append(name, value);
+            requestBody = form;
+          }
           const response = await fetch(url, {
             method,
             headers,
+            body: requestBody,
             credentials: "include",
             redirect: "follow",
             signal: AbortSignal.timeout(

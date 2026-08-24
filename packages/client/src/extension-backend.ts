@@ -251,6 +251,10 @@ export function createExtensionBackend(
     async httpFetch(request) {
       if (!backend.available()) return undefined;
       if (!hello?.capabilities.includes("http-fetch")) return undefined;
+      // Older extensions understand http-fetch but strictly reject its new
+      // body field. Miss cleanly so the caller is told to update rather than
+      // sending a malformed or bodyless write.
+      if (request.body && !hello.capabilities.includes("http-fetch-body")) return undefined;
       const result = await rpc({ name: "http-fetch", request });
       assertResult(result, "http-fetch");
       return result.response;

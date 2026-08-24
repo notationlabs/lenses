@@ -441,9 +441,29 @@ export function createCdpBackend(
       if (!page) return undefined;
       const result = await page.evaluate(
         async (req: BackendHttpRequest & { maxBodyChars: number }) => {
+          const headers = { ...req.headers };
+          let body: BodyInit | undefined;
+          if (req.body?.kind === "json" || req.body?.kind === "text") {
+            body = req.body.value;
+            const hasContentType = Object.keys(headers).some(
+              (name) => name.toLowerCase() === "content-type"
+            );
+            if (!hasContentType) {
+              headers["content-type"] = req.body.kind === "json"
+                ? "application/json"
+                : "text/plain;charset=UTF-8";
+            }
+          } else if (req.body?.kind === "search") {
+            body = new URLSearchParams(req.body.entries);
+          } else if (req.body?.kind === "form") {
+            const form = new FormData();
+            for (const [name, value] of req.body.entries) form.append(name, value);
+            body = form;
+          }
           const res = await fetch(req.url, {
             method: req.method,
-            headers: req.headers,
+            headers,
+            body,
             credentials: "include",
             redirect: "follow",
           });

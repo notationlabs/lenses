@@ -3,6 +3,7 @@ export { executeLens, paramLensDefault, resolveParams } from "./engine.js";
 export { evaluate, evaluateBool } from "./expr.js";
 export { materialiseLenses } from "./materialise.js";
 export { expandUrl, matchRequestPattern, sameTarget, urlOrigin } from "./url-pattern.js";
+export { httpRequestMethod, httpResolverWrites, isWriteHttpMethod, specWrites } from "./http-request.js";
 export {
   createCaptureBuffer,
   pushCapture,

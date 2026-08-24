@@ -39,7 +39,7 @@ export function createLensMcpServer(client: LensClient): McpServer {
         "Call a lens in the user's browser.",
         "Returns a value, a structured outcome, or an error.",
         "For agent_extract, use the returned prompt and page text to complete the extraction.",
-        "A lens that declares writes (a perform block) acts on the page — treat it as destructive:",
+        "A lens with perform steps or mutating HTTP methods declares writes — treat it as destructive:",
         "it runs only with allowWrites true and is refused with code writes_not_allowed otherwise.",
       ].join(" "),
       inputSchema: z.object({
@@ -49,7 +49,7 @@ export function createLensMcpServer(client: LensClient): McpServer {
           .boolean()
           .optional()
           .describe(
-            "Permit the lens to act on the page; required for lenses that declare writes (default false)"
+            "Permit page actions or mutating HTTP requests; required for write lenses (default false)"
           ),
       }),
     },

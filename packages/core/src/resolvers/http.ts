@@ -1,5 +1,7 @@
 import type {
   EngineIO,
+  HttpBody,
+  HttpFetchBody,
   HttpResolver,
   LensResult,
   LensSpec,
@@ -24,7 +26,11 @@ export async function runHttp(
     return { kind: "miss", observed: "host cannot perform http requests" };
   }
   const detect = mergeDetect(spec.detect, r.detect);
-  const fetchOne = async (pattern: string, holes: Record<string, unknown>) => {
+  const fetchOne = async (
+    pattern: string,
+    holes: Record<string, unknown>,
+    bodySpec?: HttpBody
+  ) => {
     const space = pattern.indexOf(" ");
     const method = space === -1 ? "GET" : pattern.slice(0, space).toUpperCase();
     const url = expandUrl(
@@ -36,7 +42,10 @@ export async function runHttp(
           Object.entries(r.headers).map(([name, value]) => [name, expandTemplate(value, holes)])
         )
       : undefined;
-    return io.httpFetch!({ method, url, headers, credentials: r.credentials ?? false });
+    const body = bodySpec
+      ? await materialiseBody(bodySpec, holes, spec.helpers)
+      : undefined;
+    return io.httpFetch!({ method, url, headers, body, credentials: r.credentials ?? false });
   };
 
   if (r.sources) {
@@ -47,7 +56,7 @@ export async function runHttp(
     for (const [name, source] of Object.entries(r.sources)) {
       let response;
       try {
-        response = await fetchOne(source.request, holes);
+        response = await fetchOne(source.request, { ...holes, ...bodies }, source.body);
       } catch (error) {
         return { kind: "miss", observed: failure(error) };
       }
@@ -89,7 +98,7 @@ export async function runHttp(
 
   let response;
   try {
-    response = await fetchOne(r.request ?? spec.url, params);
+    response = await fetchOne(r.request ?? spec.url, params, r.body);
   } catch (error) {
     // A network failure is this tier's miss, not the call's: the page tiers
     // reach the same site through the browser and may still succeed.
@@ -118,6 +127,38 @@ export async function runHttp(
   }
   if (value === undefined || value === null) return drew;
   return { kind: "value", value, resolver: "http", observed: response.url };
+}
+
+async function materialiseBody(
+  body: HttpBody,
+  values: Record<string, unknown>,
+  helpers: Record<string, string> = {}
+): Promise<HttpFetchBody> {
+  if ("json" in body) {
+    const value = await evaluate(body.json, values, values, helpers);
+    if (value === undefined) throw new Error("json request body expression produced no result");
+    return { kind: "json", value: JSON.stringify(value) };
+  }
+  if ("text" in body) {
+    const value = await evaluate(body.text, values, values, helpers);
+    if (value === undefined) throw new Error("text request body expression produced no result");
+    return { kind: "text", value: String(value) };
+  }
+  const kind = "form" in body ? "form" : "search";
+  const fields = "form" in body ? body.form : body.search;
+  const entries: [string, string][] = [];
+  for (const [name, expression] of Object.entries(fields)) {
+    const value = await evaluate(expression, values, values, helpers);
+    if (value === undefined) throw new Error(`${kind} request body field "${name}" produced no result`);
+    const valuesForField = Array.isArray(value) ? value : [value];
+    for (const item of valuesForField) {
+      if (item !== null && typeof item === "object") {
+        throw new Error(`${kind} request body field "${name}" must be scalar or an array of scalars`);
+      }
+      entries.push([name, item === null ? "" : String(item)]);
+    }
+  }
+  return { kind, entries };
 }
 
 const DOTTED_HOLE = /\{([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z0-9_]+)+)\}/g;

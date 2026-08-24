@@ -579,7 +579,7 @@ describe("broker orchestration", () => {
   });
 });
 
-describe("perform consent and execution", () => {
+describe("write consent and execution", () => {
   const performSpec = (overrides: Partial<LensSpec> = {}): LensSpec =>
     domSpec({
       name: "@example/send",
@@ -607,6 +607,64 @@ describe("perform consent and execution", () => {
     expect(backend.binds).toHaveLength(0);
     expect(backend.finishes).toHaveLength(0);
     expect(backend.session.performCalls).toHaveLength(0);
+  });
+
+  it("denies a mutating HTTP resolver without allowWrites before making a request", async () => {
+    const backend = new FakeBackend("extension");
+    const requests: unknown[] = [];
+    backend.httpFetch = async (httpRequest) => {
+      requests.push(httpRequest);
+      return { url: httpRequest.url, method: httpRequest.method, status: 200, body: "{}", timestamp: Date.now() };
+    };
+    const result = await request(createBrokerOrchestrator([backend]), {
+      type: "call",
+      id: "http-denied",
+      spec: {
+        name: "@example/api/update",
+        url: "https://example.com/api",
+        effects: { reads: ["example.com"], writes: ["example.com"] },
+        resolve: [{ kind: "http", credentials: true, request: "PATCH https://example.com/api", body: { json: "{}" } }],
+      },
+      params: {},
+      timeoutMs: 1000,
+    });
+
+    expect(result).toMatchObject({ kind: "error", code: "writes_not_allowed" });
+    expect(requests).toHaveLength(0);
+    expect(backend.binds).toHaveLength(0);
+  });
+
+  it("forwards a mutating HTTP body after explicit consent", async () => {
+    const backend = new FakeBackend("extension");
+    const requests: unknown[] = [];
+    backend.httpFetch = async (httpRequest) => {
+      requests.push(httpRequest);
+      return { url: httpRequest.url, method: httpRequest.method, status: 200, body: '{"ok":true}', timestamp: Date.now() };
+    };
+    const spec: LensSpec = {
+      name: "@example/api/update",
+      url: "https://example.com/api",
+      effects: { reads: ["example.com"], writes: ["example.com"], cache: 60 },
+      resolve: [{ kind: "http", credentials: true, request: "PUT https://example.com/api", body: { search: { value: "$value" } } }],
+      params: { value: "string" },
+    };
+    const orchestrator = createBrokerOrchestrator([backend]);
+    const call = (id: string) => request(orchestrator, {
+      type: "call",
+      id,
+      spec,
+      params: { value: "new" },
+      timeoutMs: 1000,
+      allowWrites: true,
+    });
+
+    await call("http-first");
+    const second = await call("http-second");
+    expect(requests).toEqual([
+      expect.objectContaining({ method: "PUT", body: { kind: "search", entries: [["value", "new"]] } }),
+      expect.objectContaining({ method: "PUT", body: { kind: "search", entries: [["value", "new"]] } }),
+    ]);
+    expect(second).not.toHaveProperty("cached");
   });
 
   it("runs perform with allowWrites, binding with reuse navigation", async () => {

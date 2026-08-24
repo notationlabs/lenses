@@ -2,6 +2,7 @@ import {
   errorMessage,
   executeLens,
   expandUrl,
+  specWrites,
   type EngineIO,
   type HttpFetchRequest,
   type InterceptedResponse,
@@ -9,6 +10,7 @@ import {
   type LensResult,
   type LensSpec,
 } from "@djgrant/lenses-core";
+import { materialiseHttpBody } from "./http-body.js";
 import { RecordingMonitor } from "./recording-monitor.js";
 import { appendRecordingCheckpoint } from "./recording.js";
 import type {
@@ -33,7 +35,7 @@ export function specNeedsBrowser(spec: LensSpec): boolean {
 }
 
 /**
- * Consent gate for a spec with perform steps: default deny, opened only by
+ * Consent gate for a spec with page steps or mutating HTTP requests: default deny, opened only by
  * the caller's explicit flag. Every write decision passes through here, so
  * this is also where a future host policy (a config allow/deny list) belongs.
  */
@@ -123,7 +125,8 @@ export function createBrokerOrchestrator(
     // Consent comes before everything — no page bind, no cache read, no tier:
     // a denied write call must leave the browser exactly as it found it.
     const performs = (message.spec.perform?.length ?? 0) > 0;
-    if (performs && !writesAllowed(message)) {
+    const writes = specWrites(message.spec);
+    if (writes && !writesAllowed(message)) {
       return {
         kind: "error",
         code: "writes_not_allowed",
@@ -132,9 +135,9 @@ export function createBrokerOrchestrator(
     }
     // Enforced here, not trusted from the document: a perform result is never
     // cached and never served from cache, whatever effects.cache claims.
-    const cacheTtlMs = performs ? 0 : (message.spec.effects.cache ?? 0) * 1000;
+    const cacheTtlMs = writes ? 0 : (message.spec.effects.cache ?? 0) * 1000;
     const cacheKey = `${JSON.stringify(message.spec)}|${JSON.stringify(message.params)}`;
-    const cached = performs ? undefined : cache.get(cacheKey);
+    const cached = writes ? undefined : cache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) {
       return { ...cached.result, cached: true } as unknown as LensResult;
     }
@@ -205,6 +208,7 @@ export function createBrokerOrchestrator(
         method: request.method,
         url: request.url,
         headers: request.headers,
+        body: request.body,
       });
     };
 
@@ -231,9 +235,10 @@ export function createBrokerOrchestrator(
     request: HttpFetchRequest,
     timeoutMs: number
   ): Promise<InterceptedResponse> {
+    const init = materialiseHttpBody(request.body, request.headers);
     const response = await fetch(request.url, {
       method: request.method,
-      headers: request.headers,
+      ...init,
       redirect: "follow",
       signal: AbortSignal.timeout(timeoutMs),
     });
