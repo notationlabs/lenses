@@ -55,8 +55,8 @@ Options:
   --params <json>         Declared lens parameters as a JSON object. Parameters
                           are available to URL templates and resolver expressions.
   --timeout-ms <number>   Whole browser-call timeout (default: 90000)
-  --allow-writes          Permit a lens that declares a "perform" block to act
-                          on the page. Without it a write lens is refused with
+  --allow-writes          Permit page actions and mutating HTTP requests.
+                          Without it a write lens is refused with
                           code "writes_not_allowed"; read lenses never need it.
   --lax                   Attach result schema violations to the value result
                           as warnings instead of failing; by default a value

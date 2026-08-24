@@ -40,6 +40,24 @@ describe("broker-extension protocol", () => {
     );
   });
 
+  it("accepts a protocol-safe HTTP request body", () => {
+    const frame = {
+      type: "extension-rpc",
+      requestId: "request_body",
+      epoch: "epoch_fixture",
+      deadline: 1893456000000,
+      operation: {
+        name: "http-fetch",
+        request: {
+          method: "POST",
+          url: "https://example.com/api",
+          body: { kind: "form", entries: [["tag", "a"], ["tag", "b"]] },
+        },
+      },
+    };
+    expect(decodeExtensionRpcRequest(frame, "epoch_fixture", 0)).toEqual(frame);
+  });
+
   it("rejects an incompatible protocol major", () => {
     expect(() =>
       negotiateExtensionHello({

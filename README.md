@@ -239,7 +239,7 @@ fields, detects a named outcome, or misses and falls through.
 When `returns` is an object, fields accumulate across tiers. The engine stops when all
 declared fields are present, so each tier only needs to supply its part of the result.
 
-Lens `map` and `detect` bodies are JSONata expressions. They cannot reach the network or DOM. Beyond an `http` tier's declared requests, lenses observe what a page already does; a lens may act on the page only through a declared `perform` block, and only when the caller opts in with `--allow-writes` (CLI) or `allowWrites` (client and MCP).
+Lens `map` and `detect` bodies are JSONata expressions. They cannot reach the network or DOM. Beyond an `http` tier's declared requests, lenses observe what a page already does; page actions and mutating HTTP methods run only when the caller opts in with `--allow-writes` (CLI) or `allowWrites` (client and MCP).
 `lens eval` runs the same sandboxed evaluator against a JSON file or stdin, so an
 expression can be iterated on offline before it goes into a lens document.
 
@@ -352,7 +352,27 @@ An HTTP resolver fires its own requests instead of reading a page's. `request` i
 `"METHOD url-template"` (omitted, the tier GETs the lens `url`); `items` and `map`
 shape the parsed body exactly as in an intercept tier, and `detect` sees
 `{status, url, body}`. `headers` adds request headers, with the same `{param}` holes
-as URLs.
+as URLs. `body` supports JSON, plain text, multipart form data, and URL-encoded
+search parameters; its values are JSONata expressions over the declared params
+and any earlier source bindings:
+
+```jsonc
+{
+  "kind": "http",
+  "request": "POST https://example.com/api/messages",
+  "credentials": true,
+  "body": { "json": "{ 'message': $message }" }
+}
+
+// Other encodings:
+{ "body": { "text": "$message" } }
+{ "body": { "form": { "message": "$message", "tag": "['a', 'b']" } } }
+{ "body": { "search": { "message": "$message" } } }
+```
+
+A body may be declared on a single request or on each entry in `sources`.
+`form` and `search` fields accept a scalar or an array of scalars; arrays emit
+repeated fields.
 
 ```jsonc
 {
@@ -367,6 +387,10 @@ as URLs.
 }
 ```
 
+- POST, PUT, PATCH, DELETE, and any method other than GET/HEAD/OPTIONS are writes.
+  They require non-empty `effects.writes`, cannot be cached, and are refused unless
+  the caller passes `--allow-writes`/`allowWrites`. Consent is checked before any
+  request or browser bind.
 - `credentials: true` sends the browser's cookies. The extension serves this from
   its service worker with no tab; the CDP fallback evaluates the fetch inside an
   already-open same-origin tab, and misses when none is open. Without a

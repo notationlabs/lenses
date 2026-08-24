@@ -12,6 +12,8 @@ An http tier fires its own requests through the host instead of reading a page's
 
 - **Default request:** With neither `request` nor `sources`, the tier GETs the lens's canonical `url`; a `request` is `"METHOD url-template"` and an omitted method defaults to GET.
 - **URL expansion encodes:** `{name}` holes in a request URL are filled percent-encoded; header values expand the same holes verbatim.
+- **Bodies:** A single request or each chained source may declare exactly one encoding: `{json: expr}`, `{text: expr}`, `{form: {field: expr}}`, or `{search: {field: expr}}`. Expressions evaluate over params and prior source bindings. JSON and text serialize to strings; form creates multipart `FormData`; search creates URL-encoded `URLSearchParams`. Form/search arrays emit repeated fields.
+- **Write consent:** Any method other than GET, HEAD, or OPTIONS is a write. The document must declare non-empty `effects.writes` and no positive cache, and the host refuses the call with `writes_not_allowed` unless the caller explicitly passes `allowWrites`.
 - **Dotted holes address bodies:** `{name.path.to.value}` holes address into an earlier source's bound body and must resolve to a scalar; the scalar goes into the URL percent-encoded.
 - **Chained sources:** `sources` are fetched in declaration order; each response body (through its `items` expression) binds as the JSONata variable `$name`, a scalar binding also fills plain `{name}` holes in later request templates, and structured bindings are reached with dotted holes.
 - **Progressive detection:** With `sources`, detection runs after each response over the `$name` contexts fetched so far — a detected outcome stops the chain.

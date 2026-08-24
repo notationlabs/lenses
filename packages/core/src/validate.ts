@@ -1,16 +1,28 @@
 import * as z from "zod/v4";
+import { httpRequestMethod, httpResolverWrites } from "./http-request.js";
 import type { LensSpec } from "./types.js";
 
 const expression = z.string();
 const detect = z.record(z.string(), expression);
+const bodyFields = z.record(z.string(), expression);
+const httpBodySchema = z.union([
+  z.strictObject({ json: expression }),
+  z.strictObject({ form: bodyFields }),
+  z.strictObject({ search: bodyFields }),
+  z.strictObject({ text: expression }),
+]);
+const httpSourceSchema = z.strictObject({
+  request: z.string(),
+  body: httpBodySchema.optional(),
+  items: expression.optional(),
+});
 
 const httpSchema = z
   .strictObject({
     kind: z.literal("http"),
     request: z.string().optional(),
-    sources: z
-      .record(z.string(), z.strictObject({ request: z.string(), items: expression.optional() }))
-      .optional(),
+    body: httpBodySchema.optional(),
+    sources: z.record(z.string(), httpSourceSchema).optional(),
     headers: z.record(z.string(), z.string()).optional(),
     credentials: z.boolean().optional(),
     items: expression.optional(),
@@ -22,6 +34,9 @@ const httpSchema = z
   })
   .refine((resolver) => !resolver.sources || Object.keys(resolver.sources).length > 0, {
     message: 'http resolver "sources" must not be empty',
+  })
+  .refine((resolver) => !(resolver.body && resolver.sources), {
+    message: 'http resolver body belongs on each source when "sources" is used',
   });
 
 const sourceSchema = z.strictObject({
@@ -382,20 +397,39 @@ export function validateSpec(raw: unknown): LensSpec {
       );
     }
   }
-  // Consent keys off the declaration, so a perform document must say what it
-  // writes, must never serve a cached result, and may only claim idempotence
-  // when its steps are navigate-only (a reload is; a send is not).
-  if (result.data.perform) {
+  const writeHttpResolvers = result.data.resolve.filter(
+    (resolver) => resolver.kind === "http" && httpResolverWrites(resolver)
+  );
+  for (const resolver of result.data.resolve) {
+    if (resolver.kind !== "http") continue;
+    const requests = resolver.sources
+      ? Object.values(resolver.sources)
+      : [{ request: resolver.request, body: resolver.body }];
+    for (const request of requests) {
+      if (request.body && ["GET", "HEAD"].includes(httpRequestMethod(request.request))) {
+        throw new Error(
+          `invalid lens spec:\n  an http ${httpRequestMethod(request.request)} request cannot declare a body`
+        );
+      }
+    }
+  }
+  // Consent keys off the declaration, so every executable write must say what
+  // it writes and must never serve a cached result.
+  if (result.data.perform || writeHttpResolvers.length > 0) {
     if (result.data.effects.writes.length === 0) {
       throw new Error(
-        'invalid lens spec:\n  "perform" steps are writes, so "effects.writes" must name what they write to'
+        'invalid lens spec:\n  write operations require a declaration: "effects.writes" must name what they write to'
       );
     }
     if ((result.data.effects.cache ?? 0) > 0) {
       throw new Error(
-        'invalid lens spec:\n  a "perform" result must not be cached — "effects.cache" must be absent or 0'
+        'invalid lens spec:\n  a write result must not be cached — "effects.cache" must be absent or 0'
       );
     }
+  }
+  // A perform document may only claim idempotence when its steps are
+  // navigate-only (a reload is; a send is not).
+  if (result.data.perform) {
     const navigateOnly = result.data.perform.every((step) => "navigate" in step);
     if (result.data.effects.idempotent === true && !navigateOnly) {
       throw new Error(

@@ -2,6 +2,7 @@ import type {
   AuthGate,
   DomResolver,
   InterceptDelta,
+  HttpFetchBody,
   InterceptedResponse,
   PageSnapshot,
   PerformResult,
@@ -14,6 +15,7 @@ export interface BackendHttpRequest {
   method: string;
   url: string;
   headers?: Record<string, string>;
+  body?: HttpFetchBody;
 }
 
 export interface BackendInfo {

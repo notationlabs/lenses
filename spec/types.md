@@ -57,10 +57,19 @@ type MapSpec = string | Record<string, string>
 ```
 
 ```entity
+type HttpBody = {json: string} | {text: string} | {form: Record<string, string>} | {search: Record<string, string>}
+
+type HttpSource = {
+  request: string
+  body?: HttpBody
+  items?: string
+}
+
 type HttpResolver = {
   kind: "http"
   request?: string
-  sources?: Record<string, json>
+  body?: HttpBody
+  sources?: Record<string, HttpSource>
   headers?: Record<string, string>
   credentials?: boolean
   items?: string
@@ -111,6 +120,7 @@ type LensDocument = {
   detect?: Record<string, string>
   helpers?: Record<string, string>
   effects: Effects
+  perform?: json[]
   resolve: Resolver[]
 }
 ```

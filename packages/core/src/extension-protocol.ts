@@ -1,6 +1,7 @@
 import * as z from "zod/v4";
 import type {
   DomResolver,
+  HttpFetchBody,
   InterceptedResponse,
   PerformResult,
   PerformStep,
@@ -21,7 +22,11 @@ export const REQUIRED_EXTENSION_CAPABILITIES = [
  * http-fetch backs credentialed http tiers; without it they miss and the page
  * tiers take over.
  */
-export const OPTIONAL_EXTENSION_CAPABILITIES = ["find-gate", "http-fetch"] as const;
+export const OPTIONAL_EXTENSION_CAPABILITIES = [
+  "find-gate",
+  "http-fetch",
+  "http-fetch-body",
+] as const;
 export const EXTENSION_CAPABILITIES = [
   ...REQUIRED_EXTENSION_CAPABILITIES,
   ...OPTIONAL_EXTENSION_CAPABILITIES,
@@ -100,7 +105,7 @@ export type ExtensionRpcOperation =
    */
   | {
       name: "http-fetch";
-      request: { method: string; url: string; headers?: Record<string, string> };
+      request: { method: string; url: string; headers?: Record<string, string>; body?: HttpFetchBody };
       maxBodyChars?: number;
     };
 
@@ -312,6 +317,13 @@ const operationSchema = z.discriminatedUnion("name", [
       method: z.string().min(1),
       url: z.string().url(),
       headers: z.record(z.string(), z.string()).optional(),
+      body: z.discriminatedUnion("kind", [
+        z.strictObject({ kind: z.enum(["json", "text"]), value: z.string() }),
+        z.strictObject({
+          kind: z.enum(["form", "search"]),
+          entries: z.array(z.tuple([z.string(), z.string()])),
+        }),
+      ]).optional(),
     }),
     maxBodyChars: z.number().int().positive().optional(),
   }),
