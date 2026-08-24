@@ -17,9 +17,8 @@ An http tier fires its own requests through the host instead of reading a page's
 - **Dotted holes address bodies:** `{name.path.to.value}` holes address into an earlier source's bound body and must resolve to a scalar; the scalar goes into the URL percent-encoded.
 - **Chained sources:** `sources` are fetched in declaration order; each response body (through its `items` expression) binds as the JSONata variable `$name`, a scalar binding also fills plain `{name}` holes in later request templates, and structured bindings are reached with dotted holes. A source may override `credentials` and define headers whose JSONata values see earlier bindings.
 - **Progressive detection:** With `sources`, detection runs after each response over the `$name` contexts fetched so far — a detected outcome stops the chain.
-- **Credentialed requests:** `credentials: true` asks any capable host to send browser cookies. `credentials: "same-origin-page"` requires execution in a page matching the request origin; backend/context selection occurs before transmission and unavailability returns `required_backend_unavailable` rather than missing into another tier.
+- **Credentialed requests:** `credentials: true` asks any capable host to send browser cookies; the extension serves it from its service worker. `credentials: "same-origin-page"` makes either extension or CDP evaluate fetch in an existing page matching the request origin. Backend/context selection occurs before transmission and unavailability returns `required_backend_unavailable` rather than missing into another tier.
 - **Mutation retry safety:** An ambiguous failure from a non-idempotent mutation ends the call; Lens does not resend it through another resolver. Read-only or explicitly idempotent failures may miss into later tiers.
-  - The extension backend serves this from its service worker with no tab; the CDP fallback evaluates the fetch inside an already-open same-origin tab and misses when none is open.
 
 ## Outcomes
 

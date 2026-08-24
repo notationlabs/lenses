@@ -270,6 +270,9 @@ export function createBrokerOrchestrator(
         url: request.url,
         headers: request.headers,
         body: request.body,
+        ...(request.credentials === "same-origin-page"
+          ? { context: "same-origin-page" as const }
+          : {}),
       });
       if (!response && request.credentials === "same-origin-page") {
         throw requiredBackendUnavailable();

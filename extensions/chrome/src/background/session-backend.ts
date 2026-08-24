@@ -2,6 +2,7 @@ import {
   sameGatePlace,
   urlOrigin,
   type AuthGate,
+  type ExtensionHttpFetchRequest,
   type ExtensionRpcRequest,
   type ExtensionRpcResult,
 } from "@djgrant/lenses-core";
@@ -47,6 +48,108 @@ export interface ExtensionSessionBackend {
 export async function reapAbandonedTabLeases(): Promise<void> {
   const leases = await takeCreatedTabLeases();
   await Promise.all(leases.map((lease) => closeTab(lease.tabId)));
+}
+
+/**
+ * Execute fetch in the MAIN world of an existing matching tab. Querying and
+ * checking the origin happens before dispatch, and the injected function
+ * checks again immediately before fetch to close the navigation race. A null
+ * result proves no request was sent; failures after injection remain ambiguous
+ * and must propagate so the broker never retries a mutation.
+ */
+async function fetchInSameOriginPage(
+  request: ExtensionHttpFetchRequest,
+  maxBodyChars: number,
+  deadline: number
+): Promise<{
+  url: string;
+  method: string;
+  status: number;
+  body: string;
+  timestamp: number;
+} | null> {
+  if (deadline <= Date.now()) {
+    throw new Error("same-origin page fetch deadline elapsed before dispatch");
+  }
+  const origin = new URL(request.url).origin;
+  const tabs = (await chrome.tabs.query({}))
+    .filter((tab) => {
+      if (tab.id === undefined || tab.status !== "complete" || !tab.url) return false;
+      try {
+        return new URL(tab.url).origin === origin;
+      } catch {
+        return false;
+      }
+    })
+    .sort((a, b) => (b.lastAccessed ?? 0) - (a.lastAccessed ?? 0));
+  const tabId = tabs[0]?.id;
+  if (tabId === undefined) return null;
+
+  const results = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: "MAIN",
+    args: [request, maxBodyChars, deadline],
+    func: async (
+      req: ExtensionHttpFetchRequest,
+      maxChars: number,
+      requestDeadline: number
+    ) => {
+      // This return is the only pre-transmission miss. Do not throw it: the
+      // extension backend maps null to required_backend_unavailable.
+      if (new URL(req.url).origin !== location.origin) {
+        return { unavailable: true as const };
+      }
+      if (requestDeadline <= Date.now()) {
+        throw new Error("same-origin page fetch deadline elapsed before transmission");
+      }
+      const headers = { ...req.headers };
+      let body: BodyInit | undefined;
+      if (req.body?.kind === "json" || req.body?.kind === "text") {
+        body = req.body.value;
+        const hasContentType = Object.keys(headers).some(
+          (name) => name.toLowerCase() === "content-type"
+        );
+        if (!hasContentType) {
+          headers["content-type"] = req.body.kind === "json"
+            ? "application/json"
+            : "text/plain;charset=UTF-8";
+        }
+      } else if (req.body?.kind === "search") {
+        body = new URLSearchParams(req.body.entries);
+      } else if (req.body?.kind === "form") {
+        const form = new FormData();
+        for (const [name, value] of req.body.entries) form.append(name, value);
+        body = form;
+      }
+      const response = await fetch(req.url, {
+        method: req.method,
+        headers,
+        body,
+        credentials: "include",
+        redirect: "follow",
+        signal: AbortSignal.timeout(Math.max(1, requestDeadline - Date.now())),
+      });
+      const text = await response.text();
+      return {
+        unavailable: false as const,
+        url: response.url || req.url,
+        method: req.method,
+        status: response.status,
+        body: text.slice(0, maxChars),
+        timestamp: Date.now(),
+      };
+    },
+  });
+  const result = results[0]?.result;
+  if (!result) throw new Error("same-origin page fetch returned no result");
+  if (result.unavailable) return null;
+  return {
+    url: result.url,
+    method: result.method,
+    status: result.status,
+    body: result.body,
+    timestamp: result.timestamp,
+  };
 }
 
 export function createExtensionSessionBackend(): ExtensionSessionBackend {
@@ -218,6 +321,16 @@ export function createExtensionSessionBackend(): ExtensionSessionBackend {
         }
         case "find-gate": {
           return { name: "find-gate", gate: await findGate(operation.origin) };
+        }
+        case "same-origin-page-fetch": {
+          return {
+            name: "same-origin-page-fetch",
+            response: await fetchInSameOriginPage(
+              operation.request,
+              operation.maxBodyChars ?? 512 * 1024,
+              request.deadline
+            ),
+          };
         }
         case "http-fetch": {
           // Runs in the service worker, so host_permissions exempt it from

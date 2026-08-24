@@ -1,6 +1,6 @@
 {
   "name": "@djgrant/lenses",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "Typed webpage functions for TypeScript, CLI, and MCP consumers.",
   "type": "module",
   "engines": {

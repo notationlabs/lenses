@@ -190,13 +190,16 @@ export function createExtensionBackend(
         protocolMajor: reported?.protocolMajor,
         capabilities: reported ? [...reported.capabilities] : undefined,
         diagnostic: handshakeDiagnostic,
-        sameOriginPageRequests: false,
+        sameOriginPageRequests:
+          reported?.capabilities.includes("same-origin-page-fetch") ?? false,
       };
     },
     supports(capability) {
       if (!hello) return false;
       if (capability === "browser-session") return true;
-      if (capability === "same-origin-page-http") return false;
+      if (capability === "same-origin-page-http") {
+        return hello.capabilities.includes("same-origin-page-fetch");
+      }
       if (capability === "credentialed-http") {
         return hello.capabilities.includes("http-fetch");
       }
@@ -290,12 +293,19 @@ export function createExtensionBackend(
     },
     async httpFetch(request) {
       if (!backend.available()) return undefined;
+      const { context, ...wireRequest } = request;
+      if (context === "same-origin-page") {
+        if (!hello?.capabilities.includes("same-origin-page-fetch")) return undefined;
+        const result = await rpc({ name: "same-origin-page-fetch", request: wireRequest });
+        assertResult(result, "same-origin-page-fetch");
+        return result.response ?? undefined;
+      }
       if (!hello?.capabilities.includes("http-fetch")) return undefined;
       // Older extensions understand http-fetch but strictly reject its new
       // body field. Miss cleanly so the caller is told to update rather than
       // sending a malformed or bodyless write.
       if (request.body && !hello.capabilities.includes("http-fetch-body")) return undefined;
-      const result = await rpc({ name: "http-fetch", request });
+      const result = await rpc({ name: "http-fetch", request: wireRequest });
       assertResult(result, "http-fetch");
       return result.response;
     },
@@ -429,7 +439,7 @@ export function contextualExtensionTransportError(
   _rawMessage: string
 ): Error {
   const capability =
-    operation === "http-fetch"
+    operation === "http-fetch" || operation === "same-origin-page-fetch"
       ? "credentialed HTTP"
       : operation === "bind"
         ? "browser session binding"
