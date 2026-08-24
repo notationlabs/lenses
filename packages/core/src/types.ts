@@ -271,6 +271,17 @@ export interface ResolverMiss {
   observed?: string;
 }
 
+export interface MutationState {
+  /** True once the broker dispatched the first perform step. */
+  performStarted: boolean;
+  /** Last 0-based step whose completion was acknowledged by the browser. */
+  lastAcknowledgedStep?: number;
+  /** Conservative warning: an unacknowledged action may already have reached the page. */
+  submissionMayHaveHappened: boolean;
+  /** Whether completion of every perform step is known. */
+  performed: "no" | "yes" | "unknown";
+}
+
 export type LensResult =
   | {
       kind: "value";
@@ -294,11 +305,13 @@ export type LensResult =
       message: string;
       /** present when a resolved value failed its declared `returns` schema */
       issues?: ValidationIssue[];
-      /** "writes_not_allowed" is the host's consent gate; "perform_failed" is a step failure */
-      code?: "writes_not_allowed" | "perform_failed";
+      /** Host consent, perform, or broker concurrency failure classification. */
+      code?: "writes_not_allowed" | "perform_failed" | "broker_busy";
       /** 0-based index of the perform step that failed */
       step?: number;
       performed?: true;
+      /** Present on ambiguous non-idempotent timeouts so callers can assess retry risk. */
+      mutation?: MutationState;
     };
 
 /** A concrete request an http tier asks its host to perform. */

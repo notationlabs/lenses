@@ -32,6 +32,8 @@ export interface BackendInfo {
   capabilities?: string[];
   /** A handshake, compatibility, or connection problem that explains unavailability. */
   diagnostic?: string;
+  /** Connection attempts since this broker started (zero when not applicable). */
+  reconnectAttempts?: number;
 }
 
 export interface BindRequest {

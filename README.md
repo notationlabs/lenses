@@ -181,7 +181,7 @@ if (result.kind === "outcome") result.name; // e.g. "needs_auth"
 
 `value()` throws `LensOutcomeError` (`{outcome, value, hint}` — `hint` carries the
 remediation text declared in the lens document's `outcomes`) for outcome results, and
-`LensResultError` (`{message, issues, lens, callId}`) for error results. Broker timeout messages also include the recording call ID (when recording) and last reported progress. Both classes are exported
+`LensResultError` (`{message, issues, lens, callId}`) for error results. Broker timeout messages also include the recording call ID (when recording) and last reported progress. A non-idempotent perform timeout additionally carries `mutation`: `performStarted`, `lastAcknowledgedStep`, `submissionMayHaveHappened`, and `performed` (`"no"`, `"yes"`, or `"unknown"`). Treat `performed: "unknown"` as unsafe to retry without checking the target application. Both classes are exported
 from `@djgrant/lenses` and from the generated SDK, so callers can catch and
 branch on `error.outcome`.
 
@@ -253,6 +253,8 @@ lens MCP ────┘                           │             └─ CDP fa
 ```
 
 The broker hosts the resolver engine, caching, retry policy, and page-retention policy once. Credential-free `http` tiers run in the broker process itself; everything else pins the call to one session backend: the extension is preferred when its protocol and capabilities are compatible, while the CDP backend supplies the same page lifecycle, network capture, and in-page extraction primitives as a fallback. The page is bound lazily — a call an `http` tier satisfies never launches or touches the browser.
+
+Browser calls use one explicit **serial queue** across clients; there is never concurrent mutation of the shared browser session. Queue time counts against each request deadline, and an expired queued request is rejected before browser work begins. If backend work outlives its caller timeout, subsequent calls receive `code: "broker_busy"` until that work settles rather than overlapping it. `lens status` / `broker_status` reports the policy, active call, queue depth, each backend's version and capabilities, last backend error, CDP reconnect attempts, and separate Chrome/extension reachability (unknown Chrome reachability is omitted until probed).
 
 ### Broker lifecycle
 
@@ -338,7 +340,7 @@ repository, or an HTTP catalog index — or at a direct HTTP URL.
 
   `wait` takes exactly one of `appears` (≥1 match), `gone` (0 matches, immediately true when already satisfied), or `increases` (match count exceeds the baseline sampled at step entry — place it right after the step that triggers the change), plus `timeoutMs` (default 10000). `navigate` accepts only `"fresh"`.
 
-  Consent is declared and enforced: `perform` requires non-empty `effects.writes`, `effects.cache` absent or 0, and `idempotent: true` only when every step is a navigate. The caller must pass `--allow-writes`/`allowWrites` or the call is refused with `code: "writes_not_allowed"`; a step failure is `code: "perform_failed"` with the 0-based `step`, and no tier runs after it. Results are never cached, and any result from a call whose steps all ran carries `performed: true` — the write happened, even if reading the result back failed.
+  Consent is declared and enforced: `perform` requires non-empty `effects.writes`, `effects.cache` absent or 0, and `idempotent: true` only when every step is a navigate. The caller must pass `--allow-writes`/`allowWrites` or the call is refused with `code: "writes_not_allowed"`; a step failure is `code: "perform_failed"` with the 0-based `step`, and no tier runs after it. Results are never cached, and any result from a call whose steps all ran carries `performed: true` — the write happened, even if reading the result back failed. With `--verbose`, each step reports started/completed; selectors are bounded and likely secret-bearing attribute values are redacted, and fill values are never logged. Steps are not retried after a lost acknowledgement.
 
 - `loadTimeoutMs` — optional page-load timeout; the default is 30 seconds.
 - `resolve` — ordered http, intercept, DOM, and LLM resolver definitions.

@@ -71,6 +71,8 @@ const idleExitMs = Number(process.env.LENS_BROKER_IDLE_EXIT_MS ?? DEFAULT_IDLE_E
 const noBrowserExitMs =
   Number(process.env.LENS_BROKER_NO_BROWSER_EXIT_MS ?? DEFAULT_NO_BROWSER_EXIT_MS) || 0;
 let inFlight = 0;
+let activeCall: { id: string; type: "call" | "observe"; lens?: string; startedAt: number } | undefined;
+let lastBackendError: string | undefined;
 let idleTimer: ReturnType<typeof setTimeout> | undefined;
 
 const idleExit = createIdleExitTimer({
@@ -129,6 +131,7 @@ function beginWork(): void {
 
 function endWork(): void {
   inFlight -= 1;
+  broadcastStatus();
   idleExit.reset();
   if (idleReleaseMs <= 0 || inFlight > 0) return;
   idleTimer = setTimeout(() => {
@@ -136,8 +139,12 @@ function endWork(): void {
   }, idleReleaseMs);
 }
 
-cdp.onStatusChange(broadcastStatus);
+cdp.onStatusChange(() => {
+  rememberBackendError(cdp);
+  broadcastStatus();
+});
 extension.onStatusChange(() => {
+  rememberBackendError(extension);
   broadcastStatus();
   idleExit.reset();
   if (extension.available()) {
@@ -216,10 +223,55 @@ function onClientMessage(client: WebSocket, raw: string): void {
     return;
   }
   beginWork();
+  const queuedAhead = inFlight - (activeCall ? 1 : 0) - 1;
+  if (activeCall || queuedAhead > 0) {
+    send(client, {
+      type: "progress",
+      id: message.id,
+      message: `queued by serial broker concurrency policy (${queuedAhead + 1} ahead)`,
+    });
+  }
+  broadcastStatus();
   void requestQueue
     .run(async () => {
-      if (needsBrowser) await ensureBrowser();
-      await handleClientMessage(client, message);
+      // Queue time counts against the caller deadline. In particular, never
+      // start a write after its caller has already given up waiting.
+      if (message.deadline !== undefined && message.deadline <= Date.now()) {
+        send(client, {
+          type: "result",
+          id: message.id,
+          result: {
+            kind: "error",
+            message: `call ${message.id} expired while queued; no browser work began`,
+            ...(message.type === "call" &&
+            (message.spec.perform?.length ?? 0) > 0 &&
+            message.spec.effects.idempotent !== true
+              ? {
+                  mutation: {
+                    performStarted: false,
+                    submissionMayHaveHappened: false,
+                    performed: "no" as const,
+                  },
+                }
+              : {}),
+          },
+        });
+        return;
+      }
+      activeCall = {
+        id: message.id,
+        type: message.type,
+        ...(message.type === "call" ? { lens: message.spec.name } : {}),
+        startedAt: Date.now(),
+      };
+      broadcastStatus();
+      try {
+        if (needsBrowser) await ensureBrowser();
+        await handleClientMessage(client, message);
+      } finally {
+        activeCall = undefined;
+        broadcastStatus();
+      }
     })
     .catch((error) => console.error("broker request failed:", error))
     .finally(endWork);
@@ -298,6 +350,7 @@ const runShutdown = createShutdownSequence({
 
 function sendStatus(socket: WebSocket): void {
   const preferred = extension.available() ? extension : cdp;
+  const reportedActiveCall = activeCall ?? orchestrator.busy();
   const backends = [extension, cdp].map((backend) => ({
     ...backend.info(),
     available: backend.available(),
@@ -312,6 +365,18 @@ function sendStatus(socket: WebSocket): void {
     ua: selected?.detail,
     capabilities: selected?.capabilities ?? [],
     backends,
+    diagnostics: {
+      concurrency: "serial_queue",
+      activeCall: reportedActiveCall,
+      queuedCalls: Math.max(0, inFlight - (activeCall ? 1 : 0)),
+      lastBackendError:
+        lastBackendError ?? backends.find((backend) => backend.diagnostic)?.diagnostic,
+      reconnectAttempts: cdp.info().reconnectAttempts ?? 0,
+      reachability: {
+        chrome: cdp.available() ? true : browserPresent,
+        extension: extension.available(),
+      },
+    },
     advice: describeGap(),
   });
 }
@@ -332,6 +397,11 @@ function describeGap(): string | undefined {
     return "Chrome is not running; start it and the extension reconnects on its own";
   }
   return "the lens extension is installed but its service worker is asleep; it reconnects within about 30 seconds";
+}
+
+function rememberBackendError(backend: { info(): { name: string; diagnostic?: string } }): void {
+  const diagnostic = backend.info().diagnostic;
+  if (diagnostic) lastBackendError = `${backend.info().name}: ${diagnostic}`;
 }
 
 function broadcastStatus(): void {

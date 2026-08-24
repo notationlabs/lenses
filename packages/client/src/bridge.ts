@@ -30,6 +30,16 @@ export interface BrokerBackendStatus {
   protocolMajor?: number;
   capabilities?: string[];
   diagnostic?: string;
+  reconnectAttempts?: number;
+}
+
+export interface BrokerDiagnostics {
+  concurrency: "serial_queue";
+  activeCall?: { id: string; type: "call" | "observe"; lens?: string; startedAt: number };
+  queuedCalls: number;
+  lastBackendError?: string;
+  reconnectAttempts: number;
+  reachability: { chrome?: boolean; extension: boolean };
 }
 
 export interface LensTransport {
@@ -60,6 +70,7 @@ export interface LensTransport {
   readonly capabilities?: readonly string[];
   readonly backends?: readonly BrokerBackendStatus[];
   readonly advice?: string;
+  readonly diagnostics?: BrokerDiagnostics;
   /** Release/acquire the broker's CDP lease; optional for custom transports. */
   control?(action: BrokerControlAction, timeoutMs?: number): Promise<LensTransportResult>;
 }
@@ -74,6 +85,7 @@ type BrokerMessage =
       capabilities?: string[];
       backends?: BrokerBackendStatus[];
       advice?: string;
+      diagnostics?: BrokerDiagnostics;
       /** Build stamp of the daemon's code; absent on brokers older than this. */
       stamp?: string;
     }
@@ -88,6 +100,7 @@ export class BrowserBridge implements LensTransport {
   private negotiatedCapabilities: string[] = [];
   private backendStatuses: BrokerBackendStatus[] = [];
   private statusAdvice?: string;
+  private brokerDiagnostics?: BrokerDiagnostics;
   private readonly pending = new Map<
     string,
     {
@@ -176,6 +189,10 @@ export class BrowserBridge implements LensTransport {
 
   get advice(): string | undefined {
     return this.statusAdvice;
+  }
+
+  get diagnostics(): BrokerDiagnostics | undefined {
+    return this.brokerDiagnostics;
   }
 
   call(
@@ -358,6 +375,7 @@ export class BrowserBridge implements LensTransport {
     this.negotiatedCapabilities = [...(status.capabilities ?? [])];
     this.backendStatuses = [...(status.backends ?? [])];
     this.statusAdvice = status.advice;
+    this.brokerDiagnostics = status.diagnostics;
   }
 
   private resolvePending(result: LensResult, keepControl = false): void {

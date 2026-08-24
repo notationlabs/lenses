@@ -9,6 +9,8 @@ import {
   type LensBridgeRequest,
   type LensResult,
   type LensSpec,
+  type MutationState,
+  type PerformStep,
 } from "@djgrant/lenses-core";
 import { materialiseHttpBody } from "./http-body.js";
 import { RecordingMonitor } from "./recording-monitor.js";
@@ -55,6 +57,8 @@ export interface BrokerOrchestrator {
     message: Exclude<LensBridgeRequest, { type: "control" }>,
     emit: (frame: BrokerFrame) => void
   ): Promise<void>;
+  /** Browser work that outlived its caller deadline; new calls must not overlap it. */
+  busy(): { id: string; type: "call" | "observe"; lens?: string; startedAt: number } | undefined;
 }
 
 export function createBrokerOrchestrator(
@@ -76,6 +80,7 @@ export function createBrokerOrchestrator(
 ): BrokerOrchestrator {
   if (backends.length === 0) throw new Error("broker orchestrator requires a browser backend");
   const cache = new Map<string, { result: LensResult; expiresAt: number }>();
+  let backgroundCall: { id: string; type: "call" | "observe"; lens?: string; startedAt: number } | undefined;
 
   function currentBackend(eligible = backends): BrowserBackend {
     return eligible.find((backend) => backend.available()) ?? eligible[eligible.length - 1];
@@ -146,7 +151,8 @@ export function createBrokerOrchestrator(
 
   async function call(
     message: Extract<LensBridgeRequest, { type: "call" }>,
-    progress: (text: string) => void
+    progress: (text: string) => void,
+    mutation?: MutationTracker
   ): Promise<LensResult> {
     // The client timeout covers the complete call, including recorder setup
     // and final capture; screenshot RPCs must use its remaining budget rather
@@ -246,7 +252,13 @@ export function createBrokerOrchestrator(
       });
     };
 
-    const io = createSessionEngineIO(ensureSession, loadTimeoutMs, progress, httpFetch);
+    const io = createSessionEngineIO(
+      ensureSession,
+      loadTimeoutMs,
+      progress,
+      httpFetch,
+      mutation
+    );
     let result: LensResult | undefined;
     try {
       result = await executeLens(message.spec, message.params, io);
@@ -318,19 +330,53 @@ export function createBrokerOrchestrator(
   }
 
   return {
+    busy: () => backgroundCall,
     async handle(message, emit) {
+      if (backgroundCall) {
+        emit({
+          type: "result",
+          id: message.id,
+          result: {
+            kind: "error",
+            code: "broker_busy",
+            message: `broker is still completing timed-out ${backgroundCall.id}; retry after it settles or restart the broker`,
+          },
+        });
+        return;
+      }
       let completed = false;
       const progress = (text: string) => {
         if (!completed) emit({ type: "progress", id: message.id, message: text });
       };
       try {
+        const mutation =
+          message.type === "call" &&
+          (message.spec.perform?.length ?? 0) > 0 &&
+          message.spec.effects.idempotent !== true
+            ? createMutationTracker()
+            : undefined;
         const work =
           message.type === "call"
-            ? call(message, progress)
+            ? call(message, progress, mutation)
             : observe(message, progress);
         const result =
           message.type === "call"
-            ? await withinCallDeadline(work, message)
+            ? await withinCallDeadline(work, message, mutation, () => {
+                backgroundCall = {
+                  id: message.id,
+                  type: message.type,
+                  lens: message.spec.name,
+                  startedAt: Date.now(),
+                };
+                void work.then(
+                  () => {
+                    if (backgroundCall?.id === message.id) backgroundCall = undefined;
+                  },
+                  () => {
+                    if (backgroundCall?.id === message.id) backgroundCall = undefined;
+                  }
+                );
+              })
             : await work;
         completed = true;
         emit({ type: "result", id: message.id, result });
@@ -348,16 +394,20 @@ export function createBrokerOrchestrator(
 
 async function withinCallDeadline(
   work: Promise<LensResult>,
-  message: Extract<LensBridgeRequest, { type: "call" }>
+  message: Extract<LensBridgeRequest, { type: "call" }>,
+  mutation?: MutationTracker,
+  onTimeout: () => void = () => {}
 ): Promise<LensResult> {
   const remaining = Math.max(0, (message.deadline ?? Date.now() + message.timeoutMs) - Date.now());
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timedOut = new Promise<LensResult>((resolve) => {
     timer = setTimeout(() => {
+      onTimeout();
       const recording = message.recording ? `, recording ${message.recording.callId}` : "";
       resolve({
         kind: "error",
         message: `call ${message.id} for ${message.spec.name}${recording} timed out after ${message.timeoutMs}ms`,
+        ...(mutation ? { mutation: mutation.snapshot() } : {}),
       });
     }, remaining);
   });
@@ -509,7 +559,8 @@ export function createSessionEngineIO(
   getSession: () => Promise<BrowserSession>,
   loadTimeoutMs: number,
   progress: (message: string) => void = () => {},
-  httpFetch?: EngineIO["httpFetch"]
+  httpFetch?: EngineIO["httpFetch"],
+  mutation?: MutationTracker
 ): EngineIO {
   let cursor = 0;
   let captures: InterceptedResponse[] = [];
@@ -548,9 +599,26 @@ export function createSessionEngineIO(
       captures = [];
     },
     domExtract: async (resolver) => (await acquire()).domExtract(resolver),
-    // Lazy like domExtract: perform binds the page on first use, so the
-    // consent-denied path above it never touches the browser at all.
-    perform: async (steps) => (await acquire()).perform(steps),
+    // Dispatch one step at a time so progress and timeout diagnostics describe
+    // only work the browser acknowledged. This does not retry a step: a lost
+    // acknowledgement remains ambiguous and immediately rejects the call.
+    perform: async (steps) => {
+      const session = await acquire();
+      for (let index = 0; index < steps.length; index += 1) {
+        const step = steps[index];
+        mutation?.started(step);
+        progress(`perform step ${index + 1}/${steps.length} started: ${describePerformStep(step)}`);
+        const result = await session.perform([step]);
+        mutation?.acknowledged(index, result.failedStep === undefined);
+        if (result.failedStep !== undefined) {
+          progress(`perform step ${index + 1}/${steps.length} failed`);
+          return { ...result, failedStep: index };
+        }
+        progress(`perform step ${index + 1}/${steps.length} completed`);
+      }
+      mutation?.completed();
+      return {};
+    },
     snapshot: async (maxChars) => (await acquire()).snapshot({ maxChars }),
     ...(httpFetch ? { httpFetch } : {}),
     async sleep(ms) {
@@ -560,6 +628,77 @@ export function createSessionEngineIO(
     },
     log: progress,
   };
+}
+
+interface MutationTracker {
+  started(step: PerformStep): void;
+  acknowledged(index: number, succeeded: boolean): void;
+  completed(): void;
+  snapshot(): MutationState;
+}
+
+function createMutationTracker(): MutationTracker {
+  let performStarted = false;
+  let actionDispatched = false;
+  let lastAcknowledgedStep: number | undefined;
+  let performed: MutationState["performed"] = "no";
+  return {
+    started(step) {
+      performStarted = true;
+      performed = "unknown";
+      if (!("wait" in step)) actionDispatched = true;
+    },
+    acknowledged(index, succeeded) {
+      lastAcknowledgedStep = index;
+      if (!succeeded) performed = "no";
+    },
+    completed() {
+      performed = "yes";
+    },
+    snapshot() {
+      return {
+        performStarted,
+        ...(lastAcknowledgedStep !== undefined ? { lastAcknowledgedStep } : {}),
+        submissionMayHaveHappened: actionDispatched,
+        performed,
+      };
+    },
+  };
+}
+
+const MAX_DIAGNOSTIC_SELECTOR_CHARS = 120;
+
+function describePerformStep(step: PerformStep): string {
+  if ("navigate" in step) return "navigate fresh";
+  if ("press" in step) return `press ${truncateDiagnostic(step.press)}`;
+  if ("fill" in step) return `fill ${safeSelector(step.fill)} (value redacted)`;
+  if ("click" in step) return `click ${safeSelector(step.click)}`;
+  if ("submit" in step) return `submit ${safeSelector(step.submit)}`;
+  const form = step.wait.appears !== undefined
+    ? "appears"
+    : step.wait.gone !== undefined
+      ? "gone"
+      : "increases";
+  return `wait ${form} ${safeSelector(step.wait[form] ?? "")}`;
+}
+
+function safeSelector(selector: string): string {
+  // Selectors occasionally contain credentials in attribute equality tests.
+  // Redact likely secret-bearing values, flatten controls, then impose a hard
+  // bound so verbose logs cannot become an accidental data dump.
+  const redacted = selector
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(
+      /(\[(?:[^\]]*?(?:value|password|token|secret|auth|api[-_]?key)[^\]]*?=)\s*)(["'])(.*?)\2/gi,
+      "$1\"<redacted>\""
+    );
+  return truncateDiagnostic(redacted);
+}
+
+function truncateDiagnostic(value: string): string {
+  return value.length <= MAX_DIAGNOSTIC_SELECTOR_CHARS
+    ? value
+    : `${value.slice(0, MAX_DIAGNOSTIC_SELECTOR_CHARS - 1)}…`;
 }
 
 function gateKey(target: string): string {
