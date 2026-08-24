@@ -160,8 +160,10 @@ Example:
 `,
   status: `Usage: lens status [options]
 
-Report the local broker port, selected browser-backend state, and CDP fallback
-lease ("held", "released", or "disconnected"). No catalog needed.
+Report the local broker port, connected backends and capabilities, Chrome vs
+extension reachability, active/queued call state, recent backend errors and CDP
+reconnect attempts. The CDP lease is "held", "released", or "disconnected".
+Browser calls use one serial broker queue. No catalog needed.
 
 Options:
   --wait-ms <number>      Wait this long for the browser before reporting

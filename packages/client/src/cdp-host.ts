@@ -106,6 +106,8 @@ export function createCdpBackend(
   let released = false;
   let reconnectDelayMs = CONNECT_RETRY_MS;
   let nextReconnectAt = 0;
+  let reconnectAttempts = 0;
+  let lastConnectionError: string | undefined;
   let sessionSequence = 0;
   const captureBuffers = new WeakMap<Page, CaptureBuffer>();
   const statusListeners = new Set<() => void>();
@@ -194,6 +196,10 @@ export function createCdpBackend(
     connecting = connectBrowser(progress);
     try {
       return await connecting;
+    } catch (error) {
+      lastConnectionError = error instanceof Error ? error.message : String(error);
+      notifyStatusChange();
+      throw error;
     } finally {
       connecting = undefined;
     }
@@ -216,6 +222,9 @@ export function createCdpBackend(
         );
         break;
       } catch (error) {
+        reconnectAttempts += 1;
+        lastConnectionError = error instanceof Error ? error.message : String(error);
+        notifyStatusChange();
         if (!(await endpointLive())) throw new Error(STALE_ENDPOINT_MESSAGE);
         if (Date.now() >= deadline) {
           const reason =
@@ -377,6 +386,8 @@ export function createCdpBackend(
       name: "cdp",
       detail: browserVersion || undefined,
       capabilities: ["browser-session", "credentialed-http", "credentialed-http-body"],
+      diagnostic: lastConnectionError,
+      reconnectAttempts,
     }),
     supports: () => true,
     lease: () =>

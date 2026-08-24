@@ -211,6 +211,14 @@ describe("broker orchestration", () => {
       message:
         "call call_7 for @example/messages, recording recording-call-000007 timed out after 20ms",
     });
+    await expect(request(orchestrator, {
+      type: "call",
+      id: "call_8",
+      spec: domSpec(),
+      params: {},
+      timeoutMs: 20,
+    })).resolves.toMatchObject({ kind: "error", code: "broker_busy" });
+    expect(backend.binds).toHaveLength(0);
   });
 
   it("pins a selected backend for the whole call", async () => {
@@ -783,6 +791,66 @@ describe("write consent and execution", () => {
     expect(backend.binds).toHaveLength(1);
     expect(backend.binds[0]).toMatchObject({ navigation: "reuse" });
     expect(backend.session.performCalls).toEqual([[{ click: "#send" }]]);
+  });
+
+  it("reports redacted per-step start and completion progress", async () => {
+    const backend = new FakeBackend("cdp");
+    const frames: BrokerFrame[] = [];
+    await createBrokerOrchestrator([backend]).handle({
+      type: "call",
+      id: "progress",
+      spec: performSpec({
+        perform: [
+          { fill: '[data-token="do-not-log"] textarea', value: "$message" },
+          { click: "#send" },
+        ],
+        params: { message: "string" },
+      }),
+      params: { message: "also-do-not-log" },
+      timeoutMs: 1000,
+      allowWrites: true,
+    }, (frame) => frames.push(frame));
+
+    const messages = frames.flatMap((frame) => frame.type === "progress" ? [frame.message] : []);
+    expect(messages).toContain('perform step 1/2 started: fill [data-token="<redacted>"] textarea (value redacted)');
+    expect(messages).toContain("perform step 1/2 completed");
+    expect(messages).toContain("perform step 2/2 started: click #send");
+    expect(messages.join(" ")).not.toContain("do-not-log");
+    expect(messages.join(" ")).not.toContain("also-do-not-log");
+    expect(backend.session.performCalls).toEqual([
+      [{ fill: '[data-token="do-not-log"] textarea', value: "also-do-not-log" }],
+      [{ click: "#send" }],
+    ]);
+  });
+
+  it("preserves acknowledged mutation state on an ambiguous outer timeout", async () => {
+    const backend = new FakeBackend("cdp");
+    let calls = 0;
+    backend.session.perform = async (steps) => {
+      backend.session.performCalls.push(steps);
+      calls += 1;
+      if (calls === 2) return new Promise<PerformResult>(() => {});
+      return {};
+    };
+    const result = await request(createBrokerOrchestrator([backend]), {
+      type: "call",
+      id: "ambiguous",
+      spec: performSpec({ perform: [{ fill: "textarea", value: "$message" }, { click: "#send" }], params: { message: "string" } }),
+      params: { message: "hello" },
+      timeoutMs: 20,
+      deadline: Date.now() + 20,
+      allowWrites: true,
+    });
+
+    expect(result).toMatchObject({
+      kind: "error",
+      mutation: {
+        performStarted: true,
+        lastAcknowledgedStep: 0,
+        submissionMayHaveHappened: true,
+        performed: "unknown",
+      },
+    });
   });
 
   it("bypasses the result cache for perform specs, whatever effects.cache claims", async () => {

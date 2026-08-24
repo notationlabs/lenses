@@ -74,6 +74,43 @@ describe("broker build stamp handshake", () => {
     expect(broker.state.shutdowns).toBe(0);
   });
 
+  it("exposes actionable broker diagnostics from status frames", async () => {
+    const port = 45_314;
+    const server = new WebSocketServer({ port, host: "127.0.0.1" });
+    server.on("connection", (socket) => socket.on("message", () => socket.send(JSON.stringify({
+      type: "status",
+      connected: true,
+      stamp: brokerBuildStamp(),
+      backend: "extension",
+      backends: [{ name: "extension", available: true, version: "1.2.3", capabilities: ["perform"] }],
+      diagnostics: {
+        concurrency: "serial_queue",
+        activeCall: { id: "call_9", type: "call", lens: "@example/send", startedAt: 123 },
+        queuedCalls: 2,
+        lastBackendError: "CDP permission denied",
+        reconnectAttempts: 3,
+        reachability: { chrome: true, extension: true },
+      },
+    }))));
+    await new Promise<void>((resolve) => server.once("listening", () => resolve()));
+    try {
+      const bridge = await BrowserBridge.bind(port, "127.0.0.1");
+      bridges.push(bridge);
+      expect(bridge.backends).toEqual([
+        expect.objectContaining({ name: "extension", version: "1.2.3", capabilities: ["perform"] }),
+      ]);
+      expect(bridge.diagnostics).toMatchObject({
+        concurrency: "serial_queue",
+        activeCall: { id: "call_9", lens: "@example/send" },
+        queuedCalls: 2,
+        reconnectAttempts: 3,
+      });
+    } finally {
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   it("gives up with a clear error when the stamp never converges", async () => {
     const port = 45_313;
     const server = new WebSocketServer({ port, host: "127.0.0.1" });

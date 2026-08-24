@@ -513,6 +513,7 @@ export class LensClient {
       backend: transport.backend,
       capabilities: [...(transport.capabilities ?? [])],
       backends: [...(transport.backends ?? [])],
+      diagnostics: transport.diagnostics,
       advice: transport.advice,
     };
   }
