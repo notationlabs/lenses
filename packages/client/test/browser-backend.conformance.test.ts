@@ -10,6 +10,7 @@ import {
   pagePerformCount,
   pagePerformFill,
   pagePerformPress,
+  pagePerformSubmit,
   pageSnapshot,
   type InterceptedResponse,
   type LensResult,
@@ -178,6 +179,7 @@ for (const [name, createFixture] of [
       const result = await session.perform([
         { fill: "#input", value: "hello" },
         { click: "#send" },
+        { submit: "#composer", form: { description: "published" } },
         { press: "Enter" },
         { wait: { appears: "#done" } },
         { navigate: "fresh" },
@@ -187,6 +189,7 @@ for (const [name, createFixture] of [
       expect(performActions).toEqual([
         "fill #input hello",
         "click #send",
+        "submit #composer {\"description\":\"published\"}",
         "press Enter",
       ]);
       expect(fixture.reloads()).toBe(1);
@@ -443,6 +446,11 @@ class FakePage {
     if (fn === pagePerformClick) {
       const spec = options as { selector: string };
       performActions.push(`click ${spec.selector}`);
+      return { ok: true };
+    }
+    if (fn === pagePerformSubmit) {
+      const spec = options as { selector: string; form?: Record<string, string> };
+      performActions.push(`submit ${spec.selector} ${JSON.stringify(spec.form)}`);
       return { ok: true };
     }
     if (fn === pagePerformPress) {
@@ -753,6 +761,10 @@ function createChromeMock() {
           }
           if (message.type === "perform_click") {
             performActions.push(`click ${message.selector}`);
+            return { ok: true };
+          }
+          if (message.type === "perform_submit") {
+            performActions.push(`submit ${message.selector} ${JSON.stringify(message.form)}`);
             return { ok: true };
           }
           if (message.type === "perform_press") {

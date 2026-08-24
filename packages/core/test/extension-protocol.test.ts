@@ -40,6 +40,24 @@ describe("broker-extension protocol", () => {
     );
   });
 
+  it("accepts literal submit form fields in a perform operation", () => {
+    const frame = {
+      type: "extension-rpc",
+      requestId: "request_submit",
+      epoch: "epoch_fixture",
+      deadline: 1893456000000,
+      operation: {
+        name: "perform",
+        sessionId: "session_1",
+        steps: [{
+          submit: "#journal_set",
+          form: { "journal_set[description]": "published" },
+        }],
+      },
+    };
+    expect(decodeExtensionRpcRequest(frame, "epoch_fixture", 0)).toEqual(frame);
+  });
+
   it("accepts a protocol-safe HTTP request body", () => {
     const frame = {
       type: "extension-rpc",

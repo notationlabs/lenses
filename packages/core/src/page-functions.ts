@@ -161,9 +161,88 @@ export function pagePerformClick(spec: { selector: string }):
 }
 
 /**
+ * Submit exactly one form through the native requestSubmit path. Unlike
+ * `form.submit()`, requestSubmit runs constraint validation and dispatches the
+ * cancellable submit event expected by framework and browser handlers.
+ */
+export function pagePerformSubmit(spec: { selector: string; form?: Record<string, string> }):
+  | { ok: true }
+  | { ok: false; message: string } {
+  const matches = document.querySelectorAll(spec.selector);
+  if (matches.length !== 1) {
+    return {
+      ok: false,
+      message: `submit "${spec.selector}" matched ${matches.length} elements, need exactly 1`,
+    };
+  }
+  const form = matches[0];
+  if (!(form instanceof HTMLFormElement)) {
+    return { ok: false, message: `submit "${spec.selector}" target is not a form` };
+  }
+
+  const dispatchChanged = (control: HTMLElement) => {
+    control.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertReplacementText" }));
+    control.dispatchEvent(new Event("change", { bubbles: true }));
+  };
+  const hidden = (name: string, value: string) => {
+    const input = document.createElement("input");
+    input.type = "hidden";
+    input.name = name;
+    input.value = value;
+    form.appendChild(input);
+  };
+  const setControl = (control: Element, value: string): boolean => {
+    if ("disabled" in control && control.disabled === true) return false;
+    if (control instanceof HTMLInputElement) {
+      if (control.type === "file") return false;
+      if (control.type === "radio") {
+        if (control.value !== value) return false;
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "checked")?.set?.call(control, true);
+      } else {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(control, value);
+        if (control.type === "checkbox") {
+          Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "checked")?.set?.call(control, true);
+        }
+      }
+    } else if (control instanceof HTMLTextAreaElement) {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(control, value);
+    } else if (control instanceof HTMLSelectElement) {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set?.call(control, value);
+    } else {
+      return false;
+    }
+    if ((control as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement).value !== value) {
+      return false;
+    }
+    dispatchChanged(control as HTMLElement);
+    return true;
+  };
+
+  for (const [name, value] of Object.entries(spec.form ?? {})) {
+    const named = form.elements.namedItem(name);
+    if (named === null) {
+      hidden(name, value);
+      continue;
+    }
+    if (named instanceof Element) {
+      if (!setControl(named, value)) hidden(name, value);
+      continue;
+    }
+    // RadioNodeList is the only non-Element returned by namedItem. Prefer a
+    // matching native control; when none can represent the literal value, add
+    // a hidden successful control rather than mutating unrelated page state.
+    const controls = Array.from(named);
+    if (!controls.some((control) => setControl(control, value))) hidden(name, value);
+  }
+
+  form.requestSubmit();
+  return { ok: true };
+}
+
+/**
  * Dispatch keydown/keyup for a named key ("Enter", "Meta+Enter") to the
  * focused element. Synthetic events are untrusted, so trust-checking handlers
- * and native form submits will not fire — click the submit control instead.
+ * and native form submits will not fire — use a submit step instead.
  */
 export function pagePerformPress(spec: { key: string }):
   | { ok: true }

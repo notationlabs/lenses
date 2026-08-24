@@ -13,6 +13,7 @@ import {
   pagePerformCount,
   pagePerformFill,
   pagePerformPress,
+  pagePerformSubmit,
   pageSnapshot,
   pushCapture,
   readCaptures,
@@ -584,6 +585,13 @@ async function performStep(
   }
   if ("click" in step) {
     const outcome = await page.evaluate(pagePerformClick, { selector: step.click });
+    return outcome.ok ? undefined : outcome.message;
+  }
+  if ("submit" in step) {
+    const outcome = await page.evaluate(pagePerformSubmit, {
+      selector: step.submit,
+      form: step.form,
+    });
     return outcome.ok ? undefined : outcome.message;
   }
   if ("press" in step) {

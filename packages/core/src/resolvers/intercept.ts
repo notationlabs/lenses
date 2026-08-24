@@ -25,9 +25,15 @@ export async function runIntercept(
   let found = await findMatches(sources, io);
   if (found.size < names.length && r.reloadOnMiss && io.reload) {
     await io.reload();
+  }
+  // `waitMs` is also a capture window after perform. Perform deliberately
+  // binds with reuse, so requiring reloadOnMiss here would miss requests the
+  // action just triggered. EngineIO.sleep lets browser hosts turn each poll
+  // into a cursor long-poll while simple hosts may use an ordinary delay.
+  if (found.size < names.length && (r.reloadOnMiss || r.waitMs !== undefined)) {
     const deadline = Date.now() + (r.waitMs ?? 8000);
     while (found.size < names.length && Date.now() < deadline) {
-      await io.sleep(250);
+      await io.sleep(Math.min(250, Math.max(0, deadline - Date.now())));
       found = await findMatches(sources, io);
     }
   }

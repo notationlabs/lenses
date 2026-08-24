@@ -60,6 +60,15 @@ async function performStep(
       })
     );
   }
+  if ("submit" in step) {
+    return stepOutcome(
+      await tabMessage<StepOutcome>(bound.tabId, {
+        type: "perform_submit",
+        selector: step.submit,
+        form: step.form,
+      })
+    );
+  }
   if ("press" in step) {
     return stepOutcome(
       await tabMessage<StepOutcome>(bound.tabId, { type: "perform_press", key: step.press })

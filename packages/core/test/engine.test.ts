@@ -100,6 +100,23 @@ describe("executeLens", () => {
     });
   });
 
+  it("accepts an empty DOM array when the return contract permits it", async () => {
+    const emptySpec = validateSpec({
+      ...spec,
+      returns: { type: "array", items: { title: "string" } },
+      resolve: [{ kind: "dom", item: ".thing", fields: { title: { selector: ".t" } } }],
+    });
+    const r = await executeLens(emptySpec, {}, io({
+      domExtract: async () => ({ url: "https://example.com/things", title: "Things", value: [] }),
+    }));
+    expect(r).toEqual({
+      kind: "value",
+      resolver: "dom",
+      observed: "https://example.com/things",
+      value: [],
+    });
+  });
+
   it("returns a detected outcome instead of a value", async () => {
     const r = await executeLens(spec, {}, io({
       getIntercepted: async () => [captured({ status: 401, body: "{}" })],
@@ -394,6 +411,55 @@ describe("perform", () => {
     ]);
   });
 
+  it("expands params in every perform selector before handing steps to io", async () => {
+    const templated = validateSpec({
+      ...sendSpec,
+      params: { message: "string", row: "integer" },
+      perform: [
+        { fill: "#composer-{row}", value: "$message" },
+        { click: "#send-{row}" },
+        {
+          submit: "#form-{row}",
+          form: {
+            "journal_set[description]": "$message",
+            row: "$string(row)",
+            empty: "",
+          },
+        },
+        { wait: { appears: ".reply-{row}", timeoutMs: 10 } },
+        { wait: { gone: ".spinner-{row}" } },
+        { wait: { increases: ".turn-{row}" } },
+      ],
+    });
+    const { io: withPerform, performed } = performIo();
+    await executeLens(templated, { message: "hi", row: 7 }, withPerform);
+    expect(performed[0]).toEqual([
+      { fill: "#composer-7", value: "hi" },
+      { click: "#send-7" },
+      {
+        submit: "#form-7",
+        form: { "journal_set[description]": "hi", row: "7", empty: "" },
+      },
+      { wait: { appears: ".reply-7", timeoutMs: 10 } },
+      { wait: { gone: ".spinner-7" } },
+      { wait: { increases: ".turn-7" } },
+    ]);
+  });
+
+  it("fails before dispatch when a submit form expression produces nothing", async () => {
+    const invalid = validateSpec({
+      ...sendSpec,
+      perform: [{ submit: "#form", form: { description: "$missing" } }],
+    });
+    const { io: withPerform, performed } = performIo();
+    const r = await executeLens(invalid, { message: "hi" }, withPerform);
+    expect(r).toEqual({
+      kind: "error",
+      message: 'perform submit field "description" value "$missing" produced nothing',
+    });
+    expect(performed).toEqual([]);
+  });
+
   it("returns the detected outcome before step 0 when the page is a login wall", async () => {
     const { io: withPerform, performed } = performIo({}, {
       domExtract: async () => ({ url: "https://example.com/sign-in", title: "Sign in", value: null }),
@@ -430,6 +496,37 @@ describe("perform", () => {
     const r = await executeLens(sendSpec, { message: "hi" }, withPerform);
     expect(r).toMatchObject({ kind: "outcome", name: "needs_auth" });
     expect(r).not.toHaveProperty("performed");
+  });
+
+  it("keeps the intercept capture open for waitMs after perform", async () => {
+    const interceptSpec = validateSpec({
+      ...sendSpec,
+      returns: { type: "object", fields: { ok: "boolean" } },
+      perform: [{ click: "#send" }],
+      resolve: [{
+        kind: "intercept",
+        request: "POST https://api.example.com/send",
+        waitMs: 100,
+      }],
+    });
+    let reads = 0;
+    let sleeps = 0;
+    const r = await executeLens(interceptSpec, { message: "hi" }, io({
+      perform: async () => ({}),
+      getIntercepted: async () => ++reads < 2 ? [] : [captured({
+        method: "POST",
+        url: "https://api.example.com/send",
+        body: '{"ok":true}',
+      })],
+      sleep: async () => { sleeps += 1; },
+    }));
+    expect(sleeps).toBe(1);
+    expect(r).toMatchObject({
+      kind: "value",
+      resolver: "intercept",
+      value: { ok: true },
+      performed: true,
+    });
   });
 
   it("marks the readback value performed after every step succeeds", async () => {
