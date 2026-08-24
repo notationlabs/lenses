@@ -15,6 +15,7 @@ import { RecordingMonitor } from "./recording-monitor.js";
 import { appendRecordingCheckpoint } from "./recording.js";
 import type {
   BrowserBackend,
+  BrowserCapability,
   BrowserSession,
   FinishDisposition,
   InterceptDelta,
@@ -76,12 +77,41 @@ export function createBrokerOrchestrator(
   if (backends.length === 0) throw new Error("broker orchestrator requires a browser backend");
   const cache = new Map<string, { result: LensResult; expiresAt: number }>();
 
-  function currentBackend(): BrowserBackend {
-    return backends.find((backend) => backend.available()) ?? backends[backends.length - 1];
+  function currentBackend(eligible = backends): BrowserBackend {
+    return eligible.find((backend) => backend.available()) ?? eligible[eligible.length - 1];
   }
 
-  async function selectBackend(rendezvousDeadline: number): Promise<BrowserBackend> {
-    const selected = currentBackend();
+  async function selectBackend(
+    rendezvousDeadline: number,
+    requiredCapabilities: BrowserCapability[] = ["browser-session"]
+  ): Promise<BrowserBackend> {
+    const eligible = backends.filter((backend) =>
+      requiredCapabilities.every((capability) => backendSupports(backend, capability))
+    );
+    if (eligible.length === 0) {
+      throw capabilityMismatch(requiredCapabilities, backends);
+    }
+    let selected = currentBackend(eligible);
+    // If the preferred backend was excluded by capability negotiation, prepare
+    // the capable fallback now instead of pinning the connected-but-stale one.
+    if (
+      !selected.available() &&
+      options.prepareFallback &&
+      selected === backends[backends.length - 1] &&
+      !eligible.includes(backends[0])
+    ) {
+      let fallbackError: unknown;
+      try {
+        await options.prepareFallback();
+      } catch (error) {
+        fallbackError = error;
+      }
+      selected = currentBackend(eligible);
+      if (!selected.available()) {
+        throw capabilityMismatch(requiredCapabilities, backends, fallbackError);
+      }
+      return selected;
+    }
     const preferredWaitMs =
       (typeof options.preferredWaitMs === "function"
         ? options.preferredWaitMs()
@@ -90,16 +120,16 @@ export function createBrokerOrchestrator(
       selected.available() ||
       selected !== backends[backends.length - 1] ||
       preferredWaitMs <= 0 ||
-      backends.length === 1
+      eligible.length === 1
     ) {
       return selected;
     }
-    const preferred = backends.slice(0, -1);
+    const preferred = eligible.slice(0, -1);
     await waitForPreferredBackend(
       preferred,
       Math.min(preferredWaitMs, Math.max(0, rendezvousDeadline - Date.now()))
     );
-    const afterGrace = currentBackend();
+    const afterGrace = currentBackend(eligible);
     if (afterGrace.available() || !options.prepareFallback) return afterGrace;
 
     // The grace controls when fallback preparation starts, not when the
@@ -107,10 +137,10 @@ export function createBrokerOrchestrator(
     // whichever backend actually becomes available first wins; a failed CDP
     // probe is merely remembered for the bounded no-backend failure.
     return waitForAvailableBackend(
-      backends,
+      eligible,
       options.prepareFallback,
       rendezvousDeadline,
-      currentBackend
+      () => currentBackend(eligible)
     );
   }
 
@@ -146,8 +176,9 @@ export function createBrokerOrchestrator(
     const target = expandUrl(message.spec.url, message.params);
     const loadTimeoutMs = message.spec.loadTimeoutMs ?? 30_000;
     let backend: BrowserBackend | undefined;
+    const requiredCapabilities = capabilitiesForSpec(message.spec);
     if (specNeedsBrowser(message.spec)) {
-      backend = await selectBackend(callDeadline);
+      backend = await selectBackend(callDeadline, requiredCapabilities);
       // The gate is derived from the browser, not remembered here: a kept tab
       // still sitting where a needs_* outcome left it blocks its whole site,
       // and it keeps doing so across broker restarts.
@@ -200,7 +231,10 @@ export function createBrokerOrchestrator(
         progress(`fetching ${request.url} directly`);
         return directHttpFetch(request, loadTimeoutMs);
       }
-      backend ??= await selectBackend(callDeadline);
+      backend ??= await selectBackend(
+        callDeadline,
+        request.body ? ["credentialed-http-body"] : ["credentialed-http"]
+      );
       progress(`fetching ${request.url} with browser cookies via ${backend.name}`);
       // Strip the engine's `credentials` flag: the backend request crosses the
       // extension's strict protocol schema, which rejects unknown keys.
@@ -332,6 +366,70 @@ async function withinCallDeadline(
   } finally {
     if (timer) clearTimeout(timer);
   }
+}
+
+export function capabilitiesForSpec(spec: LensSpec): BrowserCapability[] {
+  // A later page tier is an explicit fallback when browser HTTP is unsupported;
+  // require HTTP capability only when the document has no such route.
+  if (spec.resolve.some((resolver) => resolver.kind !== "http")) {
+    return ["browser-session"];
+  }
+  const credentialed = spec.resolve.filter(
+    (resolver): resolver is Extract<typeof resolver, { kind: "http" }> =>
+      resolver.kind === "http" && resolver.credentials === true
+  );
+  if (credentialed.some((resolver) => resolver.body !== undefined)) {
+    return ["credentialed-http-body"];
+  }
+  if (credentialed.length > 0) return ["credentialed-http"];
+  return ["browser-session"];
+}
+
+function backendSupports(
+  backend: BrowserBackend,
+  capability: BrowserCapability
+): boolean {
+  if (backend.supports) return backend.supports(capability);
+  // Compatibility for custom transports/backends built against the previous
+  // interface. Session support was implicit; httpFetch advertised cookie fetch.
+  return capability === "browser-session" || backend.httpFetch !== undefined;
+}
+
+function capabilityMismatch(
+  required: BrowserCapability[],
+  backends: BrowserBackend[],
+  fallbackError?: unknown
+): Error {
+  const requirement = required
+    .map((capability) =>
+      capability === "credentialed-http-body"
+        ? "credentialed HTTP request bodies"
+        : capability === "credentialed-http"
+          ? "credentialed HTTP requests"
+          : "browser sessions"
+    )
+    .join(", ");
+  const connected = backends
+    .filter((backend) => backend.available() || backend.info().diagnostic)
+    .map((backend) => {
+      const info = backend.info();
+      const version = info.version ? ` ${info.version}` : "";
+      const capabilities = info.capabilities?.length
+        ? `; negotiated capabilities: ${info.capabilities.join(", ")}`
+        : "; capabilities not reported";
+      const diagnostic = info.diagnostic ? `; ${info.diagnostic}` : "";
+      return `${backend.name}${version}${capabilities}${diagnostic}`;
+    })
+    .join(". ");
+  const fallback = fallbackError
+    ? ` CDP fallback could not be acquired: ${errorMessage(fallbackError)}.`
+    : "";
+  return new Error(
+    `No available browser backend supports ${requirement}.` +
+      (connected ? ` ${connected}.` : "") +
+      fallback +
+      " Update the Lens CLI and Chrome extension together and reload the extension at chrome://extensions, or enable the CDP fallback."
+  );
 }
 
 function waitForPreferredBackend(

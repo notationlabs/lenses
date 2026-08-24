@@ -22,6 +22,16 @@ export type LensTransportResult = LensResult & {
 export type BrokerLease = "held" | "released" | "disconnected";
 export type BrokerControlAction = "release" | "acquire" | "status" | "shutdown";
 
+export interface BrokerBackendStatus {
+  name: string;
+  available: boolean;
+  detail?: string;
+  version?: string;
+  protocolMajor?: number;
+  capabilities?: string[];
+  diagnostic?: string;
+}
+
 export interface LensTransport {
   readonly connected: boolean;
   readonly info: string;
@@ -46,6 +56,10 @@ export interface LensTransport {
   onClose?(listener: () => void): void;
   /** CDP lease state, when the transport reports it (the broker does). */
   readonly lease?: BrokerLease;
+  readonly backend?: string;
+  readonly capabilities?: readonly string[];
+  readonly backends?: readonly BrokerBackendStatus[];
+  readonly advice?: string;
   /** Release/acquire the broker's CDP lease; optional for custom transports. */
   control?(action: BrokerControlAction, timeoutMs?: number): Promise<LensTransportResult>;
 }
@@ -55,7 +69,11 @@ type BrokerMessage =
       type: "status";
       connected: boolean;
       lease?: BrokerLease;
+      backend?: string;
       ua?: string;
+      capabilities?: string[];
+      backends?: BrokerBackendStatus[];
+      advice?: string;
       /** Build stamp of the daemon's code; absent on brokers older than this. */
       stamp?: string;
     }
@@ -66,6 +84,10 @@ export class BrowserBridge implements LensTransport {
   private browserConnected = false;
   private browserInfo = "";
   private browserLease: BrokerLease = "disconnected";
+  private selectedBackend?: string;
+  private negotiatedCapabilities: string[] = [];
+  private backendStatuses: BrokerBackendStatus[] = [];
+  private statusAdvice?: string;
   private readonly pending = new Map<
     string,
     {
@@ -90,6 +112,7 @@ export class BrowserBridge implements LensTransport {
     this.browserConnected = status.connected;
     this.browserInfo = status.ua ?? "";
     this.browserLease = status.lease ?? (status.connected ? "held" : "disconnected");
+    this.updateBackendStatus(status);
     socket.on("message", (data) => this.onMessage(data.toString()));
     socket.on("close", () => {
       this.browserConnected = false;
@@ -137,6 +160,22 @@ export class BrowserBridge implements LensTransport {
     return this.connected
       ? `connected${this.browserInfo ? ` (${this.browserInfo})` : ""}`
       : "not connected";
+  }
+
+  get backend(): string | undefined {
+    return this.selectedBackend;
+  }
+
+  get capabilities(): readonly string[] {
+    return this.negotiatedCapabilities;
+  }
+
+  get backends(): readonly BrokerBackendStatus[] {
+    return this.backendStatuses;
+  }
+
+  get advice(): string | undefined {
+    return this.statusAdvice;
   }
 
   call(
@@ -287,6 +326,7 @@ export class BrowserBridge implements LensTransport {
       this.browserConnected = message.connected;
       this.browserInfo = message.ua ?? "";
       this.browserLease = message.lease ?? (message.connected ? "held" : "disconnected");
+      this.updateBackendStatus(message);
       if (message.connected && !wasConnected) {
         this.log(`browser connected through broker port ${this.port}`);
         for (const resolve of this.connectionWaiters) resolve();
@@ -309,6 +349,15 @@ export class BrowserBridge implements LensTransport {
     clearTimeout(pending.timer);
     this.pending.delete(message.id);
     pending.resolve(message.result);
+  }
+
+  private updateBackendStatus(
+    status: Extract<BrokerMessage, { type: "status" }>
+  ): void {
+    this.selectedBackend = status.backend;
+    this.negotiatedCapabilities = [...(status.capabilities ?? [])];
+    this.backendStatuses = [...(status.backends ?? [])];
+    this.statusAdvice = status.advice;
   }
 
   private resolvePending(result: LensResult, keepControl = false): void {

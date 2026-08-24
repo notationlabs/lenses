@@ -18,9 +18,20 @@ export interface BackendHttpRequest {
   body?: HttpFetchBody;
 }
 
+export type BrowserCapability =
+  | "browser-session"
+  | "credentialed-http"
+  | "credentialed-http-body";
+
 export interface BackendInfo {
   name: string;
   detail?: string;
+  version?: string;
+  protocolMajor?: number;
+  /** Negotiated wire capabilities (backend-specific names). */
+  capabilities?: string[];
+  /** A handshake, compatibility, or connection problem that explains unavailability. */
+  diagnostic?: string;
 }
 
 export interface BindRequest {
@@ -83,6 +94,8 @@ export interface BrowserBackend {
   readonly name: string;
   available(): boolean;
   info(): BackendInfo;
+  /** Whether this backend can safely execute an operation before it is selected. */
+  supports?(capability: BrowserCapability): boolean;
   onStatusChange(listener: () => void): () => void;
   /**
    * A sign-in gate for this origin: a tab a needs_* outcome kept open that is
