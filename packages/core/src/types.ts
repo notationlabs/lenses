@@ -121,11 +121,10 @@ export interface LensEffects {
 export type Resolver = HttpResolver | InterceptResolver | DomResolver | LlmResolver;
 
 /**
- * A direct HTTP request, made without binding a page. Credential-free requests
- * run in the broker's own process; `credentials: true` asks the host to send
- * the browser's cookies, which needs a browser-backed host (the extension's
- * service worker) — where none is reachable the tier misses and the page tiers
- * take over.
+ * A direct HTTP request. Credential-free requests run in the broker's own
+ * process; `credentials: true` asks any browser backend to send cookies, while
+ * `credentials: "same-origin-page"` requires execution in a page whose origin
+ * matches the request URL.
  */
 export interface HttpResolver {
   kind: "http";
@@ -144,8 +143,8 @@ export interface HttpResolver {
   sources?: Record<string, HttpSource>;
   /** extra request headers; values take the same named holes as `request` */
   headers?: Record<string, string>;
-  /** send the browser's cookies with the request */
-  credentials?: boolean;
+  /** Browser credential/context requirement, inherited by chained sources. */
+  credentials?: HttpCredentials;
   /** JSONata over the parsed response body producing the working value */
   items?: ExprString;
   /** JSONata (or per-field object) over the working value */
@@ -165,9 +164,15 @@ export type HttpBody =
 export interface HttpSource {
   request: string;
   body?: HttpBody;
+  /** Override the resolver's browser credential/context requirement for this request. */
+  credentials?: HttpCredentials;
+  /** Header values are JSONata evaluated with earlier source bindings available. */
+  headers?: Record<string, ExprString>;
   /** JSONata over the parsed response body producing this source's bound value */
   items?: ExprString;
 }
+
+export type HttpCredentials = boolean | "same-origin-page";
 
 /** One named network response to capture within an intercept tier. */
 export interface InterceptSource {
@@ -305,8 +310,12 @@ export type LensResult =
       message: string;
       /** present when a resolved value failed its declared `returns` schema */
       issues?: ValidationIssue[];
-      /** Host consent, perform, or broker concurrency failure classification. */
-      code?: "writes_not_allowed" | "perform_failed" | "broker_busy";
+      /** Host consent, execution-context, perform, or broker failure classification. */
+      code?:
+        | "writes_not_allowed"
+        | "required_backend_unavailable"
+        | "perform_failed"
+        | "broker_busy";
       /** 0-based index of the perform step that failed */
       step?: number;
       performed?: true;
@@ -326,8 +335,8 @@ export interface HttpFetchRequest {
   url: string;
   headers?: Record<string, string>;
   body?: HttpFetchBody;
-  /** true asks for the browser's cookies; hosts without a browser resolve undefined */
-  credentials: boolean;
+  /** Browser credential/context requirement. */
+  credentials: HttpCredentials;
 }
 
 /** IO the engine needs from a bound browser session or a test. */

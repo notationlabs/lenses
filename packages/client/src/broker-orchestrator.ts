@@ -32,8 +32,13 @@ const MAX_HTTP_BODY_CHARS = 512 * 1024;
  */
 export function specNeedsBrowser(spec: LensSpec): boolean {
   if (spec.perform !== undefined) return true;
-  return spec.resolve.some(
-    (resolver) => resolver.kind !== "http" || resolver.credentials === true
+  return spec.resolve.some((resolver) =>
+    resolver.kind !== "http" ||
+    resolver.credentials === true ||
+    resolver.credentials === "same-origin-page" ||
+    Object.values(resolver.sources ?? {}).some((source) =>
+      source.credentials === true || source.credentials === "same-origin-page"
+    )
   );
 }
 
@@ -181,14 +186,16 @@ export function createBrokerOrchestrator(
 
     const target = expandUrl(message.spec.url, message.params);
     const loadTimeoutMs = message.spec.loadTimeoutMs ?? 30_000;
-    let backend: BrowserBackend | undefined;
+    let sessionBackend: BrowserBackend | undefined;
     const requiredCapabilities = capabilitiesForSpec(message.spec);
-    if (specNeedsBrowser(message.spec)) {
-      backend = await selectBackend(callDeadline, requiredCapabilities);
+    const needsPageSession =
+      performs || message.spec.resolve.some((resolver) => resolver.kind !== "http");
+    if (needsPageSession) {
+      sessionBackend = await selectBackend(callDeadline, requiredCapabilities);
       // The gate is derived from the browser, not remembered here: a kept tab
       // still sitting where a needs_* outcome left it blocks its whole site,
       // and it keeps doing so across broker restarts.
-      const gate = await findGateQuietly(backend, gateKey(target));
+      const gate = await findGateQuietly(sessionBackend, gateKey(target));
       if (gate) {
         progress(
           `a sign-in tab is already open at ${gate.url}; complete it there to unblock this site`
@@ -203,9 +210,9 @@ export function createBrokerOrchestrator(
     let recording: RecordingMonitor | undefined;
     const ensureSession = async (): Promise<BrowserSession> => {
       if (session) return session;
-      backend ??= await selectBackend(callDeadline);
-      progress(`binding browser page for ${target} via ${backend.name}`);
-      session = await backend.bind({
+      sessionBackend ??= await selectBackend(callDeadline);
+      progress(`binding browser page for ${target} via ${sessionBackend.name}`);
+      session = await sessionBackend.bind({
         target,
         loadTimeoutMs,
         // A document with perform steps binds with "reuse": a reload only
@@ -237,19 +244,37 @@ export function createBrokerOrchestrator(
         progress(`fetching ${request.url} directly`);
         return directHttpFetch(request, loadTimeoutMs);
       }
-      backend ??= await selectBackend(
-        callDeadline,
-        request.body ? ["credentialed-http-body"] : ["credentialed-http"]
+      const required: BrowserCapability[] = request.body
+        ? ["credentialed-http-body"]
+        : ["credentialed-http"];
+      if (request.credentials === "same-origin-page") {
+        required.push("same-origin-page-http");
+      }
+      let requestBackend: BrowserBackend;
+      try {
+        requestBackend = await selectBackend(callDeadline, required);
+      } catch (error) {
+        if (request.credentials === "same-origin-page") {
+          throw requiredBackendUnavailable(error);
+        }
+        throw error;
+      }
+      progress(
+        request.credentials === "same-origin-page"
+          ? `executing credentialed ${request.method} in same-origin page context via ${requestBackend.name}`
+          : `fetching ${request.url} with browser cookies via ${requestBackend.name}`
       );
-      progress(`fetching ${request.url} with browser cookies via ${backend.name}`);
-      // Strip the engine's `credentials` flag: the backend request crosses the
-      // extension's strict protocol schema, which rejects unknown keys.
-      return backend.httpFetch?.({
+      // Strip engine-only policy fields: backend wire protocols reject unknown keys.
+      const response = await requestBackend.httpFetch?.({
         method: request.method,
         url: request.url,
         headers: request.headers,
         body: request.body,
       });
+      if (!response && request.credentials === "same-origin-page") {
+        throw requiredBackendUnavailable();
+      }
+      return response;
     };
 
     const io = createSessionEngineIO(
@@ -267,11 +292,11 @@ export function createBrokerOrchestrator(
       }
       return result;
     } finally {
-      if (backend && session) {
+      if (sessionBackend && session) {
         try {
           if (recording) await recording.finish();
         } finally {
-          await finishQuietly(backend, session, dispositionFor(result));
+          await finishQuietly(sessionBackend, session, dispositionFor(result));
         }
       }
     }
@@ -419,20 +444,37 @@ async function withinCallDeadline(
 }
 
 export function capabilitiesForSpec(spec: LensSpec): BrowserCapability[] {
-  // A later page tier is an explicit fallback when browser HTTP is unsupported;
-  // require HTTP capability only when the document has no such route.
+  // A later page tier is an explicit fallback when ordinary browser HTTP is
+  // unsupported. Same-origin requirements are selected again per request, so
+  // mixed chains may use the extension for a cheap read and CDP for a mutation.
   if (spec.resolve.some((resolver) => resolver.kind !== "http")) {
     return ["browser-session"];
   }
-  const credentialed = spec.resolve.filter(
-    (resolver): resolver is Extract<typeof resolver, { kind: "http" }> =>
-      resolver.kind === "http" && resolver.credentials === true
-  );
-  if (credentialed.some((resolver) => resolver.body !== undefined)) {
-    return ["credentialed-http-body"];
+  let credentialed = false;
+  let body = false;
+  let sameOriginPage = false;
+  for (const resolver of spec.resolve) {
+    if (resolver.kind !== "http") continue;
+    const requests = resolver.sources
+      ? Object.values(resolver.sources).map((source) => ({
+          credentials: source.credentials ?? resolver.credentials ?? false,
+          body: source.body,
+        }))
+      : [{ credentials: resolver.credentials ?? false, body: resolver.body }];
+    for (const request of requests) {
+      if (!request.credentials) continue;
+      credentialed = true;
+      body ||= request.body !== undefined;
+      sameOriginPage ||= request.credentials === "same-origin-page";
+    }
   }
-  if (credentialed.length > 0) return ["credentialed-http"];
-  return ["browser-session"];
+  const required: BrowserCapability[] = body
+    ? ["credentialed-http-body"]
+    : credentialed
+      ? ["credentialed-http"]
+      : ["browser-session"];
+  if (sameOriginPage) required.push("same-origin-page-http");
+  return required;
 }
 
 function backendSupports(
@@ -442,6 +484,7 @@ function backendSupports(
   if (backend.supports) return backend.supports(capability);
   // Compatibility for custom transports/backends built against the previous
   // interface. Session support was implicit; httpFetch advertised cookie fetch.
+  if (capability === "same-origin-page-http") return false;
   return capability === "browser-session" || backend.httpFetch !== undefined;
 }
 
@@ -456,7 +499,9 @@ function capabilityMismatch(
         ? "credentialed HTTP request bodies"
         : capability === "credentialed-http"
           ? "credentialed HTTP requests"
-          : "browser sessions"
+          : capability === "same-origin-page-http"
+            ? "same-origin page HTTP requests"
+            : "browser sessions"
     )
     .join(", ");
   const connected = backends
@@ -480,6 +525,17 @@ function capabilityMismatch(
       fallback +
       " Update the Lens CLI and Chrome extension together and reload the extension at chrome://extensions, or enable the CDP fallback."
   );
+}
+
+function requiredBackendUnavailable(cause?: unknown): Error & {
+  code: "required_backend_unavailable";
+} {
+  const error = new Error(
+    "This request requires a same-origin page context, but no compatible browser backend is available." +
+      (cause ? ` ${errorMessage(cause)}` : "")
+  ) as Error & { code: "required_backend_unavailable" };
+  error.code = "required_backend_unavailable";
+  return error;
 }
 
 function waitForPreferredBackend(

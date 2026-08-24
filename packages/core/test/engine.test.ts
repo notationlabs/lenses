@@ -1188,6 +1188,83 @@ describe("http tier chained sources", () => {
     });
   });
 
+  it("applies source-specific credentials and evaluates headers against earlier bindings", async () => {
+    const requests: unknown[] = [];
+    const spec = validateSpec({
+      name: "@example/api/delete",
+      url: "https://example.com/items/1",
+      effects: { reads: ["example.com"], writes: ["example.com"] },
+      resolve: [{
+        kind: "http",
+        credentials: true,
+        sources: {
+          confirmation: { request: "GET https://example.com/items/1/confirm" },
+          deleted: {
+            request: "POST https://example.com/items/1",
+            credentials: "same-origin-page",
+            headers: {
+              "X-CSRF-Token": "$confirmation.token",
+              "X-Requested-With": "'XMLHttpRequest'",
+            },
+            body: { search: { _method: "'delete'" } },
+          },
+        },
+      }],
+    });
+    const r = await executeLens(spec, {}, io({
+      httpFetch: async (request) => {
+        requests.push(request);
+        return {
+          url: request.url,
+          method: request.method,
+          status: 200,
+          body: request.method === "GET" ? '{"token":"csrf-1"}' : '{"ok":true}',
+          timestamp: Date.now(),
+        };
+      },
+    }));
+
+    expect(r).toMatchObject({ kind: "value", resolver: "http" });
+    expect(requests).toEqual([
+      expect.objectContaining({ method: "GET", credentials: true }),
+      expect.objectContaining({
+        method: "POST",
+        credentials: "same-origin-page",
+        headers: {
+          "X-CSRF-Token": "csrf-1",
+          "X-Requested-With": "XMLHttpRequest",
+        },
+        body: { kind: "search", entries: [["_method", "delete"]] },
+      }),
+    ]);
+  });
+
+  it("does not fall through after an ambiguous non-idempotent request failure", async () => {
+    let domRead = false;
+    const spec = validateSpec({
+      name: "@example/api/delete",
+      url: "https://example.com/items/1",
+      effects: { reads: ["example.com"], writes: ["example.com"] },
+      resolve: [
+        { kind: "http", request: "DELETE https://example.com/items/1", credentials: true },
+        { kind: "dom", fields: { ok: { selector: "h1" } } },
+      ],
+    });
+    const r = await executeLens(spec, {}, io({
+      httpFetch: async () => { throw new Error("connection closed"); },
+      domExtract: async () => {
+        domRead = true;
+        return { url: "https://example.com", title: "", value: { ok: true } };
+      },
+    }));
+
+    expect(r).toMatchObject({
+      kind: "error",
+      mutation: { submissionMayHaveHappened: true, performed: "unknown" },
+    });
+    expect(domRead).toBe(false);
+  });
+
   it("stops the chain on a detected outcome from the first source", async () => {
     const requested: string[] = [];
     const r = await executeLens(chained, {}, io({

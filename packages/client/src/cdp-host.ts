@@ -388,6 +388,7 @@ export function createCdpBackend(
       capabilities: ["browser-session", "credentialed-http", "credentialed-http-body"],
       diagnostic: lastConnectionError,
       reconnectAttempts,
+      sameOriginPageRequests: true,
     }),
     supports: () => true,
     lease: () =>

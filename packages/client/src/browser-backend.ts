@@ -21,7 +21,8 @@ export interface BackendHttpRequest {
 export type BrowserCapability =
   | "browser-session"
   | "credentialed-http"
-  | "credentialed-http-body";
+  | "credentialed-http-body"
+  | "same-origin-page-http";
 
 export interface BackendInfo {
   name: string;
@@ -34,6 +35,8 @@ export interface BackendInfo {
   diagnostic?: string;
   /** Connection attempts since this broker started (zero when not applicable). */
   reconnectAttempts?: number;
+  /** Whether this backend can execute fetch in the target site's page origin. */
+  sameOriginPageRequests: boolean;
 }
 
 export interface BindRequest {

@@ -29,7 +29,9 @@ export async function runHttp(
   const fetchOne = async (
     pattern: string,
     holes: Record<string, unknown>,
-    bodySpec?: HttpBody
+    bodySpec?: HttpBody,
+    credentials = r.credentials ?? false,
+    sourceHeaders?: Record<string, string>
   ) => {
     const space = pattern.indexOf(" ");
     const method = space === -1 ? "GET" : pattern.slice(0, space).toUpperCase();
@@ -37,15 +39,40 @@ export async function runHttp(
       expandDottedHoles(space === -1 ? pattern : pattern.slice(space + 1), holes),
       holes
     );
-    const headers = r.headers
+    const headers: Record<string, string> = r.headers
       ? Object.fromEntries(
           Object.entries(r.headers).map(([name, value]) => [name, expandTemplate(value, holes)])
         )
-      : undefined;
+      : {};
+    for (const [name, expression] of Object.entries(sourceHeaders ?? {})) {
+      const value = await evaluate(expression, holes, holes, spec.helpers);
+      if (value === undefined || value === null || typeof value === "object") {
+        throw new Error(`http header "${name}" must evaluate to a scalar`);
+      }
+      headers[name] = String(value);
+    }
     const body = bodySpec
       ? await materialiseBody(bodySpec, holes, spec.helpers)
       : undefined;
-    return io.httpFetch!({ method, url, headers, body, credentials: r.credentials ?? false });
+    try {
+      return await io.httpFetch!({
+        method,
+        url,
+        headers: Object.keys(headers).length ? headers : undefined,
+        ...(body ? { body } : {}),
+        credentials,
+      });
+    } catch (error) {
+      if (typeof error === "object" && error !== null && "code" in error &&
+          error.code === "required_backend_unavailable") {
+        throw error;
+      }
+      const ambiguous = new Error(error instanceof Error ? error.message : String(error)) as Error & {
+        transmissionAmbiguous: true;
+      };
+      ambiguous.transmissionAmbiguous = true;
+      throw ambiguous;
+    }
   };
 
   if (r.sources) {
@@ -56,8 +83,16 @@ export async function runHttp(
     for (const [name, source] of Object.entries(r.sources)) {
       let response;
       try {
-        response = await fetchOne(source.request, { ...holes, ...bodies }, source.body);
+        response = await fetchOne(
+          source.request,
+          { ...holes, ...bodies },
+          source.body,
+          source.credentials ?? r.credentials ?? false,
+          source.headers
+        );
       } catch (error) {
+        const fatal = requestFailure(error, source.request, spec.effects.idempotent === true);
+        if (fatal) return fatal;
         return { kind: "miss", observed: failure(error) };
       }
       if (!response) return unsupported(r);
@@ -100,8 +135,9 @@ export async function runHttp(
   try {
     response = await fetchOne(r.request ?? spec.url, params, r.body);
   } catch (error) {
-    // A network failure is this tier's miss, not the call's: the page tiers
-    // reach the same site through the browser and may still succeed.
+    const fatal = requestFailure(error, r.request ?? spec.url, spec.effects.idempotent === true);
+    if (fatal) return fatal;
+    // Read-only and explicitly idempotent requests may still miss into another tier.
     return { kind: "miss", observed: failure(error) };
   }
   if (!response) return unsupported(r);
@@ -184,6 +220,35 @@ function expandDottedHoles(template: string, holes: Record<string, unknown>): st
 
 function failure(error: unknown): string {
   return `http request failed: ${error instanceof Error ? error.message : String(error)}`;
+}
+
+function requestFailure(
+  error: unknown,
+  request: string,
+  idempotent: boolean
+): Extract<LensResult, { kind: "error" }> | undefined {
+  if (typeof error === "object" && error !== null && "code" in error &&
+      error.code === "required_backend_unavailable") {
+    return {
+      kind: "error",
+      code: "required_backend_unavailable",
+      message: error instanceof Error ? error.message : String(error),
+    };
+  }
+  const space = request.indexOf(" ");
+  const method = (space === -1 ? "GET" : request.slice(0, space)).toUpperCase();
+  const ambiguous = typeof error === "object" && error !== null &&
+    "transmissionAmbiguous" in error && error.transmissionAmbiguous === true;
+  if (!ambiguous || ["GET", "HEAD", "OPTIONS"].includes(method) || idempotent) return undefined;
+  return {
+    kind: "error",
+    message: `HTTP ${method} request failed after transmission became ambiguous; refusing to retry through another resolver: ${error instanceof Error ? error.message : String(error)}`,
+    mutation: {
+      performStarted: true,
+      submissionMayHaveHappened: true,
+      performed: "unknown",
+    },
+  };
 }
 
 function unsupported(r: HttpResolver): ResolverMiss {

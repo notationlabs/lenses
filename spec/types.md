@@ -59,9 +59,13 @@ type MapSpec = string | Record<string, string>
 ```entity
 type HttpBody = {json: string} | {text: string} | {form: Record<string, string>} | {search: Record<string, string>}
 
+type HttpCredentials = boolean | "same-origin-page"
+
 type HttpSource = {
   request: string
   body?: HttpBody
+  credentials?: HttpCredentials
+  headers?: Record<string, string>
   items?: string
 }
 
@@ -71,7 +75,7 @@ type HttpResolver = {
   body?: HttpBody
   sources?: Record<string, HttpSource>
   headers?: Record<string, string>
-  credentials?: boolean
+  credentials?: HttpCredentials
   items?: string
   map?: MapSpec
   detect?: Record<string, string>

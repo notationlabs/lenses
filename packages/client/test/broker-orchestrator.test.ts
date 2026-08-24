@@ -100,6 +100,7 @@ class FakeBackend implements BrowserBackend {
   onBind?: () => void;
   httpFetch?: BrowserBackend["httpFetch"];
   supportsHttpBody = true;
+  sameOriginPageRequests: boolean;
   version?: string;
   negotiatedCapabilities?: string[];
   private readonly statusListeners = new Set<() => void>();
@@ -108,6 +109,7 @@ class FakeBackend implements BrowserBackend {
     this.name = name;
     this.isAvailable = available;
     this.session = session;
+    this.sameOriginPageRequests = name === "cdp";
   }
 
   available(): boolean {
@@ -119,11 +121,13 @@ class FakeBackend implements BrowserBackend {
       name: this.name,
       version: this.version,
       capabilities: this.negotiatedCapabilities,
+      sameOriginPageRequests: this.sameOriginPageRequests,
     };
   }
 
   supports(capability: BrowserCapability): boolean {
     if (capability === "browser-session") return true;
+    if (capability === "same-origin-page-http") return this.sameOriginPageRequests;
     if (!this.httpFetch) return false;
     return capability !== "credentialed-http-body" || this.supportsHttpBody;
   }
@@ -733,6 +737,103 @@ describe("write consent and execution", () => {
 
     expect(result).toMatchObject({ kind: "value", value: { ok: true } });
     expect(requests).toHaveLength(1);
+  });
+
+  it("selects per-source backends and uses CDP for a same-origin page mutation", async () => {
+    const extension = new FakeBackend("extension");
+    const extensionRequests: string[] = [];
+    extension.httpFetch = async (httpRequest) => {
+      extensionRequests.push(httpRequest.url);
+      return {
+        url: httpRequest.url,
+        method: httpRequest.method,
+        status: 200,
+        body: '{"token":"csrf-1"}',
+        timestamp: Date.now(),
+      };
+    };
+    const cdp = new FakeBackend("cdp", false);
+    const cdpRequests: unknown[] = [];
+    cdp.httpFetch = async (httpRequest) => {
+      cdpRequests.push(httpRequest);
+      return {
+        url: httpRequest.url,
+        method: httpRequest.method,
+        status: 200,
+        body: '{"deleted":true}',
+        timestamp: Date.now(),
+      };
+    };
+    const frames: BrokerFrame[] = [];
+    const orchestrator = createBrokerOrchestrator([extension, cdp], {
+      prepareFallback: async () => cdp.setAvailable(true),
+    });
+    await orchestrator.handle({
+      type: "call",
+      id: "same-origin-chain",
+      spec: {
+        name: "@example/delete",
+        url: "https://example.com/items/1",
+        effects: { reads: ["example.com"], writes: ["example.com"] },
+        resolve: [{
+          kind: "http",
+          credentials: true,
+          sources: {
+            confirmation: { request: "GET https://example.com/items/1/confirm" },
+            deleted: {
+              request: "POST https://example.com/items/1",
+              credentials: "same-origin-page",
+              headers: { "X-CSRF-Token": "$confirmation.token" },
+              body: { search: { _method: "'delete'" } },
+            },
+          },
+        }],
+      },
+      params: {},
+      timeoutMs: 1000,
+      allowWrites: true,
+    }, (frame) => frames.push(frame));
+
+    expect(extensionRequests).toEqual(["https://example.com/items/1/confirm"]);
+    expect(cdpRequests).toEqual([
+      expect.objectContaining({
+        method: "POST",
+        headers: { "X-CSRF-Token": "csrf-1" },
+      }),
+    ]);
+    expect(frames).toContainEqual(expect.objectContaining({
+      type: "progress",
+      message: "executing credentialed POST in same-origin page context via cdp",
+    }));
+  });
+
+  it("fails a same-origin page request before transmission when no backend qualifies", async () => {
+    const extension = new FakeBackend("extension");
+    const sent = vi.fn();
+    extension.httpFetch = sent;
+    const result = await request(createBrokerOrchestrator([extension]), {
+      type: "call",
+      id: "same-origin-unavailable",
+      spec: {
+        name: "@example/delete",
+        url: "https://example.com/items/1",
+        effects: { reads: ["example.com"], writes: ["example.com"] },
+        resolve: [{
+          kind: "http",
+          credentials: "same-origin-page",
+          request: "DELETE https://example.com/items/1",
+        }],
+      },
+      params: {},
+      timeoutMs: 1000,
+      allowWrites: true,
+    });
+
+    expect(result).toMatchObject({
+      kind: "error",
+      code: "required_backend_unavailable",
+    });
+    expect(sent).not.toHaveBeenCalled();
   });
 
   it("fails before execution with version and capability upgrade guidance", async () => {
