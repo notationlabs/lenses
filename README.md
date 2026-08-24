@@ -231,7 +231,7 @@ only validates tool inputs and formats tool results; all behavior lives in the c
 The engine walks resolver tiers in order. Each tier produces a result, contributes
 fields, detects a named outcome, or misses and falls through.
 
-- **http** makes its declared requests directly, without binding a page. Credential-free requests run in the broker's own process (no browser at all); `credentials: true` sends the browser's cookies — via the extension's service worker, or an already-open same-origin tab on the CDP fallback. `sources` chains requests, threading one response's values into the next request's URL.
+- **http** makes its declared requests directly. Credential-free requests run in the broker's own process; `credentials: true` sends browser cookies through any capable backend, while `credentials: "same-origin-page"` requires execution in an already-open page whose origin matches the request. `sources` chains requests and may choose the credential context per source.
 - **intercept** reads JSON responses already fetched by the page.
 - **dom** extracts fields from the rendered document with CSS selectors.
 - **llm** returns a page snapshot and extraction prompt to the caller.
@@ -252,7 +252,7 @@ lens MCP ────┘                           │             └─ CDP fa
                               core resolver engine
 ```
 
-The broker hosts the resolver engine, caching, retry policy, and page-retention policy once. Credential-free `http` tiers run in the broker process itself; everything else pins the call to one session backend: the extension is preferred when its protocol and capabilities are compatible, while the CDP backend supplies the same page lifecycle, network capture, and in-page extraction primitives as a fallback. The page is bound lazily — a call an `http` tier satisfies never launches or touches the browser.
+The broker hosts the resolver engine, caching, retry policy, and page-retention policy once. Credential-free `http` tiers run in the broker process itself. Bound-page work pins the call to one session backend, while chained HTTP requests select a backend per source so an extension read can precede a same-origin CDP mutation. The extension is otherwise preferred when compatible, with CDP as fallback. Pages are bound lazily.
 
 Browser calls use one explicit **serial queue** across clients; there is never concurrent mutation of the shared browser session. Queue time counts against each request deadline, and an expired queued request is rejected before browser work begins. If backend work outlives its caller timeout, subsequent calls receive `code: "broker_busy"` until that work settles rather than overlapping it. `lens status` / `broker_status` reports the policy, active call, queue depth, each backend's version and capabilities, last backend error, CDP reconnect attempts, and separate Chrome/extension reachability (unknown Chrome reachability is omitted until probed).
 
@@ -393,17 +393,23 @@ repeated fields.
   They require non-empty `effects.writes`, cannot be cached, and are refused unless
   the caller passes `--allow-writes`/`allowWrites`. Consent is checked before any
   request or browser bind.
-- `credentials: true` sends the browser's cookies. The extension serves this from
-  its service worker with no tab; the CDP fallback evaluates the fetch inside an
-  already-open same-origin tab, and misses when none is open. Without a
-  browser-backed host the tier misses into the page tiers.
+- `credentials` accepts `false`, `true`, or `"same-origin-page"`. `true` sends
+  browser cookies through any capable backend. `"same-origin-page"` also requires
+  the request to execute in a page whose origin matches its URL; currently CDP
+  provides this using an already-open matching tab. If no qualifying backend or
+  page exists, the call fails before transmission with
+  `code: "required_backend_unavailable"`.
+- A source may override the resolver's `credentials` and declare `headers` whose
+  JSONata values can reference earlier bindings (for example
+  `{ "X-CSRF-Token": "$confirmation.token" }`). Resolver-level headers remain
+  URL-style templates shared by every source.
 - `sources` chains requests in declaration order. Each binds its body as `$name`
   for `map` and `detect`, and later request templates address earlier bodies with
   dotted holes — `{orgs.0.uuid}` — which is how an id only another response knows
   reaches a URL. A detected outcome or non-2xx status stops the chain.
-- A network failure, an unexpandable hole, or an unsupported request is a miss,
-  never a call error: the page tiers reach the same site through the browser and
-  may still succeed.
+- Read-only and explicitly idempotent request failures may miss into later tiers.
+  An ambiguous failure from a non-idempotent mutation is a call error and is never
+  resent through another resolver.
 
 ### DOM resolver
 

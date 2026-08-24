@@ -190,11 +190,13 @@ export function createExtensionBackend(
         protocolMajor: reported?.protocolMajor,
         capabilities: reported ? [...reported.capabilities] : undefined,
         diagnostic: handshakeDiagnostic,
+        sameOriginPageRequests: false,
       };
     },
     supports(capability) {
       if (!hello) return false;
       if (capability === "browser-session") return true;
+      if (capability === "same-origin-page-http") return false;
       if (capability === "credentialed-http") {
         return hello.capabilities.includes("http-fetch");
       }

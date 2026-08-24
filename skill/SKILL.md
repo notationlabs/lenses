@@ -73,10 +73,11 @@ Authoring one: every write requires non-empty `effects.writes` and `cache` 0 or 
    - `http` — direct requests to a JSON API, no page bound (preferred when a
      public or cookie-authenticated endpoint exists). `request` is
      `"METHOD url-template"` (defaults to `GET` of the lens `url`); `items`/`map`
-     shape the body; `credentials: true` sends the browser's cookies (extension
-     service worker, or an already-open same-origin tab on the CDP fallback),
-     otherwise the tier misses into the page tiers. `sources` chains requests:
-     each binds `$name` for `map`/`detect`, and later request templates address
+     shape the body; `credentials: true` sends browser cookies through any
+     capable backend, while `credentials: "same-origin-page"` requires execution
+     in an already-open page matching the request origin. Sources may override
+     credentials and define JSONata headers using earlier bindings. `sources`
+     chains requests: each binds `$name` for `map`/`detect`, and later templates address
      earlier bodies with dotted holes — `{orgs.0.uuid}` — which is how an id
      only another response knows reaches a URL.
    - `intercept` — map a JSON response the page already fetched.

@@ -21,7 +21,7 @@ The @author writes a lens as one JSON file. !validate accepts the raw JSON and r
 - **Defs are object shapes:** Every `$defs` entry must be `{type: "object", fields?}`; refs exist so a field map can contain itself, and only object types carry the recursive edge.
 - **Refs resolve:** Every `{$ref}` in `returns` or `$defs` must name an entry in `$defs`.
 - **URL holes declared:** Every `{name}` hole in $LensDocument.url must name a declared parameter.
-- **Http holes declared:** Every hole in an http resolver's `request`, `headers` values, and chained source requests must name a declared parameter or a source declared earlier in the same resolver (dotted holes such as `{orgs.0.uuid}` bind from the named source's body).
+- **Http holes declared:** Every hole in an http resolver's `request`, resolver-level `headers` values, and chained source requests must name a declared parameter or a source declared earlier in the same resolver (dotted holes such as `{orgs.0.uuid}` bind from the named source's body). Source-level headers are JSONata expressions evaluated when that source runs and may reference earlier `$source` bindings.
 - **Selector holes declared:** Every hole in a dom resolver's `item`, field `selector`, or field `scope` must name a declared parameter.
 - **At least one resolver:** $LensDocument.resolve must contain at least one resolver.
 - **Perform step union:** Each `perform` entry must be exactly one step form — `{fill, value}`, `{click}`, `{press}`, `{wait}`, or `{navigate: "fresh"}` — and a `wait` must declare exactly one of `appears`, `gone`, or `increases` (plus optional `timeoutMs`); unknown keys fail closed. `perform`, when present, must be non-empty.

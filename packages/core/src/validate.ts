@@ -11,9 +11,12 @@ const httpBodySchema = z.union([
   z.strictObject({ search: bodyFields }),
   z.strictObject({ text: expression }),
 ]);
+const credentials = z.union([z.boolean(), z.literal("same-origin-page")]);
 const httpSourceSchema = z.strictObject({
   request: z.string(),
   body: httpBodySchema.optional(),
+  credentials: credentials.optional(),
+  headers: z.record(z.string(), expression).optional(),
   items: expression.optional(),
 });
 
@@ -24,7 +27,7 @@ const httpSchema = z
     body: httpBodySchema.optional(),
     sources: z.record(z.string(), httpSourceSchema).optional(),
     headers: z.record(z.string(), z.string()).optional(),
-    credentials: z.boolean().optional(),
+    credentials: credentials.optional(),
     items: expression.optional(),
     map: z.union([expression, z.record(z.string(), expression)]).optional(),
     detect: detect.optional(),

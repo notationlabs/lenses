@@ -31,6 +31,7 @@ export interface BrokerBackendStatus {
   capabilities?: string[];
   diagnostic?: string;
   reconnectAttempts?: number;
+  sameOriginPageRequests?: boolean;
 }
 
 export interface BrokerDiagnostics {
