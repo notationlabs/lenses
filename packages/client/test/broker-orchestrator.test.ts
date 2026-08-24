@@ -17,6 +17,7 @@ import {
 import type {
   BindRequest,
   BrowserBackend,
+  BrowserCapability,
   BrowserSession,
   FinishDisposition,
   InterceptDelta,
@@ -98,6 +99,9 @@ class FakeBackend implements BrowserBackend {
   authGate?: { url: string; target: string };
   onBind?: () => void;
   httpFetch?: BrowserBackend["httpFetch"];
+  supportsHttpBody = true;
+  version?: string;
+  negotiatedCapabilities?: string[];
   private readonly statusListeners = new Set<() => void>();
 
   constructor(name: string, available = true, session = new FakeSession()) {
@@ -111,7 +115,17 @@ class FakeBackend implements BrowserBackend {
   }
 
   info() {
-    return { name: this.name };
+    return {
+      name: this.name,
+      version: this.version,
+      capabilities: this.negotiatedCapabilities,
+    };
+  }
+
+  supports(capability: BrowserCapability): boolean {
+    if (capability === "browser-session") return true;
+    if (!this.httpFetch) return false;
+    return capability !== "credentialed-http-body" || this.supportsHttpBody;
   }
 
   onStatusChange(listener: () => void): () => void {
@@ -665,6 +679,86 @@ describe("write consent and execution", () => {
       expect.objectContaining({ method: "PUT", body: { kind: "search", entries: [["value", "new"]] } }),
     ]);
     expect(second).not.toHaveProperty("cached");
+  });
+
+  it("selects a capable CDP fallback when an older extension cannot send request bodies", async () => {
+    const extension = new FakeBackend("extension");
+    extension.httpFetch = async () => {
+      throw new Error("stale extension must not execute the request");
+    };
+    extension.supportsHttpBody = false;
+    extension.version = "0.1.0";
+    extension.negotiatedCapabilities = ["http-fetch"];
+    const cdp = new FakeBackend("cdp", false);
+    const requests: unknown[] = [];
+    cdp.httpFetch = async (httpRequest) => {
+      requests.push(httpRequest);
+      return {
+        url: httpRequest.url,
+        method: httpRequest.method,
+        status: 200,
+        body: '{"ok":true}',
+        timestamp: Date.now(),
+      };
+    };
+    const orchestrator = createBrokerOrchestrator([extension, cdp], {
+      prepareFallback: async () => cdp.setAvailable(true),
+    });
+    const result = await request(orchestrator, {
+      type: "call",
+      id: "capable-fallback",
+      spec: {
+        name: "@example/api/update",
+        url: "https://example.com/api",
+        effects: { reads: ["example.com"], writes: ["example.com"] },
+        resolve: [{
+          kind: "http",
+          credentials: true,
+          request: "POST https://example.com/api",
+          body: { json: "{}" },
+        }],
+      },
+      params: {},
+      timeoutMs: 1000,
+      allowWrites: true,
+    });
+
+    expect(result).toMatchObject({ kind: "value", value: { ok: true } });
+    expect(requests).toHaveLength(1);
+  });
+
+  it("fails before execution with version and capability upgrade guidance", async () => {
+    const extension = new FakeBackend("extension");
+    extension.httpFetch = async () => {
+      throw new Error("must not execute");
+    };
+    extension.supportsHttpBody = false;
+    extension.version = "0.1.0";
+    extension.negotiatedCapabilities = ["sessions", "http-fetch"];
+    const result = await request(createBrokerOrchestrator([extension]), {
+      type: "call",
+      id: "capability-mismatch",
+      spec: {
+        name: "@example/api/update",
+        url: "https://example.com/api",
+        effects: { reads: ["example.com"], writes: ["example.com"] },
+        resolve: [{
+          kind: "http",
+          credentials: true,
+          request: "POST https://example.com/api",
+          body: { json: "{}" },
+        }],
+      },
+      params: {},
+      timeoutMs: 1000,
+      allowWrites: true,
+    });
+
+    expect(result).toMatchObject({ kind: "error" });
+    expect((result as { message: string }).message).toContain("credentialed HTTP request bodies");
+    expect((result as { message: string }).message).toContain("extension 0.1.0");
+    expect((result as { message: string }).message).toContain("http-fetch");
+    expect((result as { message: string }).message).toContain("chrome://extensions");
   });
 
   it("runs perform with allowWrites, binding with reuse navigation", async () => {

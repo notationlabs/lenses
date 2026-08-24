@@ -21,12 +21,15 @@ Every client shares one detached broker process per port (default 4319) that hos
 - **Idle re-check:** The exit timer re-checks idleness when it fires — work arriving between the last reset and the deadline cancels the exit.
 - **Idle lease release:** Automatic release of the CDP lease while idle is opt-in via `LENS_BROKER_IDLE_RELEASE_MS` (default off).
 - **Lease control:** The control actions are `release` (drop the CDP connection so other tools can use Chrome's single consented debugging slot), `acquire` (reconnect), `status` (report without side effects), and `shutdown` (retire the broker).
+- **Capability-aware selection:** Before execution, the broker derives required capabilities from the lens. A connected extension that cannot carry a credentialed HTTP body is skipped in favour of capable CDP; if no capable backend can be acquired, the call fails before making the request with extension version, negotiated capabilities, and upgrade guidance.
+- **Status negotiation:** Status reports the selected backend and capabilities plus every backend's availability, version, protocol major, negotiated capabilities, and compatibility diagnostic. CLI/extension protocol or capability skew is identified as such and advises updating both components together.
 
 ## Failures
 
 - **Whole-call deadline:** A call carries its absolute client-side deadline, so queue time counts and a stuck backend operation cannot permanently block the broker's serial request queue.
 - **Timeout diagnostics:** Timeout errors identify the canonical lens, broker call ID, recording call ID when present, and the last broker progress message observed by the client.
 - **Broker disconnect:** When the broker socket closes, every pending call resolves as an error result `lens broker disconnected`.
+- **Extension receiver loss:** Chrome transport strings such as `Receiving end does not exist` are never returned directly. Calls receive a Lens error naming the extension backend, failed operation, lost capability, and reload/CDP recovery choices; an in-progress session is not silently replayed on another backend.
 
 ## Invariants
 

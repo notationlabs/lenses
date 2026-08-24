@@ -298,12 +298,20 @@ const runShutdown = createShutdownSequence({
 
 function sendStatus(socket: WebSocket): void {
   const preferred = extension.available() ? extension : cdp;
+  const backends = [extension, cdp].map((backend) => ({
+    ...backend.info(),
+    available: backend.available(),
+  }));
+  const selected = preferred.available() ? preferred.info() : undefined;
   send(socket, {
     type: "status",
     stamp: buildStamp,
     connected: preferred.available(),
     lease: cdp.lease(),
-    ua: preferred.available() ? preferred.info().detail : undefined,
+    backend: selected?.name,
+    ua: selected?.detail,
+    capabilities: selected?.capabilities ?? [],
+    backends,
     advice: describeGap(),
   });
 }
@@ -314,6 +322,8 @@ function sendStatus(socket: WebSocket): void {
  * but its debugging endpoint is unconsented.
  */
 function describeGap(): string | undefined {
+  const extensionDiagnostic = extension.info().diagnostic;
+  if (extensionDiagnostic) return `Lens extension compatibility mismatch: ${extensionDiagnostic}`;
   if (extension.available() || cdp.available()) return undefined;
   if (!extensionExpected) {
     return "the lens extension is not installed; calls use the CDP fallback and Chrome will ask you to click Allow";

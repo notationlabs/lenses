@@ -510,6 +510,10 @@ export class LensClient {
       lease: transport.lease ?? (transport.connected ? "held" : "disconnected"),
       broker: transport.info,
       port: transport.port,
+      backend: transport.backend,
+      capabilities: [...(transport.capabilities ?? [])],
+      backends: [...(transport.backends ?? [])],
+      advice: transport.advice,
     };
   }
 

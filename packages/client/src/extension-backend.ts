@@ -2,6 +2,7 @@ import { WebSocket } from "ws";
 import {
   EXTENSION_PROTOCOL_MAJOR,
   decodeExtensionBrokerMessage,
+  decodeExtensionHello,
   decodeExtensionRpcResponse,
   negotiateExtensionHello,
   type ExtensionHello,
@@ -33,6 +34,7 @@ interface PendingRpc {
   resolve(result: ExtensionRpcResult): void;
   reject(error: Error): void;
   timer: ReturnType<typeof setTimeout>;
+  operation: ExtensionRpcOperation["name"];
 }
 
 export function createExtensionBackend(
@@ -40,6 +42,8 @@ export function createExtensionBackend(
 ): ExtensionBackend {
   let socket: WebSocket | undefined;
   let hello: ExtensionHello | undefined;
+  let lastHello: ExtensionHello | undefined;
+  let handshakeDiagnostic: string | undefined;
   let requestSequence = 0;
   const pending = new Map<string, PendingRpc>();
   const statusListeners = new Set<() => void>();
@@ -99,14 +103,18 @@ export function createExtensionBackend(
           )
         );
       }, Math.max(0, deadline - Date.now()));
-      pending.set(requestId, { resolve, reject, timer });
+      pending.set(requestId, { resolve, reject, timer, operation: operation.name });
       current.send(JSON.stringify(request), (error) => {
         if (!error) return;
         const active = pending.get(requestId);
         if (!active) return;
         clearTimeout(active.timer);
         pending.delete(requestId);
-        active.reject(new Error(`sending extension RPC: ${error.message}`));
+        active.reject(
+          isRawExtensionTransportError(error.message)
+            ? contextualExtensionTransportError(operation.name, error.message)
+            : new Error(`sending extension RPC ${operation.name} through extension backend: ${error.message}`)
+        );
       });
     });
   }
@@ -150,7 +158,9 @@ export function createExtensionBackend(
     clearTimeout(active.timer);
     pending.delete(response.requestId);
     if (response.ok) active.resolve(response.result);
-    else if (
+    else if (isRawExtensionTransportError(response.error.message)) {
+      active.reject(contextualExtensionTransportError(active.operation, response.error.message));
+    } else if (
       response.error.code === "invalid-request" &&
       hello?.pageStamp !== pageFunctionsStamp()
     ) {
@@ -169,12 +179,30 @@ export function createExtensionBackend(
     name: "extension",
     available: () =>
       socket?.readyState === WebSocket.OPEN && hello !== undefined,
-    info: () => ({
-      name: "extension",
-      detail: hello
-        ? `${hello.extensionVersion}${hello.ua ? ` ${hello.ua}` : ""}${pageStampNote(hello)}`
-        : undefined,
-    }),
+    info: () => {
+      const reported = hello ?? lastHello;
+      return {
+        name: "extension",
+        detail: reported
+          ? `${reported.extensionVersion}${reported.ua ? ` ${reported.ua}` : ""}${pageStampNote(reported)}`
+          : undefined,
+        version: reported?.extensionVersion,
+        protocolMajor: reported?.protocolMajor,
+        capabilities: reported ? [...reported.capabilities] : undefined,
+        diagnostic: handshakeDiagnostic,
+      };
+    },
+    supports(capability) {
+      if (!hello) return false;
+      if (capability === "browser-session") return true;
+      if (capability === "credentialed-http") {
+        return hello.capabilities.includes("http-fetch");
+      }
+      return (
+        hello.capabilities.includes("http-fetch") &&
+        hello.capabilities.includes("http-fetch-body")
+      );
+    },
     onStatusChange(listener) {
       statusListeners.add(listener);
       return () => statusListeners.delete(listener);
@@ -184,15 +212,23 @@ export function createExtensionBackend(
       try {
         accepted = negotiateExtensionHello(value);
       } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        try {
+          lastHello = decodeExtensionHello(value);
+        } catch {
+          lastHello = undefined;
+        }
+        handshakeDiagnostic = `${reason}; update the Lens CLI and Chrome extension together, then reload the extension at chrome://extensions`;
         current.send(
           JSON.stringify({
             type: "extension-hello-result",
             accepted: false,
             protocolMajor: EXTENSION_PROTOCOL_MAJOR,
-            reason: error instanceof Error ? error.message : String(error),
+            reason: handshakeDiagnostic,
           })
         );
         current.close();
+        notifyStatusChange();
         return false;
       }
 
@@ -200,6 +236,8 @@ export function createExtensionBackend(
       if (previous) rejectPending("browser extension connection replaced");
       socket = current;
       hello = accepted;
+      lastHello = accepted;
+      handshakeDiagnostic = undefined;
       previous?.close();
       current.send(
         JSON.stringify({
@@ -374,6 +412,28 @@ function performBudgetMs(steps: PerformStep[]): number {
     (total, step) =>
       "wait" in step ? total + (step.wait.timeoutMs ?? 10_000) : total,
     DEFAULT_RPC_TIMEOUT_MS
+  );
+}
+
+const RAW_EXTENSION_TRANSPORT_ERROR =
+  /receiving end does not exist|could not establish connection|message port closed/i;
+
+function isRawExtensionTransportError(message: string): boolean {
+  return RAW_EXTENSION_TRANSPORT_ERROR.test(message);
+}
+
+export function contextualExtensionTransportError(
+  operation: ExtensionRpcOperation["name"],
+  _rawMessage: string
+): Error {
+  const capability =
+    operation === "http-fetch"
+      ? "credentialed HTTP"
+      : operation === "bind"
+        ? "browser session binding"
+        : `session ${operation}`;
+  return new Error(
+    `Lens extension receiver was unavailable during ${operation}; the extension backend lost ${capability} capability. Reload the Lens extension at chrome://extensions and retry, or use the CDP fallback`
   );
 }
 

@@ -373,7 +373,12 @@ export function createCdpBackend(
   return {
     name: "cdp",
     available,
-    info: () => ({ name: "cdp", detail: browserVersion || undefined }),
+    info: () => ({
+      name: "cdp",
+      detail: browserVersion || undefined,
+      capabilities: ["browser-session", "credentialed-http", "credentialed-http-body"],
+    }),
+    supports: () => true,
     lease: () =>
       available() ? "held" : released ? "released" : "disconnected",
     async browserLive() {

@@ -74,7 +74,11 @@ describe("CDP host connection lifecycle", () => {
     host.start();
     await vi.waitFor(() => expect(host.available()).toBe(true));
     host.stop();
-    expect(host.info()).toEqual({ name: "cdp", detail: "Chrome/144.0.0.0" });
+    expect(host.info()).toMatchObject({
+      name: "cdp",
+      detail: "Chrome/144.0.0.0",
+      capabilities: ["browser-session", "credentialed-http", "credentialed-http-body"],
+    });
     expect(statuses).toEqual([true]);
 
     browser.emitDisconnected();
