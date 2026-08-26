@@ -27,6 +27,11 @@ import {
   type RecordingHandle,
   type RecordingOptions,
 } from "./recording.js";
+import { applyParameterDefaults, mergeParameterDefaults } from "./parameter-defaults.js";
+import {
+  userParameterDefaults,
+  type LensParameterDefaults,
+} from "./user-config.js";
 
 const DEFAULT_PORT_START = 4319;
 
@@ -42,6 +47,12 @@ export interface LensClientOptions {
   port?: number;
   transport?: LensTransport;
   log?: LensLogger;
+  /**
+   * Per-lens call parameter defaults keyed by canonical lens-name glob. These
+   * extend and override `params` in ~/.config/lenses/config.json; explicit call
+   * parameters always win.
+   */
+  parameterDefaults?: LensParameterDefaults;
 }
 
 export interface LensCall {
@@ -196,7 +207,8 @@ export class LensClient {
   constructor(
     private readonly store: LensStore,
     private readonly connect: LensTransport | (() => Promise<LensTransport>),
-    private readonly log: LensLogger = () => {}
+    private readonly log: LensLogger = () => {},
+    private readonly parameterDefaults: LensParameterDefaults = {}
   ) {}
 
   /** Bind the broker on first use, so constructing a client has no side effects. */
@@ -273,7 +285,11 @@ export class LensClient {
   private async callWithin(input: LensCall, refs: RefDefaultContext): Promise<LensCallResult> {
     this.log(`resolving lens ${input.lens}`);
     const spec = await this.store.resolve(input.lens);
-    const supplied = input.params ?? {};
+    const supplied = applyParameterDefaults(
+      spec.name,
+      input.params ?? {},
+      this.parameterDefaults
+    );
     const key = canonicalCallKey(spec.name, supplied);
     if (refs.stack.has(key)) {
       return {
@@ -590,7 +606,8 @@ export function createLensClient(options: LensClientOptions): LensClient {
     new LensStore(sources),
     options.transport ??
       (() => BrowserBridge.bind(options.port ?? DEFAULT_PORT_START, "127.0.0.1", log)),
-    log
+    log,
+    mergeParameterDefaults(userParameterDefaults(), options.parameterDefaults)
   );
 }
 
@@ -600,7 +617,15 @@ function validatePort(port: number): void {
   }
 }
 
-export { BrowserBridge, LensStore, parseCatalogSource, scanLensFiles, errorMessage };
+export {
+  BrowserBridge,
+  LensStore,
+  applyParameterDefaults,
+  mergeParameterDefaults,
+  parseCatalogSource,
+  scanLensFiles,
+  errorMessage,
+};
 export type {
   BrokerControlAction,
   BrokerLease,
@@ -608,6 +633,7 @@ export type {
   CatalogUpdate,
   LensFile,
   LensLogger,
+  LensParameterDefaults,
   LensTransport,
   LensTransportResult,
   RecordingHandle,

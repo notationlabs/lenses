@@ -16,9 +16,9 @@ The @caller configures ordered catalog sources; the store resolves names, files,
 - **Git materialisation:** A git source clones once with `--depth 1` (and `--branch <ref>` when a ref is given); !update re-fetches the ref with depth 1 and hard-resets to `FETCH_HEAD`.
 - **HTTP index shape:** An HTTP catalog is an index document `{"lenses": [...]}` whose string entries are document URLs resolved against the index URL; an entry may also inline a whole document.
 - **ETag revalidation:** The index is revalidated with `If-None-Match` on every load; a 304 serves the cached documents, a network failure serves the cached copy when one exists, and !update deletes the cache file so the next load refetches.
-- **Catalogue helpers:** A `catalog.json` beside the documents (or `helpers` in an HTTP index) supplies its `helpers` to every document, with a document's own entry of the same name winning; for HTTP sources the helpers are folded in before caching so the 304 and offline paths serve documents that already carry them.
+- **Catalogue settings:** A `catalog.json` beside the documents (or the HTTP index itself) may supply `helpers` and `params` to every document, with a document's own entry of the same name winning. Shared parameters let tenant catalogs declare one required input used by every URL. For HTTP sources settings are folded in before caching so the 304 and offline paths serve documents that already carry them.
 - **Ordered load:** Sources load in configuration order; a shortname declared by several sources resolves to the earliest one.
-- **Reference resolution:** A lens reference resolves as an `http(s)` URL fetched and validated directly, a path ending `.json` read from disk with the helpers of its own directory's `catalog.json`, or otherwise a scoped name or shortname looked up across the loaded sources.
+- **Reference resolution:** A lens reference resolves as an `http(s)` URL fetched and validated directly, a path ending `.json` read from disk with the settings of its own directory's `catalog.json`, or otherwise a scoped name or shortname looked up across the loaded sources.
 
 ## Failures
 

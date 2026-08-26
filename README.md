@@ -111,10 +111,29 @@ repository), or the URL of an HTTP catalog index —
 (whole documents may also be inlined). Scoped lens names must be unique across all
 sources; a contested shortname resolves to the earliest source. Git clones and HTTP
 indexes load from `~/.cache/lenses` once fetched; `lens update` (or `client.update()`)
-refreshes them from their origins.
+refreshes them from their origins. A directory's `catalog.json` (or an HTTP index) can declare
+`helpers` and shared `params` inherited by every lens, with each document winning on conflicts.
 
 The client owns lens discovery, reference resolution, parameter validation, TTL caching, and the
 local broker connection. `call` returns a `value`, a structured `outcome`, or an `error`.
+
+Tenant and account parameters that should not be repeated on every call can be defaulted by
+canonical lens-name glob in `~/.config/lenses/config.json`:
+
+```json
+{
+  "browser": { "profile": "Default" },
+  "params": {
+    "@djgrant/freeagent/*": { "account": "my-company" }
+  }
+}
+```
+
+Matching globs apply from least to most specific, and explicit call parameters always win. The
+same defaults can be supplied programmatically with
+`createLensClient({ catalog, parameterDefaults: { "@djgrant/freeagent/*": { account: "my-company" } } })`;
+these extend and override user configuration. Defaults still undergo each lens document's normal
+unknown-parameter, type, and enum validation.
 An `agent_extract` outcome contains the page snapshot and lens prompt for the consumer's
 own model; the client does not select or call an LLM provider.
 
