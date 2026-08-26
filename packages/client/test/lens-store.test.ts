@@ -3,7 +3,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { LensStore, parseCatalogSource } from "../src/index.js";
+import { LensStore, parseCatalogSource, scanLensFiles } from "../src/index.js";
 
 async function catalogDirectory(lenses: Record<string, string>): Promise<string> {
   const directory = await mkdtemp(join(tmpdir(), "lens-store-"));
@@ -50,7 +50,7 @@ describe("LensStore", () => {
   });
 });
 
-describe("catalog helpers", () => {
+describe("catalog settings", () => {
   const norm = 'function($s) { $trim($s) }';
 
   async function withCatalog(helpers: Record<string, string>, extra: Record<string, unknown> = {}) {
@@ -69,6 +69,26 @@ describe("catalog helpers", () => {
   it("does not read catalog.json as a lens document", async () => {
     const directory = await withCatalog({ norm });
     expect((await new LensStore([directory]).load()).map((s) => s.name)).toEqual(["@one/web/page"]);
+  });
+
+  it("gives every document shared parameters and lets document declarations win", async () => {
+    const directory = await withCatalog({}, { params: { account: "string", page: "integer" } });
+    await writeFile(
+      join(directory, "a.json"),
+      JSON.stringify({
+        name: "@one/web/page",
+        url: "https://{account}.example.com/{page}",
+        params: { page: { type: "integer", default: 1 } },
+        effects: { reads: ["example.com"], writes: [] },
+        resolve: [{ kind: "dom", fields: { title: { selector: "title" } } }],
+      })
+    );
+
+    const [spec] = await new LensStore([directory]).load();
+    expect(spec.params).toEqual({
+      account: "string",
+      page: { type: "integer", default: 1 },
+    });
   });
 
   it("lets a document's own helper of the same name win", async () => {
@@ -90,9 +110,26 @@ describe("catalog helpers", () => {
   // `lens call ./my-lens.json` is the documented way to test a document, so it
   // must see the same helpers a catalogue load would supply.
   it("applies them to a document resolved by file path", async () => {
-    const directory = await withCatalog({ norm });
+    const directory = await withCatalog({ norm }, { params: { account: "string" } });
     const spec = await new LensStore([]).resolve(join(directory, "a.json"));
     expect(spec.helpers).toEqual({ norm });
+    expect(spec.params).toEqual({ account: "string" });
+  });
+
+  it("applies shared parameters while scanning loose lens files", async () => {
+    const directory = await withCatalog({}, { params: { account: "string" } });
+    await writeFile(
+      join(directory, "a.json"),
+      JSON.stringify({
+        name: "@one/web/page",
+        url: "https://{account}.example.com/home",
+        effects: { reads: ["example.com"], writes: [] },
+        resolve: [{ kind: "dom", fields: { title: { selector: "title" } } }],
+      })
+    );
+
+    const [found] = await scanLensFiles(directory);
+    expect(found.spec.params).toEqual({ account: "string" });
   });
 });
 

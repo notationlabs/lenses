@@ -10,7 +10,8 @@ title: Validate call parameters
 
 ## Rules
 
-- **Unknown parameter rejected:** An input key that no declaration names fails with `unknown parameter "<key>"`.
+- **Configured defaults:** Before reference or document defaults resolve, the client applies per-lens parameter defaults from `params` in `~/.config/lenses/config.json` and from `LensClientOptions.parameterDefaults`. Keys are canonical lens-name globs; matching globs apply from least to most specific, programmatic values override user-config values for the same glob and parameter, and explicit call parameters win over every configured default. Nested parameter-default calls apply the configuration of their target lens independently.
+- **Unknown parameter rejected:** An input key that no declaration names fails with `unknown parameter "<key>"`; configured values receive the same check rather than being silently discarded.
 - **Missing parameter rejected:** A declared parameter with no input value and no `default` fails with `missing parameter "<key>"`.
 - **Default fill:** A declared literal `default` supplies the value when the input omits the key.
 - **Type check:** A value must match its declared type — `integer` via integrality, the others via `typeof`.

@@ -377,6 +377,38 @@ describe("LensClient", () => {
     });
   });
 
+  describe("configured parameter defaults", () => {
+    it("applies matching canonical-name globs from least to most specific", async () => {
+      const transport = new FakeTransport();
+      const client = new LensClient(
+        new LensStore(await fixtureDirectory(true)),
+        transport,
+        undefined,
+        {
+          "@example/*": { page: "scope" },
+          "@example/web/*": { page: "group" },
+          "@example/web/page": { page: "exact" },
+        }
+      );
+
+      await client.call({ lens: "web/page" });
+      expect(transport.lastParams).toEqual({ page: "exact" });
+    });
+
+    it("lets explicit call parameters override configured defaults", async () => {
+      const transport = new FakeTransport();
+      const client = new LensClient(
+        new LensStore(await fixtureDirectory(true)),
+        transport,
+        undefined,
+        { "@example/web/*": { page: "configured" } }
+      );
+
+      await client.call({ lens: "web/page", params: { page: "explicit" } });
+      expect(transport.lastParams).toEqual({ page: "explicit" });
+    });
+  });
+
   describe("{$lens} parameter defaults", () => {
     /** Routes canned results per lens name; records the order of engine calls. */
     class RoutingTransport extends FakeTransport {
