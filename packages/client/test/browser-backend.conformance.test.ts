@@ -34,7 +34,7 @@ import type {
   BrowserBackend,
   BrowserSession,
 } from "../src/browser-backend.js";
-import { createCdpBackend } from "../src/cdp-host.js";
+import { createCdpBackend, createDirectCdpTransport } from "../src/cdp-host.js";
 
 interface BackendFixture {
   backend: BrowserBackend;
@@ -534,7 +534,10 @@ class FakeBrowser {
 async function createCdpFixture(): Promise<BackendFixture> {
   const browser = new FakeBrowser();
   cdpState.browser = browser;
-  const backend = createCdpBackend(() => {}, async () => true);
+  const backend = createCdpBackend(
+    () => {},
+    createDirectCdpTransport(async () => true)
+  );
   return {
     backend,
     async emitCapture(capture) {

@@ -23,8 +23,7 @@
  * - /cdp/guid — full CDP interface for the lens broker
  * - /extension/guid — extension connection
  *
- * Protocol version advertised to the extension can be overridden with
- * PLAYWRIGHT_EXTENSION_PROTOCOL (used in tests).
+ * The advertised protocol version matches the relay implementation below.
  */
 
 import { createServer, type Server as HttpServer } from "node:http";
@@ -33,7 +32,6 @@ import type { IncomingMessage } from "node:http";
 import type { Duplex } from "node:stream";
 import { ExtensionProtocolV2 } from "./cdp-relay-v2.js";
 import { createDeferred } from "./deferred.js";
-import * as protocol from "./protocol.js";
 import type { CDPMessage } from "./browser-model.js";
 import type { ExtensionCommandV2, ExtensionEventsV2 } from "./protocol.js";
 
@@ -55,17 +53,11 @@ export class CDPRelayServer {
   private _extensionPath: string;
   private _cdpConnection: WebSocket | null = null;
   private _extensionConnection: ExtensionConnection | null = null;
-  private _protocolVersion: number;
   private _handler: ExtensionProtocolV2;
   private _extensionConnectionPromise = createDeferred<void>();
 
   constructor(log: Log = () => {}) {
     this._log = log;
-    this._protocolVersion = Number.parseInt(
-      process.env.PLAYWRIGHT_EXTENSION_PROTOCOL ?? String(protocol.VERSION),
-      10
-    );
-
     const sendCommand = (method: string, params: any): Promise<any> => {
       if (!this._extensionConnection) throw new Error("Extension not connected");
       return this._extensionConnection.send(method as keyof ExtensionCommandV2, params);
@@ -75,10 +67,6 @@ export class CDPRelayServer {
     const uuid = crypto.randomUUID();
     this._cdpPath = `/cdp/${uuid}`;
     this._extensionPath = `/extension/${uuid}`;
-  }
-
-  protocolVersion(): number {
-    return this._protocolVersion;
   }
 
   async start(): Promise<void> {
@@ -187,8 +175,10 @@ export class CDPRelayServer {
       ws.close(1000, "Another extension connection already established");
       return;
     }
-    this._extensionConnection = new ExtensionConnection(ws);
-    this._extensionConnection.onclose = (reason) => {
+    const connection = new ExtensionConnection(ws);
+    this._extensionConnection = connection;
+    connection.onclose = (reason) => {
+      if (this._extensionConnection === connection) this._extensionConnection = null;
       this._handler.onExtensionDisconnect(reason);
       this._closeCdpConnection(`Extension disconnected: ${reason}`);
     };
@@ -232,7 +222,9 @@ export class CDPRelayServer {
   }
 
   private _sendToCdpClient(message: CDPMessage): void {
-    this._cdpConnection?.send(JSON.stringify(message));
+    if (this._cdpConnection?.readyState === WebSocket.OPEN) {
+      this._cdpConnection.send(JSON.stringify(message));
+    }
   }
 }
 
@@ -244,12 +236,15 @@ type ExtensionResponse = {
   error?: string;
 };
 
+type PendingCommand = {
+  resolve: (value: any) => void;
+  reject: (error: Error) => void;
+  error: Error;
+};
+
 class ExtensionConnection {
   private readonly _ws: WebSocket;
-  private readonly _callbacks = new Map<
-    number,
-    { resolve: (value: any) => void; reject: (error: Error) => void; error: Error }
-  >();
+  private readonly _callbacks = new Map<number, PendingCommand>();
   private _lastId = 0;
 
   onmessage?: <M extends keyof ExtensionEventsV2>(
@@ -273,10 +268,16 @@ class ExtensionConnection {
       throw new Error(`Unexpected WebSocket state: ${this._ws.readyState}`);
     }
     const id = ++this._lastId;
-    this._ws.send(JSON.stringify({ id, method, params }));
     const error = new Error(`Protocol error: ${method}`);
     return new Promise((resolve, reject) => {
       this._callbacks.set(id, { resolve, reject, error });
+      this._ws.send(JSON.stringify({ id, method, params }), (sendError) => {
+        if (!sendError) return;
+        const pending = this._callbacks.get(id);
+        if (!pending) return;
+        this._callbacks.delete(id);
+        pending.reject(sendError);
+      });
     });
   }
 
@@ -289,15 +290,16 @@ class ExtensionConnection {
     try {
       parsedJson = JSON.parse(eventData) as ExtensionResponse;
     } catch {
-      this._ws.close();
+      this._ws.close(1002, "Invalid extension protocol message");
       return;
     }
     this._handleParsedMessage(parsedJson);
   }
 
   private _handleParsedMessage(object: ExtensionResponse) {
-    if (object.id && this._callbacks.has(object.id)) {
-      const callback = this._callbacks.get(object.id)!;
+    if (object.id !== undefined) {
+      const callback = this._callbacks.get(object.id);
+      if (!callback) return;
       this._callbacks.delete(object.id);
       if (object.error) {
         callback.error.message = object.error;
@@ -305,8 +307,10 @@ class ExtensionConnection {
       } else {
         callback.resolve(object.result);
       }
-    } else if (!object.id) {
-      this.onmessage?.(object.method! as keyof ExtensionEventsV2, object.params);
+      return;
+    }
+    if (object.method) {
+      this.onmessage?.(object.method as keyof ExtensionEventsV2, object.params);
     }
   }
 

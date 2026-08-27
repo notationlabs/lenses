@@ -24,6 +24,11 @@ export type LensTransportResult = LensResult & {
 export type BrokerLease = "held" | "released" | "disconnected";
 export type BrokerControlAction = "release" | "acquire" | "status" | "shutdown";
 
+export interface BrokerStartupOptions {
+  browserProfile?: string;
+  playwrightExtensionToken?: string;
+}
+
 export interface BrokerBackendStatus {
   name: string;
   available: boolean;
@@ -141,12 +146,14 @@ export class BrowserBridge implements LensTransport {
   static async bind(
     port: number,
     host = "127.0.0.1",
-    log: LensLogger = () => {}
+    log: LensLogger = () => {},
+    startup: BrokerStartupOptions = {}
   ): Promise<BrowserBridge> {
     if (host !== "127.0.0.1") throw new Error("the lens broker only listens on 127.0.0.1");
     const expected = brokerBuildStamp();
     for (let attempt = 1; attempt <= BROKER_BIND_ATTEMPTS; attempt += 1) {
-      const connection = (await connectBroker(port, 150)) ?? (await startBroker(port, log));
+      const connection =
+        (await connectBroker(port, 150)) ?? (await startBroker(port, log, startup));
       const stamp = connection.status.stamp;
       if (stamp !== undefined && stamp !== expected) {
         log(`lens broker on port ${port} runs build ${stamp}, expected ${expected}`);
@@ -442,12 +449,25 @@ function requestShutdown(connection: BrokerConnection, log: LensLogger): Promise
   });
 }
 
-async function startBroker(port: number, log: LensLogger): Promise<BrokerConnection> {
+async function startBroker(
+  port: number,
+  log: LensLogger,
+  startup: BrokerStartupOptions
+): Promise<BrokerConnection> {
   const source = import.meta.url.endsWith(".ts") ? "broker-daemon.ts" : "broker-daemon.js";
   const entry = fileURLToPath(new URL(source, import.meta.url));
   const child = spawn(process.execPath, [entry, String(port)], {
     detached: true,
     stdio: "ignore",
+    env: {
+      ...process.env,
+      ...(startup.browserProfile
+        ? { LENS_BROWSER_PROFILE: startup.browserProfile }
+        : {}),
+      ...(startup.playwrightExtensionToken
+        ? { PLAYWRIGHT_MCP_EXTENSION_TOKEN: startup.playwrightExtensionToken }
+        : {}),
+    },
   });
   child.unref();
   log(`started persistent lens broker on port ${port}`);

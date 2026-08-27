@@ -14,33 +14,38 @@ const CONNECT_MS = 45_000;
 const CONNECT_ATTEMPT_MS = CONNECT_MS + 10_000;
 const CLIENT_NAME = "Lenses";
 
-export function playwrightConnectPageUrl(
-  relayEndpoint: string,
-  protocolVersion = PLAYWRIGHT_EXTENSION_PROTOCOL
-): string {
+export function playwrightConnectPageUrl(relayEndpoint: string, token?: string): string {
   const url = new URL(`chrome-extension://${PLAYWRIGHT_EXTENSION_ID}/connect.html`);
   url.searchParams.set("mcpRelayUrl", relayEndpoint);
   url.searchParams.set("client", JSON.stringify({ name: CLIENT_NAME }));
-  url.searchParams.set("protocolVersion", String(protocolVersion));
-  const token = playwrightExtensionToken();
+  url.searchParams.set("protocolVersion", String(PLAYWRIGHT_EXTENSION_PROTOCOL));
   if (token) url.searchParams.set("token", token);
   return url.toString();
 }
 
-export interface PlaywrightExtensionHooks {
+export interface PlaywrightExtensionOptions {
+  profile?: string;
+  token?: string;
   openConnectPage?: (url: string) => Promise<void>;
 }
 
+type ResolvedPlaywrightExtensionOptions = PlaywrightExtensionOptions & { profile: string };
+
 export function createPlaywrightExtensionBackend(
   log: (message: string) => void = () => {},
-  hooks: PlaywrightExtensionHooks = {}
+  options: PlaywrightExtensionOptions = {}
 ): CdpBackend {
-  return createCdpBackend(log, undefined, createPlaywrightExtensionTransport(log, hooks));
+  const resolved = {
+    profile: options.profile ?? browserProfile(),
+    token: options.token ?? playwrightExtensionToken(),
+    openConnectPage: options.openConnectPage,
+  };
+  return createCdpBackend(log, createPlaywrightExtensionTransport(log, resolved));
 }
 
 function createPlaywrightExtensionTransport(
   log: (message: string) => void,
-  hooks: PlaywrightExtensionHooks
+  options: ResolvedPlaywrightExtensionOptions
 ): CdpTransport {
   let relay: CDPRelayServer | undefined;
 
@@ -69,14 +74,14 @@ function createPlaywrightExtensionTransport(
       relay = next;
       try {
         await next.start();
-        const connectUrl = playwrightConnectPageUrl(next.extensionEndpoint(), next.protocolVersion());
+        const connectUrl = playwrightConnectPageUrl(next.extensionEndpoint(), options.token);
         progress(
           "opening the Playwright Extension connect page — pick tabs for the Lenses group"
         );
         const open =
-          hooks.openConnectPage ??
+          options.openConnectPage ??
           (async (href: string) => {
-            if (!(await openUrlInChrome(href, browserProfile()))) {
+            if (!(await openUrlInChrome(href, options.profile))) {
               throw new Error("could not open the Playwright Extension connect page in Chrome");
             }
           });

@@ -61,16 +61,14 @@ export type CdpLease = "held" | "released" | "disconnected";
 export interface CdpTransport {
   readonly name: string;
   /** Poll DevToolsActivePort (or equivalent) and auto-connect. Off for the extension relay. */
-  readonly pollForConnection?: boolean;
-  readonly retryConnect?: boolean;
+  readonly pollForConnection: boolean;
+  readonly retryConnect: boolean;
   readonly connectAttemptMs?: number;
   connect(progress: (message: string) => void): Promise<Browser>;
   looksReady(): boolean;
   probeLive(): Promise<boolean>;
   connectHint(): string;
   staleHint(): string;
-  start?(tryConnect: () => void): void;
-  stop?(): void;
   dispose?(): void;
 }
 
@@ -98,8 +96,7 @@ interface CdpSession extends BrowserSession {
 
 export function createCdpBackend(
   log: (message: string) => void = () => {},
-  probeEndpoint?: () => Promise<boolean>,
-  transport: CdpTransport = createDirectCdpTransport(probeEndpoint)
+  transport: CdpTransport = createDirectCdpTransport()
 ): CdpBackend {
   let browser: Browser | undefined;
   let browserVersion = "";
@@ -392,22 +389,12 @@ export function createCdpBackend(
       await ensureBrowser(progress);
     },
     start() {
-      transport.start?.(() => {
-        void ensureBrowser(() => {}).catch((error) => {
-          log(
-            `${transport.name} connection failed: ${
-              error instanceof Error ? error.message : String(error)
-            }`
-          );
-        });
-      });
       if (!transport.pollForConnection) return;
       if (endpointPoll) return;
       pollEndpoint();
       endpointPoll = setInterval(pollEndpoint, ENDPOINT_POLL_MS);
     },
     stop() {
-      transport.stop?.();
       clearInterval(endpointPoll);
       endpointPoll = undefined;
     },
@@ -756,6 +743,7 @@ export function createDirectCdpTransport(
   return {
     name: "cdp",
     pollForConnection: true,
+    retryConnect: true,
     looksReady,
     probeLive,
     connectHint: () =>

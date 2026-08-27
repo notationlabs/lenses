@@ -38,11 +38,16 @@ type TabSession = {
   childSessions: Set<string>;
 };
 
+type TabState = {
+  session?: TabSession;
+  attachment?: Promise<TabSession>;
+};
+
 export class BrowserModel {
   private _sendToExtension: SendCommand;
   private _sendToCDPClient: SendToCDPClient | null = null;
-  private _knownTabs = new Map<number, Tab>();
-  private _tabSessions = new Map<number, TabSession>();
+  /** One lifecycle record per Chrome tab; session and attachment cannot drift into separate maps. */
+  private _tabs = new Map<number, TabState>();
   private _autoAttach = false;
   private _nextSessionId = 1;
 
@@ -60,20 +65,22 @@ export class BrowserModel {
 
   onTabCreated(tab: Tab): void {
     if (tab.id === undefined) return;
-    this._knownTabs.set(tab.id, tab);
+    if (!this._tabs.has(tab.id)) this._tabs.set(tab.id, {});
     if (this._autoAttach) {
       void this._attachTab(tab.id).catch((error) => console.error(error));
     }
   }
 
   onTabRemoved(tabId: number): void {
-    this._knownTabs.delete(tabId);
-    this._detachTab(tabId);
+    const state = this._tabs.get(tabId);
+    if (!state) return;
+    this._tabs.delete(tabId);
+    if (state.session) this._emitDetached(state.session);
   }
 
   onDebuggerEvent(source: DebuggerSession, method: string, params: any): void {
     if (source.tabId === undefined) return;
-    const tabSession = this._tabSessions.get(source.tabId);
+    const tabSession = this._tabs.get(source.tabId)?.session;
     if (!tabSession) return;
     const childSessionId = (params as { sessionId?: string } | undefined)?.sessionId;
     if (method === "Target.attachedToTarget" && childSessionId) {
@@ -91,7 +98,7 @@ export class BrowserModel {
 
   async enableAutoAttach(): Promise<void> {
     this._autoAttach = true;
-    const tabIds = [...this._knownTabs.keys()];
+    const tabIds = [...this._tabs.keys()];
     await Promise.all(
       tabIds.map((tabId) => this._attachTab(tabId).catch((error) => console.error(error)))
     );
@@ -100,7 +107,7 @@ export class BrowserModel {
   async createTarget(url: string | undefined): Promise<{ targetId: string | undefined }> {
     const tab = await this._sendToExtension("chrome.tabs.create", [{ url }]);
     if (tab?.id === undefined) throw new Error("Failed to create tab");
-    this._knownTabs.set(tab.id, tab);
+    if (!this._tabs.has(tab.id)) this._tabs.set(tab.id, {});
     const tabSession = await this._attachTab(tab.id);
     return { targetId: tabSession.targetInfo?.targetId };
   }
@@ -120,7 +127,7 @@ export class BrowserModel {
   }
 
   async sendBrowserCommand(method: string, params: any): Promise<any> {
-    const tabSession = this._tabSessions.values().next().value;
+    const tabSession = this._findTabSession(() => true);
     if (!tabSession) {
       throw new Error(`No attached tab to forward browser-level command: ${method}`);
     }
@@ -147,49 +154,73 @@ export class BrowserModel {
   }
 
   private async _attachTab(tabId: number): Promise<TabSession> {
-    const existing = this._tabSessions.get(tabId);
-    if (existing) return existing;
-    await this._sendToExtension("chrome.debugger.attach", [{ tabId }, "1.3"]);
-    const result = await this._sendToExtension("chrome.debugger.sendCommand", [
-      { tabId },
-      "Target.getTargetInfo",
-    ]);
-    const targetInfo = result?.targetInfo;
-    const sessionId = `pw-tab-${this._nextSessionId++}`;
-    const tabSession: TabSession = {
-      tabId,
-      sessionId,
-      targetInfo,
-      childSessions: new Set(),
-    };
-    this._tabSessions.set(tabId, tabSession);
-    this._emit({
-      method: "Target.attachedToTarget",
-      params: {
-        sessionId,
-        targetInfo: { ...targetInfo, attached: true },
-        waitingForDebugger: false,
-      },
+    const state = this._tabs.get(tabId);
+    if (!state) throw new Error(`Cannot attach unknown tab ${tabId}`);
+    if (state.session) return state.session;
+    if (state.attachment) return state.attachment;
+    const attachment = this._attachTabOnce(tabId, state).finally(() => {
+      if (state.attachment === attachment) state.attachment = undefined;
     });
-    return tabSession;
+    state.attachment = attachment;
+    return attachment;
+  }
+
+  private async _attachTabOnce(tabId: number, state: TabState): Promise<TabSession> {
+    let attached = false;
+    try {
+      await this._sendToExtension("chrome.debugger.attach", [{ tabId }, "1.3"]);
+      attached = true;
+      const result = await this._sendToExtension("chrome.debugger.sendCommand", [
+        { tabId },
+        "Target.getTargetInfo",
+      ]);
+      if (this._tabs.get(tabId) !== state) throw new Error(`Tab ${tabId} closed while attaching`);
+
+      const tabSession: TabSession = {
+        tabId,
+        sessionId: `pw-tab-${this._nextSessionId++}`,
+        targetInfo: result?.targetInfo,
+        childSessions: new Set(),
+      };
+      state.session = tabSession;
+      this._emit({
+        method: "Target.attachedToTarget",
+        params: {
+          sessionId: tabSession.sessionId,
+          targetInfo: { ...tabSession.targetInfo, attached: true },
+          waitingForDebugger: false,
+        },
+      });
+      return tabSession;
+    } catch (error) {
+      if (attached) {
+        await this._sendToExtension("chrome.debugger.detach", [{ tabId }]).catch(() => {});
+      }
+      throw error;
+    }
   }
 
   private _detachTab(tabId: number): void {
-    const tabSession = this._tabSessions.get(tabId);
-    if (!tabSession) return;
-    this._tabSessions.delete(tabId);
+    const state = this._tabs.get(tabId);
+    if (!state?.session) return;
+    const session = state.session;
+    state.session = undefined;
+    this._emitDetached(session);
+  }
+
+  private _emitDetached(session: TabSession): void {
     this._emit({
       method: "Target.detachedFromTarget",
       params: {
-        sessionId: tabSession.sessionId,
-        targetId: tabSession.targetInfo?.targetId,
+        sessionId: session.sessionId,
+        targetId: session.targetInfo?.targetId,
       },
     });
   }
 
   private _findTabSession(predicate: (session: TabSession) => boolean): TabSession | undefined {
-    for (const session of this._tabSessions.values()) {
-      if (predicate(session)) return session;
+    for (const state of this._tabs.values()) {
+      if (state.session && predicate(state.session)) return state.session;
     }
     return undefined;
   }

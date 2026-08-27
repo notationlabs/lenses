@@ -13,8 +13,6 @@ import { dirname, join } from "node:path";
 interface AuthState {
   version: 1;
   brokerToken: string;
-  /** Retained for existing credential files; the bundled extension is gone. */
-  extensions: Record<string, string>;
 }
 
 export function brokerAuthPath(): string {
@@ -33,9 +31,7 @@ export function loadBrokerAuth(): AuthState {
     if (
       value.version !== 1 ||
       typeof value.brokerToken !== "string" ||
-      value.brokerToken.length < 32 ||
-      typeof value.extensions !== "object" ||
-      value.extensions === null
+      value.brokerToken.length < 32
     ) throw new Error("invalid broker credential file");
     chmodSync(path, 0o600);
     return value;
@@ -46,7 +42,6 @@ export function loadBrokerAuth(): AuthState {
   const initial: AuthState = {
     version: 1,
     brokerToken: randomBytes(32).toString("base64url"),
-    extensions: {},
   };
   try {
     const fd = openSync(path, "wx", 0o600);
