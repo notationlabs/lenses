@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
+import { BrowserModel } from "../src/playwright-relay/browser-model.js";
 import { CDPRelayServer } from "../src/playwright-relay/cdp-relay.js";
 
 class FakeExtension {
@@ -21,9 +22,13 @@ class FakeExtension {
       };
       if (message.id === undefined || !message.method) return;
       this.commands.push({ method: message.method, params: message.params });
-      this.socket!.send(
-        JSON.stringify({ id: message.id, result: this.result(message.method, message.params) })
-      );
+      const result = this.result(message.method, message.params);
+      if (message.method === "chrome.tabs.create") {
+        // Chrome emits onCreated as part of the same operation. The relay must
+        // coalesce auto-attach with createTarget's explicit attach.
+        this.socket!.send(JSON.stringify({ method: "chrome.tabs.onCreated", params: [result] }));
+      }
+      this.socket!.send(JSON.stringify({ id: message.id, result }));
     });
     this.socket.send(
       JSON.stringify({
@@ -85,6 +90,34 @@ describe("Playwright CDP relay", () => {
     cdp = undefined;
   });
 
+  it("detaches a tab when initialization fails", async () => {
+    const commands: string[] = [];
+    const model = new BrowserModel(async (method) => {
+      commands.push(method);
+      if (method === "chrome.tabs.create") {
+        return {
+          id: 1,
+          index: 0,
+          windowId: 1,
+          active: true,
+          pinned: false,
+        };
+      }
+      if (method === "chrome.debugger.sendCommand") throw new Error("target disappeared");
+      return undefined;
+    });
+
+    await expect(model.createTarget("https://example.com/")).rejects.toThrow(
+      "target disappeared"
+    );
+    expect(commands).toEqual([
+      "chrome.tabs.create",
+      "chrome.debugger.attach",
+      "chrome.debugger.sendCommand",
+      "chrome.debugger.detach",
+    ]);
+  });
+
   it("translates Target.createTarget into chrome.tabs.create after handshake", async () => {
     relay = new CDPRelayServer();
     await relay.start();
@@ -112,6 +145,9 @@ describe("Playwright CDP relay", () => {
     await viWait(() => replies.some((row) => (row as { id?: number }).id === 2));
 
     expect(extension.commands.map((command) => command.method)).toContain("chrome.tabs.create");
+    expect(
+      extension.commands.filter((command) => command.method === "chrome.debugger.attach")
+    ).toHaveLength(2); // the initial tab and the newly-created tab, once each
     expect(extension.commands).toContainEqual({
       method: "chrome.tabs.create",
       params: [{ url: "https://example.com/new" }],

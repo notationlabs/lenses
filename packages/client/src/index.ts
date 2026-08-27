@@ -47,9 +47,9 @@ export interface LensClientOptions {
   port?: number;
   transport?: LensTransport;
   log?: LensLogger;
-  /** Chrome profile directory, e.g. "Default" or "Profile 4". Overrides config/env. */
+  /** Chrome profile for a broker started by this client, e.g. "Default" or "Profile 4". */
   browserProfile?: string;
-  /** Playwright Extension connect token. Overrides config/env. */
+  /** Playwright Extension token for a broker started by this client. */
   playwrightExtensionToken?: string;
   /**
    * Per-lens call parameter defaults keyed by canonical lens-name glob. These
@@ -605,15 +605,15 @@ export function createLensClient(options: LensClientOptions): LensClient {
   }
   const sources = catalogs.map(parseCatalogSource);
   const log = options.log ?? (() => {});
-  if (options.browserProfile) process.env.LENS_BROWSER_PROFILE = options.browserProfile;
-  if (options.playwrightExtensionToken) {
-    process.env.PLAYWRIGHT_MCP_EXTENSION_TOKEN = options.playwrightExtensionToken;
-  }
   log(`using lens catalog(s) ${sources.map((source) => source.id).join(", ")}`);
   return new LensClient(
     new LensStore(sources),
     options.transport ??
-      (() => BrowserBridge.bind(options.port ?? DEFAULT_PORT_START, "127.0.0.1", log)),
+      (() =>
+        BrowserBridge.bind(options.port ?? DEFAULT_PORT_START, "127.0.0.1", log, {
+          browserProfile: options.browserProfile,
+          playwrightExtensionToken: options.playwrightExtensionToken,
+        })),
     log,
     mergeParameterDefaults(userParameterDefaults(), options.parameterDefaults)
   );

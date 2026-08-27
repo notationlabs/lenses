@@ -23,31 +23,6 @@ export function defaultChromeUserDataDir(): string {
   }
 }
 
-export function chromeExecutablePath(): string | undefined {
-  switch (process.platform) {
-    case "darwin": {
-      const path = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
-      return existsSync(path) ? path : undefined;
-    }
-    case "win32": {
-      const path = join(
-        process.env.PROGRAMFILES ?? "C:\\Program Files",
-        "Google",
-        "Chrome",
-        "Application",
-        "chrome.exe"
-      );
-      return existsSync(path) ? path : undefined;
-    }
-    default: {
-      for (const path of ["/usr/bin/google-chrome", "/usr/bin/google-chrome-stable", "/usr/bin/chromium"]) {
-        if (existsSync(path)) return path;
-      }
-      return undefined;
-    }
-  }
-}
-
 /**
  * Whether the Playwright Extension is unpacked or Web-Store-installed in this
  * Chrome profile. Group membership is an automation boundary, not a proof of
