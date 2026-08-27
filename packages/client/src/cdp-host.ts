@@ -430,9 +430,9 @@ export function createCdpBackend(
       return undefined;
     },
     /**
-     * A same-origin fetch evaluated inside a grouped/attached page. Prefer an
-     * already-open tab on the origin; otherwise open a temporary same-origin
-     * page, evaluate `fetch({ credentials: "include" })`, and close it.
+     * Cookie fetch in an already-open same-origin tab. Opening a page would
+     * cost the load this tier exists to avoid — except `same-origin-page`,
+     * which must have a document context and may create a temporary tab.
      */
     async httpFetch(request: BackendHttpRequest) {
       if (!browser?.connected) return undefined;
@@ -443,6 +443,7 @@ export function createCdpBackend(
       );
       let created = false;
       if (!page) {
+        if (request.context !== "same-origin-page") return undefined;
         try {
           page = await browser.newPage({ background: true });
           created = true;

@@ -904,7 +904,9 @@ describe("write consent and execution", () => {
     expect((result as { message: string }).message).toContain("credentialed HTTP request bodies");
     expect((result as { message: string }).message).toContain("extension 0.1.0");
     expect((result as { message: string }).message).toContain("http-fetch");
-    expect((result as { message: string }).message).toContain("chrome://extensions");
+    expect((result as { message: string }).message).toContain(
+      "chrome://inspect/#remote-debugging"
+    );
   });
 
   it("runs perform with allowWrites, binding with reuse navigation", async () => {

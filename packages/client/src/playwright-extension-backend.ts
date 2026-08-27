@@ -10,6 +10,8 @@ import {
 } from "./playwright-relay/protocol.js";
 
 const CONNECT_MS = 45_000;
+/** Outer connect budget: approval wait plus Puppeteer's handshake. */
+const CONNECT_ATTEMPT_MS = CONNECT_MS + 10_000;
 const CLIENT_NAME = "Lenses";
 
 export function playwrightConnectPageUrl(
@@ -51,7 +53,7 @@ function createPlaywrightExtensionTransport(
     name: "playwright-extension",
     pollForConnection: false,
     retryConnect: false,
-    connectAttemptMs: CONNECT_MS,
+    connectAttemptMs: CONNECT_ATTEMPT_MS,
     looksReady: () => true,
     probeLive: async () => true,
     connectHint: () =>
@@ -74,7 +76,9 @@ function createPlaywrightExtensionTransport(
         const open =
           hooks.openConnectPage ??
           (async (href: string) => {
-            await openUrlInChrome(href, browserProfile());
+            if (!(await openUrlInChrome(href, browserProfile()))) {
+              throw new Error("could not open the Playwright Extension connect page in Chrome");
+            }
           });
         await open(connectUrl);
         const timeout = AbortSignal.timeout(CONNECT_MS);

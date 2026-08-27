@@ -20,10 +20,10 @@ export interface IdleExitOptions {
 }
 
 /**
- * Exits the broker once nothing needs it. "Quiet" deliberately includes "no
- * extension attached": exiting under an attached extension would drop its
- * socket and force the extension through rediscovery, which is a worse trade
- * than a resident process. The next client respawns the broker on demand.
+ * Exits the broker once nothing needs it. "Quiet" includes no attached
+ * Playwright Extension relay: exiting would drop that socket and force the
+ * connect page again, which is a worse trade than a resident process. The next
+ * client respawns the broker on demand.
  */
 export function createIdleExitTimer(options: IdleExitOptions): IdleExitTimer {
   let timer: ReturnType<typeof setTimeout> | undefined;

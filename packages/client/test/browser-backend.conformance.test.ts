@@ -266,7 +266,7 @@ describe("backend httpFetch", () => {
     return init;
   }
 
-  it("evaluates the fetch in a same-origin page, creating a temporary tab when none matches", async () => {
+  it("returns undefined when no same-origin page is open", async () => {
     const fixture = await createCdpFixture();
     try {
       const request = { method: "GET", url: "https://example.com/api/me" };
@@ -276,14 +276,9 @@ describe("backend httpFetch", () => {
         navigation: "fresh",
       });
       const init = stubFetch('{"me":true}');
-      await expect(fixture.backend.httpFetch!(request)).resolves.toMatchObject({
-        method: "GET",
-        url: "https://example.com/api/me",
-        status: 200,
-        body: '{"me":true}',
-      });
-      expect(init).toEqual([expect.objectContaining({ credentials: "include" })]);
-      expect(fixture.closed()).toBe(true);
+      await expect(fixture.backend.httpFetch!(request)).resolves.toBeUndefined();
+      expect(init).toHaveLength(0);
+      expect(fixture.closed()).toBe(false);
 
       await fixture.backend.bind({
         target: "https://example.com/shared",
@@ -292,8 +287,40 @@ describe("backend httpFetch", () => {
       });
       await expect(fixture.backend.httpFetch!(request)).resolves.toMatchObject({
         method: "GET",
+        url: "https://example.com/api/me",
         status: 200,
+        body: '{"me":true}',
       });
+      expect(init).toEqual([expect.objectContaining({ credentials: "include" })]);
+    } finally {
+      vi.unstubAllGlobals();
+      await fixture.close();
+    }
+  });
+
+  it("opens a temporary tab only for same-origin-page fetches", async () => {
+    const fixture = await createCdpFixture();
+    try {
+      await fixture.backend.bind({
+        target: "https://other.com/",
+        loadTimeoutMs: 1000,
+        navigation: "fresh",
+      });
+      const init = stubFetch('{"me":true}');
+      await expect(
+        fixture.backend.httpFetch!({
+          method: "GET",
+          url: "https://example.com/api/me",
+          context: "same-origin-page",
+        })
+      ).resolves.toMatchObject({
+        method: "GET",
+        url: "https://example.com/api/me",
+        status: 200,
+        body: '{"me":true}',
+      });
+      expect(init).toEqual([expect.objectContaining({ credentials: "include" })]);
+      expect(fixture.closed()).toBe(true);
     } finally {
       vi.unstubAllGlobals();
       await fixture.close();
