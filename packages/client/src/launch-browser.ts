@@ -32,43 +32,39 @@ export async function browserRunning(): Promise<boolean> {
   }
 }
 
-export async function launchBrowser(profile = "Default"): Promise<boolean> {
-  const profileArg = `--profile-directory=${profile}`;
-  try {
-    if (process.platform === "darwin") {
-      await run("open", ["-g", "-n", "-a", "Google Chrome", "--args", profileArg]);
-      return true;
-    }
-    const command = process.platform === "win32" ? "chrome" : "google-chrome";
-    const child = spawn(command, [profileArg], { detached: true, stdio: "ignore" });
-    child.unref();
-    return await new Promise<boolean>((resolve) => {
-      child.once("error", () => resolve(false));
-      child.once("spawn", () => resolve(true));
-    });
-  } catch {
-    return false;
-  }
+export function launchBrowser(profile = "Default"): Promise<boolean> {
+  return runChrome([profileArgument(profile)]);
 }
 
-/** Open a URL in the running profile (used for the Playwright Extension connect page). */
-export async function openUrlInChrome(url: string, profile = "Default"): Promise<boolean> {
-  const profileArg = `--profile-directory=${profile}`;
+/** Open a URL in the selected profile (used for the Playwright Extension connect page). */
+export function openUrlInChrome(url: string, profile = "Default"): Promise<boolean> {
+  return runChrome([profileArgument(profile), url]);
+}
+
+function profileArgument(profile: string): string {
+  return `--profile-directory=${profile}`;
+}
+
+/**
+ * Invoke Chrome itself rather than macOS `open`: `open` sends URLs to whichever
+ * profile owns the running application and drops `--args`, which can open an
+ * extension URL in a profile where that extension is not installed.
+ */
+function runChrome(args: string[]): Promise<boolean> {
+  const command =
+    process.platform === "darwin"
+      ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+      : process.platform === "win32"
+        ? "chrome"
+        : "google-chrome";
   try {
-    if (process.platform === "darwin") {
-      // `--args` is only for a new launch; Chrome already running ignores it,
-      // so the connect page would never appear.
-      await run("open", ["-g", "-a", "Google Chrome", url]);
-      return true;
-    }
-    const command = process.platform === "win32" ? "chrome" : "google-chrome";
-    const child = spawn(command, [profileArg, url], { detached: true, stdio: "ignore" });
+    const child = spawn(command, args, { detached: true, stdio: "ignore" });
     child.unref();
-    return await new Promise<boolean>((resolve) => {
+    return new Promise((resolve) => {
       child.once("error", () => resolve(false));
       child.once("spawn", () => resolve(true));
     });
   } catch {
-    return false;
+    return Promise.resolve(false);
   }
 }

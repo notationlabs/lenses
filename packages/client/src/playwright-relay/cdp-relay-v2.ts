@@ -78,6 +78,12 @@ export class ExtensionProtocolV2 {
     sessionId: string | undefined
   ): Promise<{ result: any } | undefined> {
     switch (method) {
+      case "Target.getBrowserContexts":
+        return { result: { browserContextIds: [] } };
+      case "Target.setDiscoverTargets":
+        // Tab discovery arrives through chrome.tabs events; there is no
+        // browser-wide debugger target on the extension transport.
+        return { result: {} };
       case "Target.setAutoAttach": {
         if (sessionId) return undefined;
         await this._model.enableAutoAttach();
