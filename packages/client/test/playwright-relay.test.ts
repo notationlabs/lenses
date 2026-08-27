@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
+import puppeteer from "puppeteer-core";
 import { WebSocket } from "ws";
 import { BrowserModel } from "../src/playwright-relay/browser-model.js";
 import { CDPRelayServer } from "../src/playwright-relay/cdp-relay.js";
@@ -116,6 +117,21 @@ describe("Playwright CDP relay", () => {
       "chrome.debugger.sendCommand",
       "chrome.debugger.detach",
     ]);
+  });
+
+  it("accepts a real Puppeteer connection", async () => {
+    relay = new CDPRelayServer();
+    await relay.start();
+    extension = new FakeExtension();
+    await extension.attach(relay.extensionEndpoint());
+    await relay.waitForExtension();
+
+    const browser = await puppeteer.connect({
+      browserWSEndpoint: relay.cdpEndpoint(),
+      defaultViewport: null,
+    });
+    expect(browser.connected).toBe(true);
+    await browser.disconnect();
   });
 
   it("translates Target.createTarget into chrome.tabs.create after handshake", async () => {
