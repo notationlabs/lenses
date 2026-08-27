@@ -45,11 +45,13 @@ pnpm install
 pnpm build
 ```
 
-For the streamlined path, run `pnpm --filter @djgrant/lenses-extension-chrome build`, open `chrome://extensions`, enable Developer mode, choose **Load unpacked**, and select `extensions/chrome/dist`. Open the Lenses toolbar action, review the local-data disclosure, and choose **Enable Lenses**; the same action then shows live broker status and can disable the bridge. On the first connection, compare the six-digit code in Chrome's pairing notification with `lens broker status`, then click the notification to approve. Calls run through a persistent local broker on port 4319; the first client starts it automatically, and CLI, MCP, and library clients share the authenticated extension connection.
+For the streamlined path, install [Playwright Extension](https://chromewebstore.google.com/detail/playwright-extension/mmlmfjhmonkocbjadbfplnigmagldckm) from the Chrome Web Store. The first browser-backed call opens the extension's connect page: pick the tabs Lenses may control (they join a **Lenses** tab group). New tabs the broker creates are attached automatically and share your normal profile cookies. Chrome shows a persistent debugger infobar on attached tabs. Set `PLAYWRIGHT_MCP_EXTENSION_TOKEN` (copied from the extension's status page) to skip repeated approval. Direct Chrome remote debugging remains the fallback: enable it at `chrome://inspect/#remote-debugging`.
 
-If Chrome is not running when a call arrives, the broker starts it in the background with the `Default` profile (a bare launch would stall on Chrome's profile picker). Set a different profile in `~/.config/lenses/config.json` with `{ "browser": { "profile": "Profile 2" } }`, or set `LENS_BROKER_AUTO_LAUNCH=0` to never launch Chrome. The configured profile must be the one holding the lens extension.
+Calls run through a persistent local broker on port 4319; the first client starts it automatically, and CLI, MCP, and library clients share it.
 
-Chrome 144+ remote debugging is always available as the fallback. Enable it at `chrome://inspect/#remote-debugging`; if no compatible extension is connected, the next call uses CDP and Chrome asks for permission with an **Allow** dialog.
+If Chrome is not running when a call arrives, the broker starts it in the background with the `Default` profile (a bare launch would stall on Chrome's profile picker). Set a different profile in `~/.config/lenses/config.json` with `{ "browser": { "profile": "Profile 2" } }`, or set `LENS_BROKER_AUTO_LAUNCH=0` to never launch Chrome. The configured profile must be the one holding Playwright Extension.
+
+Chrome 144+ remote debugging is always available as the fallback. Enable it at `chrome://inspect/#remote-debugging`; if Playwright Extension is not connected, the next call uses CDP and Chrome asks for permission with an **Allow** dialog.
 
 ## TypeScript client
 
@@ -482,7 +484,6 @@ Run `pok lens validate` to validate every document under `examples/`.
 | `packages/client` | private workspace | Lens orchestration and persistent browser broker |
 | `packages/cli` | private workspace | JSON command-line adapter |
 | `packages/mcp` | private workspace | stdio MCP adapter |
-| `extensions/chrome` | private workspace | Preferred Chrome session backend |
 | `examples` | — | Example lens catalog |
 
 Planned work lives in [ROADMAP.md](./ROADMAP.md).

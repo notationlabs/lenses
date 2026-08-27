@@ -1,10 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { WebSocket, WebSocketServer } from "ws";
 import {
-  EXTENSION_CAPABILITIES,
-  EXTENSION_PROTOCOL_MAJOR,
-  decodeBrokerExtensionMessage,
-  decodeExtensionRpcRequest,
   pageDomExtract,
   pagePerformClick,
   pagePerformCount,
@@ -40,12 +35,6 @@ import type {
   BrowserSession,
 } from "../src/browser-backend.js";
 import { createCdpBackend } from "../src/cdp-host.js";
-import { createExtensionBackend } from "../src/extension-backend.js";
-import {
-  createExtensionSessionBackend,
-  type ExtensionSessionBackend,
-} from "../../../extensions/chrome/src/background/session-backend.js";
-import { listenForIntercepts } from "../../../extensions/chrome/src/background/intercepts.js";
 
 interface BackendFixture {
   backend: BrowserBackend;
@@ -96,7 +85,6 @@ const domSpec: LensSpec = {
 
 for (const [name, createFixture] of [
   ["CDP", createCdpFixture],
-  ["extension", createExtensionFixture],
 ] as const) {
   describe(`${name} browser backend conformance`, () => {
     let fixture: BackendFixture | undefined;
@@ -278,19 +266,12 @@ describe("backend httpFetch", () => {
     return init;
   }
 
-  it("CDP evaluates the fetch in an existing same-origin page, and answers undefined without one", async () => {
+  it("evaluates the fetch in a same-origin page, creating a temporary tab when none matches", async () => {
     const fixture = await createCdpFixture();
     try {
       const request = { method: "GET", url: "https://example.com/api/me" };
       await fixture.backend.bind({
         target: "https://other.com/",
-        loadTimeoutMs: 1000,
-        navigation: "fresh",
-      });
-      await expect(fixture.backend.httpFetch!(request)).resolves.toBeUndefined();
-
-      await fixture.backend.bind({
-        target: "https://example.com/shared",
         loadTimeoutMs: 1000,
         navigation: "fresh",
       });
@@ -302,6 +283,17 @@ describe("backend httpFetch", () => {
         body: '{"me":true}',
       });
       expect(init).toEqual([expect.objectContaining({ credentials: "include" })]);
+      expect(fixture.closed()).toBe(true);
+
+      await fixture.backend.bind({
+        target: "https://example.com/shared",
+        loadTimeoutMs: 1000,
+        navigation: "fresh",
+      });
+      await expect(fixture.backend.httpFetch!(request)).resolves.toMatchObject({
+        method: "GET",
+        status: 200,
+      });
     } finally {
       vi.unstubAllGlobals();
       await fixture.close();
@@ -329,76 +321,6 @@ describe("backend httpFetch", () => {
       })]);
     } finally {
       vi.unstubAllGlobals();
-      await fixture.close();
-    }
-  });
-
-  it("extension executes same-origin requests in an existing tab's MAIN world", async () => {
-    const fixture = await createExtensionFixture();
-    try {
-      const request = {
-        method: "POST",
-        url: "https://example.com/api/items",
-        context: "same-origin-page" as const,
-        body: { kind: "search" as const, entries: [["_method", "delete"]] as [string, string][] },
-      };
-      const init = stubFetch('<html>deleted</html>');
-      await expect(fixture.backend.httpFetch!(request)).resolves.toBeUndefined();
-      expect(init).toHaveLength(0);
-
-      await fixture.backend.bind({
-        target: "https://example.com/shared",
-        loadTimeoutMs: 1000,
-        navigation: "fresh",
-      });
-      await expect(fixture.backend.httpFetch!(request)).resolves.toMatchObject({
-        method: "POST",
-        url: "https://example.com/api/items",
-        status: 200,
-        body: "<html>deleted</html>",
-      });
-      expect(init[0]).toMatchObject({
-        credentials: "include",
-        redirect: "follow",
-      });
-      expect(String(init[0].body)).toBe("_method=delete");
-      expect(fixture.backend.info().sameOriginPageRequests).toBe(true);
-      expect(fixture.backend.supports?.("same-origin-page-http")).toBe(true);
-    } finally {
-      await fixture.close();
-    }
-  });
-
-  it("extension fetches through the service worker without binding a tab", async () => {
-    const fixture = await createExtensionFixture();
-    try {
-      const init = stubFetch('{"me":true}');
-      await expect(
-        fixture.backend.httpFetch!({ method: "GET", url: "https://example.com/api/me" })
-      ).resolves.toMatchObject({
-        method: "GET",
-        url: "https://example.com/api/me",
-        status: 200,
-        body: '{"me":true}',
-      });
-      expect(init).toEqual([expect.objectContaining({ credentials: "include" })]);
-    } finally {
-      await fixture.close();
-    }
-  });
-
-  it("extension materialises URLSearchParams bodies", async () => {
-    const fixture = await createExtensionFixture();
-    try {
-      const init = stubFetch('{"ok":true}');
-      await fixture.backend.httpFetch!({
-        method: "PATCH",
-        url: "https://example.com/api/items",
-        body: { kind: "search", entries: [["tag", "a"], ["tag", "b"]] },
-      });
-      expect(init[0]).toMatchObject({ credentials: "include" });
-      expect(String(init[0].body)).toBe("tag=a&tag=b");
-    } finally {
       await fixture.close();
     }
   });
@@ -606,274 +528,3 @@ async function createCdpFixture(): Promise<BackendFixture> {
   };
 }
 
-class ChromeEvent {
-  private listeners = new Set<(...args: any[]) => void>();
-
-  addListener(listener: (...args: any[]) => void): void {
-    this.listeners.add(listener);
-  }
-
-  removeListener(listener: (...args: any[]) => void): void {
-    this.listeners.delete(listener);
-  }
-
-  emit(...args: any[]): void {
-    for (const listener of this.listeners) listener(...args);
-  }
-}
-
-async function createExtensionFixture(): Promise<BackendFixture> {
-  const chrome = createChromeMock();
-  vi.stubGlobal("chrome", chrome.api);
-  listenForIntercepts();
-  const sessionBackend = createExtensionSessionBackend();
-  const server = new WebSocketServer({ port: 0, host: "127.0.0.1" });
-  await new Promise<void>((resolve) => server.once("listening", resolve));
-  const address = server.address();
-  if (typeof address === "string" || address === null) {
-    throw new Error("test WebSocket server has no TCP address");
-  }
-  const accepted = new Promise<WebSocket>((resolve) =>
-    server.once("connection", resolve)
-  );
-  const extensionSocket = new WebSocket(
-    `ws://127.0.0.1:${address.port}`
-  );
-  const brokerSocket = await accepted;
-  await new Promise<void>((resolve) => {
-    if (extensionSocket.readyState === WebSocket.OPEN) resolve();
-    else extensionSocket.once("open", resolve);
-  });
-
-  const epoch = "extension_conformance_epoch";
-  wireExtension(extensionSocket, sessionBackend, epoch);
-  const backend = createExtensionBackend();
-  expect(
-    backend.attach(brokerSocket, {
-      type: "extension-hello",
-      protocolMajor: EXTENSION_PROTOCOL_MAJOR,
-      extensionVersion: "0.1.0",
-      capabilities: [...EXTENSION_CAPABILITIES],
-      epoch,
-      ua: "Chrome/144",
-    })
-  ).toBe(true);
-
-  return {
-    backend,
-    async emitCapture(capture) {
-      chrome.runtimeMessages.emit(
-        { type: "intercepted", token: chrome.interceptToken, response: capture },
-        { tab: { id: 1 } }
-      );
-    },
-    closed: () => chrome.removedTabs.includes(1),
-    reloads: () => chrome.reloadCount,
-    async close() {
-      backend.stop();
-      extensionSocket.close();
-      await sessionBackend.close();
-      await new Promise<void>((resolve) => server.close(() => resolve()));
-      vi.unstubAllGlobals();
-    },
-  };
-}
-
-function wireExtension(
-  socket: WebSocket,
-  backend: ExtensionSessionBackend,
-  epoch: string
-): void {
-  socket.on("message", (data) => {
-    void (async () => {
-      const value = JSON.parse(data.toString());
-      const message = decodeBrokerExtensionMessage(value);
-      if (message.type === "extension-hello-result") return;
-      if (message.type === "extension-ping") {
-        socket.send(
-          JSON.stringify({
-            type: "extension-pong",
-            nonce: message.nonce,
-            epoch,
-          })
-        );
-        return;
-      }
-      const request = decodeExtensionRpcRequest(message, epoch);
-      try {
-        const result = await backend.handle(request);
-        socket.send(
-          JSON.stringify({
-            type: "extension-rpc-result",
-            requestId: request.requestId,
-            epoch,
-            ok: true,
-            result,
-          })
-        );
-      } catch (error) {
-        socket.send(
-          JSON.stringify({
-            type: "extension-rpc-result",
-            requestId: request.requestId,
-            epoch,
-            ok: false,
-            error: {
-              code: "backend-error",
-              message:
-                error instanceof Error ? error.message : String(error),
-            },
-          })
-        );
-      }
-    })();
-  });
-}
-
-function createChromeMock() {
-  const tabUpdates = new ChromeEvent();
-  const tabRemovals = new ChromeEvent();
-  const runtimeMessages = new ChromeEvent();
-  const storage = new Map<string, unknown>();
-  const tabs = new Map<number, { id: number; url: string; status: string }>();
-  const removedTabs: number[] = [];
-  let reloadCount = 0;
-  let interceptToken: string | undefined;
-
-  return {
-    runtimeMessages,
-    get interceptToken() {
-      return interceptToken;
-    },
-    removedTabs,
-    get reloadCount() {
-      return reloadCount;
-    },
-    api: {
-      runtime: {
-        onMessage: runtimeMessages,
-      },
-      scripting: {
-        async executeScript(injection: {
-          target: { tabId: number };
-          world: string;
-          func: (...args: any[]) => unknown;
-          args: any[];
-        }) {
-          expect(injection.world).toBe("MAIN");
-          const tab = tabs.get(injection.target.tabId);
-          if (!tab) throw new Error("missing injection tab");
-          if (injection.args[0] === "install" || injection.args[0] === "remove") {
-            return [{ frameId: 0, result: undefined }];
-          }
-          vi.stubGlobal("location", new URL(tab.url));
-          return [{ frameId: 0, result: await injection.func(...injection.args) }];
-        },
-      },
-      debugger: {
-        async attach() {},
-        async sendCommand(_target: unknown, command: string, params?: unknown) {
-          if (command === "Page.getLayoutMetrics") {
-            return { cssContentSize: { width: 1200, height: 3400 } };
-          }
-          expect(command).toBe("Page.captureScreenshot");
-          expect(params).toMatchObject({
-            captureBeyondViewport: true,
-            clip: { x: 0, y: 0, width: 1200, height: 3400, scale: 1 },
-          });
-          return { data: Buffer.from("fake png").toString("base64") };
-        },
-        async detach() {},
-      },
-      tabs: {
-        onUpdated: tabUpdates,
-        onRemoved: tabRemovals,
-        async query() {
-          return [...tabs.values()].map((tab) => ({ ...tab }));
-        },
-        async create({ url }: { url: string }) {
-          const tab = { id: 1, url, status: "complete" };
-          tabs.set(tab.id, tab);
-          return { ...tab };
-        },
-        async get(tabId: number) {
-          return { ...(tabs.get(tabId) ?? { id: tabId, status: "complete" }) };
-        },
-        async reload(tabId: number) {
-          reloadCount += 1;
-          queueMicrotask(() =>
-            tabUpdates.emit(tabId, { status: "complete" })
-          );
-        },
-        async remove(tabId: number) {
-          removedTabs.push(tabId);
-          tabs.delete(tabId);
-          tabRemovals.emit(tabId);
-        },
-        async sendMessage(_tabId: number, message: any) {
-          if (message.type === "ping") return { ok: true };
-          if (message.type === "intercepts-enable") {
-            interceptToken = message.token;
-            return { ok: true };
-          }
-          if (message.type === "intercepts-disable") {
-            if (message.token === interceptToken) interceptToken = undefined;
-            return { ok: true };
-          }
-          if (message.type === "perform_fill") {
-            performActions.push(`fill ${message.selector} ${message.value}`);
-            return { ok: true };
-          }
-          if (message.type === "perform_click") {
-            performActions.push(`click ${message.selector}`);
-            return { ok: true };
-          }
-          if (message.type === "perform_submit") {
-            performActions.push(`submit ${message.selector} ${JSON.stringify(message.form)}`);
-            return { ok: true };
-          }
-          if (message.type === "perform_press") {
-            performActions.push(`press ${message.key}`);
-            return { ok: true };
-          }
-          if (message.type === "perform_count") {
-            return { count: nextPerformCount(message.selector) };
-          }
-          if (message.type === "dom_extract") {
-            return {
-              url: "https://example.com/shared",
-              title: "Shared",
-              value: { title: "Shared" },
-            };
-          }
-          if (message.type === "snapshot") {
-            return {
-              url: "https://example.com/shared",
-              title: "Shared",
-              text: "Shared page",
-              ...(message.html
-                ? { html: "<body>Shared page</body>" }
-                : {}),
-            };
-          }
-          throw new Error(`unexpected tab message ${message.type}`);
-        },
-      },
-      storage: {
-        session: {
-          async get(key: string) {
-            return { [key]: storage.get(key) };
-          },
-          async set(values: Record<string, unknown>) {
-            for (const [key, value] of Object.entries(values)) {
-              storage.set(key, value);
-            }
-          },
-          async remove(key: string) {
-            storage.delete(key);
-          },
-        },
-      },
-    },
-  };
-}

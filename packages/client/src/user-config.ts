@@ -21,9 +21,8 @@ function configPath(): string {
 /**
  * The Chrome profile directory to launch, e.g. "Default" or "Profile 2".
  * Chrome started without one shows the profile picker, which loads no
- * extensions — so a launch must always name a profile. If the configured
- * profile does not hold the lens extension, that is a setup issue for the
- * user to fix, not something to detect around.
+ * extensions — so a launch must always name a profile. Playwright Extension
+ * must be installed in that profile for the preferred transport.
  */
 function readUserConfig(): Record<string, unknown> {
   try {

@@ -3,9 +3,9 @@
  * Lens orchestration, caching, retries, and result policy live in the broker.
  */
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import puppeteer, { type Browser, type Page } from "puppeteer-core";
+import { defaultChromeUserDataDir } from "./chrome-paths.js";
 import {
   createCaptureBuffer,
   pageDomExtract,
@@ -51,26 +51,28 @@ const STALE_ENDPOINT_MESSAGE =
   "Chrome remote debugging is not responding. Open chrome://inspect/#remote-debugging in Chrome, " +
   "re-enable Remote Debugging, then retry.";
 
-function defaultUserDataDir(): string {
-  switch (process.platform) {
-    case "darwin":
-      return join(homedir(), "Library", "Application Support", "Google", "Chrome");
-    case "win32":
-      return join(
-        process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local"),
-        "Google",
-        "Chrome",
-        "User Data"
-      );
-    default:
-      return join(
-        process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config"),
-        "google-chrome"
-      );
-  }
-}
-
 export type CdpLease = "held" | "released" | "disconnected";
+
+/**
+ * How a CDP-backed backend reaches Chrome. Direct remote debugging and the
+ * Playwright Extension relay both produce a Puppeteer `Browser`; page
+ * sessions, intercepts, and auth-gate bookkeeping stay here.
+ */
+export interface CdpTransport {
+  readonly name: string;
+  /** Poll DevToolsActivePort (or equivalent) and auto-connect. Off for the extension relay. */
+  readonly pollForConnection?: boolean;
+  readonly retryConnect?: boolean;
+  readonly connectAttemptMs?: number;
+  connect(progress: (message: string) => void): Promise<Browser>;
+  looksReady(): boolean;
+  probeLive(): Promise<boolean>;
+  connectHint(): string;
+  staleHint(): string;
+  start?(tryConnect: () => void): void;
+  stop?(): void;
+  dispose?(): void;
+}
 
 export interface CdpBackend extends BrowserBackend {
   lease(): CdpLease;
@@ -96,7 +98,8 @@ interface CdpSession extends BrowserSession {
 
 export function createCdpBackend(
   log: (message: string) => void = () => {},
-  probeEndpoint?: () => Promise<boolean>
+  probeEndpoint?: () => Promise<boolean>,
+  transport: CdpTransport = createDirectCdpTransport(probeEndpoint)
 ): CdpBackend {
   let browser: Browser | undefined;
   let browserVersion = "";
@@ -112,34 +115,13 @@ export function createCdpBackend(
   const captureBuffers = new WeakMap<Page, CaptureBuffer>();
   const statusListeners = new Set<() => void>();
   /**
-   * Pages kept by a needs_* outcome, and where they were kept. Unlike the
-   * extension's tab leases this map dies with the process — CDP has nowhere
-   * durable to write, so a broker restart forgets CDP gates (but not the
-   * extension's).
+   * Pages kept by a needs_* outcome, and where they were kept. The map dies
+   * with the process: neither CDP transport has durable tab leases.
    */
   const keptGates = new Map<Page, { target: string; keptUrl: string }>();
 
-  const endpointPath = join(defaultUserDataDir(), "DevToolsActivePort");
-  const endpointAvailable = () => existsSync(endpointPath);
-  const endpointLive = probeEndpoint ?? (async (): Promise<boolean> => {
-    let endpointPort: number;
-    try {
-      const [first] = readFileSync(endpointPath, "utf8").split("\n");
-      endpointPort = Number(first);
-    } catch {
-      return false;
-    }
-    if (!Number.isSafeInteger(endpointPort) || endpointPort < 1) return false;
-    try {
-      const response = await fetch(
-        `http://127.0.0.1:${endpointPort}/json/version`,
-        { signal: AbortSignal.timeout(1_000) }
-      );
-      return response.ok;
-    } catch {
-      return false;
-    }
-  });
+  const endpointAvailable = () => transport.looksReady();
+  const endpointLive = () => transport.probeLive();
   const available = () => browser?.connected === true;
   const notifyStatusChange = () => {
     for (const listener of statusListeners) listener();
@@ -189,9 +171,7 @@ export function createCdpBackend(
     if (browser?.connected) return browser;
     if (connecting) return connecting;
     if (!endpointAvailable()) {
-      throw new Error(
-        "browser is not connected (enable chrome://inspect/#remote-debugging in Chrome)"
-      );
+      throw new Error(transport.connectHint());
     }
     connecting = connectBrowser(progress);
     try {
@@ -208,31 +188,26 @@ export function createCdpBackend(
   async function connectBrowser(
     progress: (message: string) => void
   ): Promise<Browser> {
-    if (!(await endpointLive())) throw new Error(STALE_ENDPOINT_MESSAGE);
-    progress(
-      "connecting to Chrome (a permission dialog may appear — click Allow)"
-    );
+    if (!(await endpointLive())) throw new Error(transport.staleHint());
+    progress(transport.connectHint());
     const deadline = Date.now() + CONNECT_WINDOW_MS;
     let connected: Browser | undefined;
     for (;;) {
       try {
         connected = await attemptWithTimeout(
-          puppeteer.connect({ channel: "chrome", defaultViewport: null }),
-          CONNECT_ATTEMPT_MS
+          transport.connect(progress),
+          transport.connectAttemptMs ?? CONNECT_ATTEMPT_MS
         );
         break;
       } catch (error) {
         reconnectAttempts += 1;
         lastConnectionError = error instanceof Error ? error.message : String(error);
         notifyStatusChange();
-        if (!(await endpointLive())) throw new Error(STALE_ENDPOINT_MESSAGE);
-        if (Date.now() >= deadline) {
+        if (!(await endpointLive())) throw new Error(transport.staleHint());
+        if (transport.retryConnect === false || Date.now() >= deadline) {
           const reason =
             error instanceof Error ? error.message : String(error);
-          throw new Error(
-            `could not connect to Chrome (${reason}); approve the permission dialog in Chrome, ` +
-              "or re-enable remote debugging at chrome://inspect/#remote-debugging"
-          );
+          throw new Error(`${transport.connectHint()} (${reason})`);
         }
         await delay(CONNECT_RETRY_MS);
       }
@@ -246,9 +221,10 @@ export function createCdpBackend(
       browser = undefined;
       browserVersion = "";
       endpointPresent = false;
+      transport.dispose?.();
       notifyStatusChange();
     });
-    log(`cdp connected: ${browserVersion}`);
+    log(`${transport.name} connected: ${browserVersion}`);
     notifyStatusChange();
     return connected;
   }
@@ -380,10 +356,10 @@ export function createCdpBackend(
   }
 
   return {
-    name: "cdp",
+    name: transport.name,
     available,
     info: () => ({
-      name: "cdp",
+      name: transport.name,
       detail: browserVersion || undefined,
       capabilities: ["browser-session", "credentialed-http", "credentialed-http-body"],
       diagnostic: lastConnectionError,
@@ -409,18 +385,29 @@ export function createCdpBackend(
       } catch {
         // The disconnected listener handles an already-closed socket.
       }
-      log("cdp lease released");
+      transport.dispose?.();
+      log(`${transport.name} lease released`);
     },
     async acquire(progress = () => {}) {
       await ensureBrowser(progress);
     },
     start() {
+      transport.start?.(() => {
+        void ensureBrowser(() => {}).catch((error) => {
+          log(
+            `${transport.name} connection failed: ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          );
+        });
+      });
+      if (!transport.pollForConnection) return;
       if (endpointPoll) return;
       pollEndpoint();
       endpointPoll = setInterval(pollEndpoint, ENDPOINT_POLL_MS);
     },
     stop() {
-      if (!endpointPoll) return;
+      transport.stop?.();
       clearInterval(endpointPoll);
       endpointPoll = undefined;
     },
@@ -443,60 +430,86 @@ export function createCdpBackend(
       return undefined;
     },
     /**
-     * A same-origin fetch evaluated inside an already-open tab on the request's
-     * origin. The page context supplies what a broker-side fetch cannot — the
-     * site's cookies, Origin and Referer — without binding or navigating
-     * anything. No such tab means no answer: opening one would cost the page
-     * load this tier exists to avoid, and the page tiers pay it anyway.
+     * A same-origin fetch evaluated inside a grouped/attached page. Prefer an
+     * already-open tab on the origin; otherwise open a temporary same-origin
+     * page, evaluate `fetch({ credentials: "include" })`, and close it.
      */
     async httpFetch(request: BackendHttpRequest) {
       if (!browser?.connected) return undefined;
       const origin = urlOrigin(request.url);
       const pages = await browser.pages();
-      const page = pages.find(
+      let page = pages.find(
         (candidate) => !candidate.isClosed() && urlOrigin(candidate.url()) === origin
       );
-      if (!page) return undefined;
-      const result = await page.evaluate(
-        async (req: BackendHttpRequest & { maxBodyChars: number }) => {
-          const headers = { ...req.headers };
-          let body: BodyInit | undefined;
-          if (req.body?.kind === "json" || req.body?.kind === "text") {
-            body = req.body.value;
-            const hasContentType = Object.keys(headers).some(
-              (name) => name.toLowerCase() === "content-type"
-            );
-            if (!hasContentType) {
-              headers["content-type"] = req.body.kind === "json"
-                ? "application/json"
-                : "text/plain;charset=UTF-8";
+      let created = false;
+      if (!page) {
+        try {
+          page = await browser.newPage({ background: true });
+          created = true;
+          await settle(
+            page.goto(`${origin}/`, { waitUntil: "load", timeout: 15_000 })
+          );
+        } catch {
+          if (created && page) {
+            try {
+              await page.close();
+            } catch {
+              // The tab may already be gone.
             }
-          } else if (req.body?.kind === "search") {
-            body = new URLSearchParams(req.body.entries);
-          } else if (req.body?.kind === "form") {
-            const form = new FormData();
-            for (const [name, value] of req.body.entries) form.append(name, value);
-            body = form;
           }
-          const res = await fetch(req.url, {
-            method: req.method,
-            headers,
-            body,
-            credentials: "include",
-            redirect: "follow",
-          });
-          const text = await res.text();
-          return { url: res.url, status: res.status, body: text.slice(0, req.maxBodyChars) };
-        },
-        { ...request, maxBodyChars: MAX_BODY_BYTES }
-      );
-      return {
-        url: result.url || request.url,
-        method: request.method,
-        status: result.status,
-        body: result.body,
-        timestamp: Date.now(),
-      };
+          return undefined;
+        }
+      }
+      try {
+        const result = await page.evaluate(
+          async (req: BackendHttpRequest & { maxBodyChars: number }) => {
+            const headers = { ...req.headers };
+            let body: BodyInit | undefined;
+            if (req.body?.kind === "json" || req.body?.kind === "text") {
+              body = req.body.value;
+              const hasContentType = Object.keys(headers).some(
+                (name) => name.toLowerCase() === "content-type"
+              );
+              if (!hasContentType) {
+                headers["content-type"] = req.body.kind === "json"
+                  ? "application/json"
+                  : "text/plain;charset=UTF-8";
+              }
+            } else if (req.body?.kind === "search") {
+              body = new URLSearchParams(req.body.entries);
+            } else if (req.body?.kind === "form") {
+              const form = new FormData();
+              for (const [name, value] of req.body.entries) form.append(name, value);
+              body = form;
+            }
+            const res = await fetch(req.url, {
+              method: req.method,
+              headers,
+              body,
+              credentials: "include",
+              redirect: "follow",
+            });
+            const text = await res.text();
+            return { url: res.url, status: res.status, body: text.slice(0, req.maxBodyChars) };
+          },
+          { ...request, maxBodyChars: MAX_BODY_BYTES }
+        );
+        return {
+          url: result.url || request.url,
+          method: request.method,
+          status: result.status,
+          body: result.body,
+          timestamp: Date.now(),
+        };
+      } finally {
+        if (created) {
+          try {
+            await page.close();
+          } catch {
+            // The user may close the temporary tab.
+          }
+        }
+      }
     },
     async bind(request: BindRequest) {
       const current = await ensureBrowser(() => {});
@@ -712,4 +725,43 @@ async function findPage(
 ): Promise<Page | undefined> {
   const pages = await browser.pages();
   return pages.find((page) => sameTarget(page.url(), target));
+}
+
+export function createDirectCdpTransport(
+  probeEndpoint?: () => Promise<boolean>
+): CdpTransport {
+  const endpointPath = join(defaultChromeUserDataDir(), "DevToolsActivePort");
+  const looksReady = () => existsSync(endpointPath);
+  const probeLive =
+    probeEndpoint ??
+    (async (): Promise<boolean> => {
+      let endpointPort: number;
+      try {
+        const [first] = readFileSync(endpointPath, "utf8").split("\n");
+        endpointPort = Number(first);
+      } catch {
+        return false;
+      }
+      if (!Number.isSafeInteger(endpointPort) || endpointPort < 1) return false;
+      try {
+        const response = await fetch(`http://127.0.0.1:${endpointPort}/json/version`, {
+          signal: AbortSignal.timeout(1_000),
+        });
+        return response.ok;
+      } catch {
+        return false;
+      }
+    });
+  return {
+    name: "cdp",
+    pollForConnection: true,
+    looksReady,
+    probeLive,
+    connectHint: () =>
+      "connecting to Chrome (a permission dialog may appear — click Allow)",
+    staleHint: () => STALE_ENDPOINT_MESSAGE,
+    async connect() {
+      return puppeteer.connect({ channel: "chrome", defaultViewport: null });
+    },
+  };
 }

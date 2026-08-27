@@ -5,7 +5,7 @@ description: Read live web pages as typed function calls through the lens CLI. U
 
 # Lenses
 
-A lens turns a webpage into a typed function. Calls run through the user's own browser, preferring the Lens Chrome extension and falling back to Chrome's remote-debugging protocol, so signed-in sessions work.
+A lens turns a webpage into a typed function. Calls run through the user's own browser, preferring Microsoft's Playwright Extension (tab-group CDP relay) and falling back to Chrome's remote-debugging protocol, so signed-in sessions work.
 
 ## CLI Behaviour
 
@@ -21,7 +21,7 @@ lens list --catalog ./examples    # discover lenses, their params and outcomes
 lens call hn/item --params '{"id":"42"}' --catalog ./examples
 ```
 
-`status` only reports browser availability; it deliberately does not launch Chrome. Proceed with `call` or `observe`: browser-backed work automatically starts Chrome with the configured profile and establishes a window when needed. If automatic launch fails, check that `LENS_BROKER_AUTO_LAUNCH` is not `0` and that Chrome is installed. If the Lens extension is not installed, ask the user to enable the CDP fallback at `chrome://inspect/#remote-debugging`; the first fallback call may show a permission dialog in Chrome and the user must click Allow.
+`status` only reports browser availability; it deliberately does not launch Chrome. Proceed with `call` or `observe`: browser-backed work automatically starts Chrome with the configured profile and establishes a window when needed. If automatic launch fails, check that `LENS_BROKER_AUTO_LAUNCH` is not `0` and that Chrome is installed. If Playwright Extension is not installed, ask the user to install it from the Chrome Web Store or enable the CDP fallback at `chrome://inspect/#remote-debugging`; the first fallback call may show a permission dialog in Chrome and the user must click Allow. Playwright Extension shows a debugger infobar on attached tabs and only sees tabs in its client tab group.
 
 A call result is one of:
 

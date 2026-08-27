@@ -161,7 +161,7 @@ Example:
   status: `Usage: lens status [options]
 
 Report the local broker port, connected backends and capabilities, Chrome vs
-extension reachability, active/queued call state, recent backend errors and CDP
+Playwright Extension reachability, active/queued call state, recent backend errors and CDP
 reconnect attempts. The CDP lease is "held", "released", or "disconnected".
 Browser calls use one serial broker queue. No catalog needed.
 
@@ -191,7 +191,7 @@ Actions:
   shutdown                Retire the broker: it drains in-flight work,
                           releases the lease and exits. The next lens call
                           spawns a fresh one. Brokers also exit on their own
-                          with no clients, no extension attached and nothing
+                          with no clients and nothing
                           in flight: after LENS_BROKER_NO_BROWSER_EXIT_MS
                           (default 10s) when no browser is reachable, or
                           LENS_BROKER_IDLE_EXIT_MS (default 15m, 0 disables)

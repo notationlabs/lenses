@@ -219,8 +219,8 @@ export class LensClient {
   /**
    * Brokers are disposable — they retire when idle or when a rebuild makes them
    * stale — so a cached transport outlives its socket. Dropping it on close
-   * lets the next call rebind, which respawns a broker and gives a dormant
-   * extension a fresh chance to attach.
+   * lets the next call rebind, which respawns a broker and gives Playwright
+   * Extension a fresh chance to attach.
    */
   private async bind(): Promise<LensTransport> {
     if (typeof this.connect !== "function") return this.connect;

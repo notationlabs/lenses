@@ -48,6 +48,31 @@ export function urlOrigin(url: string): string {
   }
 }
 
+/**
+ * A sign-in gate: a tab an earlier needs_* outcome kept open, still sitting
+ * where it was kept. `url` is the tab's current URL; `target` is the page the
+ * gated call originally asked for.
+ */
+export interface AuthGate {
+  url: string;
+  target: string;
+}
+
+/**
+ * Query and hash are ignored because sign-in pages rewrite them (state nonces,
+ * hash routing) without leaving the sign-in flow; a change of path or origin
+ * means the flow moved on and the gate must dissolve.
+ */
+export function sameGatePlace(left: string, right: string): boolean {
+  try {
+    const a = new URL(left);
+    const b = new URL(right);
+    return a.origin === b.origin && a.pathname === b.pathname;
+  } catch {
+    return left === right;
+  }
+}
+
 /** Match "METHOD urlglob" request patterns against a captured response. */
 export function matchRequestPattern(pattern: string, method: string, url: string): boolean {
   const space = pattern.indexOf(" ");

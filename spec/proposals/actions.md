@@ -67,7 +67,7 @@ Every `wait` form takes `timeoutMs` (default 10000). The poll interval is intern
 | `packages/core/src/engine.ts` | run perform via `EngineIO.perform` before the tier walk; pre-perform detect; thread `performed` |
 | `packages/core/src/page-functions.ts` | in-page step primitives shared by both backends (insertText fill, guarded click, wait probes) |
 | `packages/client/src/browser-backend.ts` | `BrowserSession.perform(steps)` |
-| `packages/client/src/cdp-host.ts`, `extensions/chrome` | parity implementations — extension and CDP ship together |
+| `packages/client/src/cdp-host.ts` | CDP page/session implementation shared by Playwright Extension relay and direct CDP |
 | `packages/client/src/broker-orchestrator.ts` | consent gate (policy hook), cache bypass, bind navigation policy, `specNeedsBrowser` includes `perform` |
 | bridge protocol | `allowWrites` beside spec/params, default false at every layer |
 | `packages/cli` | `lens call --allow-writes` |

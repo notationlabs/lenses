@@ -10,8 +10,7 @@
 - **Content-pin remote lenses.** A lens loaded by URL is fetched as-is on every
   call, so its author can change it after you started trusting it. An SRI-style
   hash in the ref would pin the content.
-- **Pin the page functions the CDP backend injects.** The extension now reports
-  the page-functions stamp it bundled, and `lens status` names a mismatch. The
-  CDP backend serialises the same functions out of the broker's own process, so
-  it cannot go stale the same way — but nothing yet records which stamp a result
-  was extracted with, which is what a bug report needs.
+- **Record the page-functions stamp on a result.** The CDP backend serialises
+  the broker's own page functions into the tab, so it cannot go stale the way
+  the old bundled extension could — but nothing yet records which stamp a
+  result was extracted with, which is what a bug report needs.

@@ -1,8 +1,7 @@
 /**
- * Browser presence and launch. The broker cannot wake a dormant extension
- * service worker directly, but starting Chrome makes the worker's
- * runtime.onStartup fire, which reconnects it. A running Chrome needs nothing:
- * the worker's reconnect alarm attaches within its 30s period.
+ * Browser presence and launch. Chrome must be running before the Playwright
+ * Extension connect page can attach, and a named profile is required so Chrome
+ * does not stall on the profile picker (which loads no extensions).
  */
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
@@ -29,20 +28,10 @@ export async function browserRunning(): Promise<boolean> {
     ]);
     return true;
   } catch {
-    // A non-zero pgrep exit means no match, which is the answer, not a failure.
     return false;
   }
 }
 
-/**
- * Starts Chrome without raising it and without a URL: the extension opens and
- * disposes of its own tab per call, so navigating here would leave one behind
- * and steal focus.
- *
- * The profile must be named. Started bare, Chrome shows the profile picker,
- * which loads no extensions at all — the launch would then "succeed" while
- * leaving the extension as unreachable as before.
- */
 export async function launchBrowser(profile = "Default"): Promise<boolean> {
   const profileArg = `--profile-directory=${profile}`;
   try {
@@ -55,7 +44,26 @@ export async function launchBrowser(profile = "Default"): Promise<boolean> {
     child.unref();
     return await new Promise<boolean>((resolve) => {
       child.once("error", () => resolve(false));
-      // No error by the time it is spawned means the binary exists and started.
+      child.once("spawn", () => resolve(true));
+    });
+  } catch {
+    return false;
+  }
+}
+
+/** Open a URL in the running profile (used for the Playwright Extension connect page). */
+export async function openUrlInChrome(url: string, profile = "Default"): Promise<boolean> {
+  const profileArg = `--profile-directory=${profile}`;
+  try {
+    if (process.platform === "darwin") {
+      await run("open", ["-g", "-a", "Google Chrome", "--args", profileArg, url]);
+      return true;
+    }
+    const command = process.platform === "win32" ? "chrome" : "google-chrome";
+    const child = spawn(command, [profileArg, url], { detached: true, stdio: "ignore" });
+    child.unref();
+    return await new Promise<boolean>((resolve) => {
+      child.once("error", () => resolve(false));
       child.once("spawn", () => resolve(true));
     });
   } catch {
