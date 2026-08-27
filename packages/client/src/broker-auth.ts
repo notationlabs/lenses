@@ -5,18 +5,15 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
-  renameSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
-export const LENS_EXTENSION_ID = "mbanohpojdbbnbnmppepaihihmkoibaj";
-export const LENS_EXTENSION_ORIGIN = `chrome-extension://${LENS_EXTENSION_ID}`;
-
 interface AuthState {
   version: 1;
   brokerToken: string;
+  /** Retained for existing credential files; the bundled extension is gone. */
   extensions: Record<string, string>;
 }
 
@@ -65,19 +62,9 @@ export function loadBrokerAuth(): AuthState {
   }
 }
 
-export function saveExtensionPairing(installationId: string, token: string): void {
-  const path = brokerAuthPath();
-  const state = loadBrokerAuth();
-  state.extensions[installationId] = token;
-  const temporary = `${path}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
-  writeFileSync(temporary, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
-  renameSync(temporary, path);
-  chmodSync(path, 0o600);
-}
-
 export function authProof(
   token: string,
-  peer: "broker" | "client" | "extension",
+  peer: "broker" | "client",
   clientNonce: string,
   serverNonce: string
 ): string {
@@ -93,14 +80,7 @@ export function proofMatches(actual: unknown, expected: string): boolean {
   return left.length === right.length && timingSafeEqual(left, right);
 }
 
-/** Browser JavaScript cannot suppress Origin; native ws clients send none. */
+/** Native ws clients send no Origin; browser pages must not talk to the broker. */
 export function brokerOriginAllowed(origin: string | undefined): boolean {
-  return origin === undefined || origin === LENS_EXTENSION_ORIGIN;
-}
-
-export function pairingCode(token: string, installationId: string, nonce: string): string {
-  const digest = createHmac("sha256", token)
-    .update(`lenses-pair-v1:${installationId}:${nonce}`)
-    .digest();
-  return String(digest.readUInt32BE(0) % 1_000_000).padStart(6, "0");
+  return origin === undefined;
 }
