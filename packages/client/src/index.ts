@@ -47,6 +47,10 @@ export interface LensClientOptions {
   port?: number;
   transport?: LensTransport;
   log?: LensLogger;
+  /** Chrome profile directory, e.g. "Default" or "Profile 4". Overrides config/env. */
+  browserProfile?: string;
+  /** Playwright Extension connect token. Overrides config/env. */
+  playwrightExtensionToken?: string;
   /**
    * Per-lens call parameter defaults keyed by canonical lens-name glob. These
    * extend and override `params` in ~/.config/lenses/config.json; explicit call
@@ -601,6 +605,10 @@ export function createLensClient(options: LensClientOptions): LensClient {
   }
   const sources = catalogs.map(parseCatalogSource);
   const log = options.log ?? (() => {});
+  if (options.browserProfile) process.env.LENS_BROWSER_PROFILE = options.browserProfile;
+  if (options.playwrightExtensionToken) {
+    process.env.PLAYWRIGHT_MCP_EXTENSION_TOKEN = options.playwrightExtensionToken;
+  }
   log(`using lens catalog(s) ${sources.map((source) => source.id).join(", ")}`);
   return new LensClient(
     new LensStore(sources),

@@ -28,6 +28,9 @@ Global options:
                    reference (git:github.com/owner/repo#ref/subdir), or an
                    HTTP catalog index URL (https://…/catalog.json)
   --port, -p       Persistent browser broker port (default: 4319)
+  --profile        Chrome profile directory (default: config or Default)
+  --playwright-extension-token
+                   Playwright Extension connect token (skips repeated approval)
   --verbose, -v    Write timestamped diagnostics to stderr
   --help, -h       Show this help
 `;
@@ -293,6 +296,8 @@ async function main(): Promise<void> {
       catalog: { type: "string", short: "c", multiple: true },
       help: { type: "boolean", short: "h" },
       port: { type: "string", short: "p" },
+      profile: { type: "string" },
+      "playwright-extension-token": { type: "string" },
       request: { type: "string" },
       html: { type: "boolean" },
       lax: { type: "boolean" },
@@ -373,7 +378,13 @@ async function main(): Promise<void> {
     command === "status" || command === "observe" || command === "broker"
       ? values.catalog
       : requireCatalogs(values.catalog);
-  const client = createLensClient({ catalog, port, log });
+  const client = createLensClient({
+    catalog,
+    port,
+    log,
+    browserProfile: values.profile,
+    playwrightExtensionToken: values["playwright-extension-token"],
+  });
 
   try {
     let output: unknown;

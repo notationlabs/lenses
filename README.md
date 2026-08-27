@@ -49,7 +49,7 @@ For the streamlined path, install [Playwright Extension](https://chromewebstore.
 
 Calls run through a persistent local broker on port 4319; the first client starts it automatically, and CLI, MCP, and library clients share it.
 
-If Chrome is not running when a call arrives, the broker starts it in the background with the `Default` profile (a bare launch would stall on Chrome's profile picker). Set a different profile in `~/.config/lenses/config.json` with `{ "browser": { "profile": "Profile 2" } }`, or set `LENS_BROKER_AUTO_LAUNCH=0` to never launch Chrome. The configured profile must be the one holding Playwright Extension.
+If Chrome is not running when a call arrives, the broker starts it in the background with the `Default` profile (a bare launch would stall on Chrome's profile picker). Set a different profile with `lens --profile "Profile 4" …`, `LENS_BROWSER_PROFILE`, or `{ "browser": { "profile": "Profile 4" } }` in `~/.config/lenses/config.json`. Put the Playwright connect token in `PLAYWRIGHT_MCP_EXTENSION_TOKEN`, `--playwright-extension-token`, or `browser.playwrightExtensionToken` in that file. Set `LENS_BROKER_AUTO_LAUNCH=0` to never launch Chrome. The profile must be the one holding Playwright Extension. A running broker keeps the env it was spawned with; `lens broker shutdown` then the next call picks up new flags.
 
 Chrome 144+ remote debugging is always available as the fallback. Enable it at `chrome://inspect/#remote-debugging`; if Playwright Extension is not connected, the next call uses CDP and Chrome asks for permission with an **Allow** dialog.
 

@@ -23,6 +23,11 @@ function configPath(): string {
  * Chrome started without one shows the profile picker, which loads no
  * extensions — so a launch must always name a profile. Playwright Extension
  * must be installed in that profile for the preferred transport.
+ *
+ * Override with `LENS_BROWSER_PROFILE`, CLI `--profile`, or
+ * `browser.profile` in this file. The Playwright token is
+ * `PLAYWRIGHT_MCP_EXTENSION_TOKEN`, `--playwright-extension-token`, or
+ * `browser.playwrightExtensionToken`.
  */
 function readUserConfig(): Record<string, unknown> {
   try {
@@ -36,13 +41,31 @@ function readUserConfig(): Record<string, unknown> {
   }
 }
 
-export function browserProfile(): string {
+function browserSettings(): Record<string, unknown> {
   const browser = readUserConfig().browser;
-  const profile =
-    typeof browser === "object" && browser !== null && !Array.isArray(browser)
-      ? (browser as Record<string, unknown>).profile
-      : undefined;
-  return typeof profile === "string" && profile.length > 0 ? profile : "Default";
+  return typeof browser === "object" && browser !== null && !Array.isArray(browser)
+    ? (browser as Record<string, unknown>)
+    : {};
+}
+
+function nonEmpty(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+export function browserProfile(): string {
+  return (
+    nonEmpty(process.env.LENS_BROWSER_PROFILE) ??
+    nonEmpty(browserSettings().profile) ??
+    "Default"
+  );
+}
+
+/** Token from Playwright Extension's status page; skips repeated connect approval. */
+export function playwrightExtensionToken(): string | undefined {
+  return (
+    nonEmpty(process.env.PLAYWRIGHT_MCP_EXTENSION_TOKEN) ??
+    nonEmpty(browserSettings().playwrightExtensionToken)
+  );
 }
 
 /**

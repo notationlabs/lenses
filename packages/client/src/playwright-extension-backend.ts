@@ -1,7 +1,7 @@
 import puppeteer from "puppeteer-core";
 import { createCdpBackend, type CdpBackend, type CdpTransport } from "./cdp-host.js";
 import { openUrlInChrome } from "./launch-browser.js";
-import { browserProfile } from "./user-config.js";
+import { browserProfile, playwrightExtensionToken } from "./user-config.js";
 import { CDPRelayServer } from "./playwright-relay/cdp-relay.js";
 import {
   PLAYWRIGHT_EXTENSION_ID,
@@ -22,7 +22,7 @@ export function playwrightConnectPageUrl(
   url.searchParams.set("mcpRelayUrl", relayEndpoint);
   url.searchParams.set("client", JSON.stringify({ name: CLIENT_NAME }));
   url.searchParams.set("protocolVersion", String(protocolVersion));
-  const token = process.env.PLAYWRIGHT_MCP_EXTENSION_TOKEN;
+  const token = playwrightExtensionToken();
   if (token) url.searchParams.set("token", token);
   return url.toString();
 }
