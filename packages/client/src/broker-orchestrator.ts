@@ -26,23 +26,6 @@ import type {
 const MAX_HTTP_BODY_CHARS = 512 * 1024;
 
 /**
- * Whether any tier of this spec can touch a browser. A spec of credential-free
- * http tiers runs entirely in the broker's own process, so the daemon must not
- * launch Chrome for it and the orchestrator must not wait for a backend.
- */
-export function specNeedsBrowser(spec: LensSpec): boolean {
-  if (spec.perform !== undefined) return true;
-  return spec.resolve.some((resolver) =>
-    resolver.kind !== "http" ||
-    resolver.credentials === true ||
-    resolver.credentials === "same-origin-page" ||
-    Object.values(resolver.sources ?? {}).some((source) =>
-      source.credentials === true || source.credentials === "same-origin-page"
-    )
-  );
-}
-
-/**
  * Consent gate for a spec with page steps or mutating HTTP requests: default deny, opened only by
  * the caller's explicit flag. Every write decision passes through here, so
  * this is also where a future host policy (a config allow/deny list) belongs.
@@ -74,6 +57,8 @@ export function createBrokerOrchestrator(
    * immediately instead of paying the full grace.
    */
   options: {
+    /** Lazily start browser transports only after execution actually needs one. */
+    prepareBackends?: () => Promise<void>;
     preferredWaitMs?: number | (() => number);
     /**
      * Start making the fallback available after the preferred grace. Selection
@@ -100,6 +85,9 @@ export function createBrokerOrchestrator(
     );
     if (eligible.length === 0) {
       throw capabilityMismatch(requiredCapabilities, backends);
+    }
+    if (!eligible.some((backend) => backend.available())) {
+      await options.prepareBackends?.();
     }
     let selected = currentBackend(eligible);
     // If the preferred backend was excluded by capability negotiation, prepare
