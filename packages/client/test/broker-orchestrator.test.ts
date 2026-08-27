@@ -426,18 +426,21 @@ describe("broker orchestration", () => {
     expect(backend.finishes).toEqual(["close-if-created"]);
   });
 
-  it("caches complete values in the shared orchestrator", async () => {
+  it("returns cached values without preparing a browser", async () => {
     vi.useFakeTimers();
-    const backend = new FakeBackend("cdp");
-    const orchestrator = createBrokerOrchestrator([backend]);
+    const backend = new FakeBackend("cdp", false);
+    const prepareBackends = vi.fn(async () => backend.setAvailable(true));
+    const orchestrator = createBrokerOrchestrator([backend], { prepareBackends });
     const spec = domSpec({ effects: { reads: ["example.com"], writes: [], cache: 60 } });
     const call = (id: string) =>
       request(orchestrator, { type: "call", id, spec, params: {}, timeoutMs: 1000 });
 
     await call("first");
+    backend.setAvailable(false);
     const second = await call("second");
 
     expect(backend.binds).toHaveLength(1);
+    expect(prepareBackends).toHaveBeenCalledOnce();
     expect(second).toMatchObject({ kind: "value", cached: true });
     vi.useRealTimers();
   });

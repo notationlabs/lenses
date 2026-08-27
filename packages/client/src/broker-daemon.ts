@@ -6,7 +6,7 @@
  */
 import { WebSocket, WebSocketServer } from "ws";
 import type { LensBridgeRequest } from "@djgrant/lenses-core";
-import { createBrokerOrchestrator, specNeedsBrowser } from "./broker-orchestrator.js";
+import { createBrokerOrchestrator } from "./broker-orchestrator.js";
 import { createCdpBackend } from "./cdp-host.js";
 import { createPlaywrightExtensionBackend } from "./playwright-extension-backend.js";
 import { playwrightExtensionInstalled } from "./chrome-paths.js";
@@ -68,6 +68,7 @@ void playwrightExtensionInstalled(undefined, profile).then((installed) => {
 const extensionGraceMs =
   Number(process.env.LENS_BROKER_EXTENSION_GRACE_MS ?? "") || 2_000;
 const orchestrator = createBrokerOrchestrator([extension, cdp], {
+  prepareBackends: ensureBrowser,
   preferredWaitMs: () =>
     extensionInstalled && !extensionAttemptFailed ? extensionGraceMs : 0,
   prepareFallback: () => cdp.acquire(),
@@ -277,7 +278,6 @@ function onClientMessage(client: WebSocket, raw: string): void {
     return;
   }
   if (message.type !== "call" && message.type !== "observe") return;
-  const needsBrowser = message.type === "observe" || specNeedsBrowser(message.spec);
   if (shuttingDown) {
     send(client, {
       type: "result",
@@ -328,7 +328,6 @@ function onClientMessage(client: WebSocket, raw: string): void {
       };
       broadcastStatus();
       try {
-        if (needsBrowser) await ensureBrowser();
         await handleClientMessage(client, message);
       } finally {
         activeCall = undefined;
