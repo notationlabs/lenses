@@ -2,6 +2,7 @@ import puppeteer from "puppeteer-core";
 import { createCdpBackend, type CdpBackend, type CdpTransport } from "./cdp-host.js";
 import { openUrlInChrome } from "./launch-browser.js";
 import { browserProfile, playwrightExtensionToken } from "./user-config.js";
+import { playwrightExtensionInstalledVersion } from "./chrome-paths.js";
 import { CDPRelayServer } from "./playwright-relay/cdp-relay.js";
 import {
   PLAYWRIGHT_EXTENSION_ID,
@@ -48,6 +49,10 @@ function createPlaywrightExtensionTransport(
   options: ResolvedPlaywrightExtensionOptions
 ): CdpTransport {
   let relay: CDPRelayServer | undefined;
+  let installedVersion: string | undefined;
+  void playwrightExtensionInstalledVersion(undefined, options.profile).then((version) => {
+    installedVersion = version;
+  });
 
   const dispose = () => {
     relay?.stop();
@@ -62,11 +67,19 @@ function createPlaywrightExtensionTransport(
     looksReady: () => true,
     probeLive: async () => true,
     connectHint: () =>
-      "select a tab in the Playwright Extension connect page (Chrome shows a debugger infobar on attached tabs)",
+      `connect Playwright Extension relay protocol ${PLAYWRIGHT_EXTENSION_PROTOCOL}: ` +
+      "approve the connect page and select a tab for the Lenses group",
     staleHint: () =>
       `Playwright Extension is not connected. Install it from ${PLAYWRIGHT_EXTENSION_INSTALL_URL}, ` +
         "approve the connect page, and drag tabs into the Lenses tab group. " +
         "Set PLAYWRIGHT_MCP_EXTENSION_TOKEN to skip repeated approval.",
+    info: () => ({
+      protocolMajor: PLAYWRIGHT_EXTENSION_PROTOCOL,
+      installedVersion,
+    }),
+    disconnectHint: () =>
+      "Playwright Extension disconnected. Keep at least one tab in the Lenses group, " +
+      "then retry to reopen the connect page.",
     dispose,
     async connect(progress) {
       dispose();
@@ -88,7 +101,13 @@ function createPlaywrightExtensionTransport(
         await open(connectUrl);
         const timeout = AbortSignal.timeout(CONNECT_MS);
         await Promise.race([
-          next.waitForExtension(),
+          next.waitForExtension().catch((error) => {
+            const reason = error instanceof Error ? error.message : String(error);
+            throw new Error(
+              `Playwright Extension relay protocol ${PLAYWRIGHT_EXTENSION_PROTOCOL} failed to initialize: ` +
+              `${reason}. Update the extension if the connect page reports a protocol mismatch.`
+            );
+          }),
           new Promise<never>((_, reject) => {
             timeout.addEventListener("abort", () =>
               reject(

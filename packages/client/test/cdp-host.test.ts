@@ -77,7 +77,12 @@ describe("CDP host connection lifecycle", () => {
     expect(host.info()).toMatchObject({
       name: "cdp",
       detail: "Chrome/144.0.0.0",
-      capabilities: ["browser-session", "credentialed-http", "credentialed-http-body"],
+      capabilities: [
+        "browser-session",
+        "credentialed-http",
+        "credentialed-http-body",
+        "same-origin-page-http",
+      ],
     });
     expect(statuses).toEqual([true]);
 

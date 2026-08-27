@@ -4,97 +4,11 @@ import { WebSocket } from "ws";
 import { BrowserModel } from "../src/playwright-relay/browser-model.js";
 import { CDPRelayServer } from "../src/playwright-relay/cdp-relay.js";
 
-class FakeExtension {
-  readonly commands: { method: string; params: unknown }[] = [];
-  private socket: WebSocket | undefined;
-  private nextTabId = 1;
-  private tabs = new Map<number, string>();
-
-  async attach(endpoint: string, initialUrl = "https://example.com/"): Promise<void> {
-    this.socket = new WebSocket(endpoint);
-    await new Promise<void>((resolve, reject) => {
-      this.socket!.once("open", () => resolve());
-      this.socket!.once("error", reject);
-    });
-    this.socket.on("message", (data) => {
-      const message = JSON.parse(data.toString()) as {
-        id?: number;
-        method?: string;
-        params?: unknown;
-      };
-      if (message.id === undefined || !message.method) return;
-      this.commands.push({ method: message.method, params: message.params });
-      const result = this.result(message.method, message.params);
-      if (message.method === "chrome.tabs.create") {
-        // Chrome emits onCreated as part of the same operation. The relay must
-        // coalesce auto-attach with createTarget's explicit attach.
-        this.socket!.send(JSON.stringify({ method: "chrome.tabs.onCreated", params: [result] }));
-      }
-      this.socket!.send(JSON.stringify({ id: message.id, result }));
-      if (message.method === "chrome.tabs.remove") {
-        const [tabId] = message.params as [number];
-        this.tabs.delete(tabId);
-        this.socket!.send(JSON.stringify({ method: "chrome.tabs.onRemoved", params: [tabId] }));
-      }
-    });
-    this.tabs.set(this.nextTabId, initialUrl);
-    this.socket.send(
-      JSON.stringify({
-        method: "chrome.tabs.onCreated",
-        params: [
-          {
-            id: this.nextTabId,
-            index: 0,
-            windowId: 1,
-            url: initialUrl,
-            active: true,
-            pinned: false,
-          },
-        ],
-      })
-    );
-    this.socket.send(JSON.stringify({ method: "extension.initialized", params: [] }));
-  }
-
-  private result(method: string, params: unknown) {
-    if (method === "chrome.tabs.create") {
-      const [{ url }] = params as [{ url?: string }];
-      this.nextTabId += 1;
-      const createdUrl = url ?? "about:blank";
-      this.tabs.set(this.nextTabId, createdUrl);
-      return {
-        id: this.nextTabId,
-        index: 1,
-        windowId: 1,
-        url: createdUrl,
-        active: true,
-        pinned: false,
-      };
-    }
-    if (method === "chrome.debugger.sendCommand") {
-      const [target, cdpMethod] = params as [{ tabId: number }, string];
-      if (cdpMethod === "Target.getTargetInfo") {
-        return {
-          targetInfo: {
-            targetId: `target-${target.tabId}`,
-            type: "page",
-            url: this.tabs.get(target.tabId) ?? "",
-          },
-        };
-      }
-      return {};
-    }
-    return {};
-  }
-
-  close(): void {
-    this.socket?.close();
-  }
-}
+import { FakePlaywrightExtension } from "./playwright-relay-fake.js";
 
 describe("Playwright CDP relay", () => {
   let relay: CDPRelayServer | undefined;
-  let extension: FakeExtension | undefined;
+  let extension: FakePlaywrightExtension | undefined;
   let cdp: WebSocket | undefined;
 
   afterEach(() => {
@@ -137,7 +51,7 @@ describe("Playwright CDP relay", () => {
   it("accepts a real Puppeteer connection", async () => {
     relay = new CDPRelayServer();
     await relay.start();
-    extension = new FakeExtension();
+    extension = new FakePlaywrightExtension();
     await extension.attach(relay.extensionEndpoint());
     await relay.waitForExtension();
 
@@ -152,7 +66,7 @@ describe("Playwright CDP relay", () => {
   it("creates the first real target and removes the token-approved connect page", async () => {
     relay = new CDPRelayServer();
     await relay.start();
-    extension = new FakeExtension();
+    extension = new FakePlaywrightExtension();
     await extension.attach(
       relay.extensionEndpoint(),
       "chrome-extension://mmlmfjhmonkocbjadbfplnigmagldckm/connect.html"

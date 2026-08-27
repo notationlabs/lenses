@@ -35,6 +35,7 @@ export interface BrokerBackendStatus {
   detail?: string;
   version?: string;
   protocolMajor?: number;
+  installedVersion?: string;
   capabilities?: string[];
   diagnostic?: string;
   reconnectAttempts?: number;
