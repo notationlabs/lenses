@@ -4,6 +4,8 @@ import { WebSocket } from "ws";
 import type { LensBridgeRequest, LensResult, LensSpec } from "@djgrant/lenses-core";
 import { coordinateRespawn } from "./broker-respawn.js";
 import { brokerBuildStamp } from "./broker-stamp.js";
+import { authProof, loadBrokerAuth, proofMatches } from "./broker-auth.js";
+import { randomBytes } from "node:crypto";
 import type { RecordingTarget } from "./recording.js";
 
 const BROKER_START_WAIT_MS = 3_000;
@@ -462,17 +464,37 @@ async function startBroker(port: number, log: LensLogger): Promise<BrokerConnect
 function connectBroker(port: number, timeoutMs: number): Promise<BrokerConnection | null> {
   return new Promise((resolve) => {
     const socket = new WebSocket(`ws://127.0.0.1:${port}`);
+    const token = loadBrokerAuth().brokerToken;
+    const clientNonce = randomBytes(24).toString("base64url");
+    let authenticated = false;
     let settled = false;
     const onError = () => finish(null);
     const onOpen = () => {
-      socket.send(JSON.stringify({ type: "client" }));
+      socket.send(JSON.stringify({ type: "client-auth", nonce: clientNonce }));
     };
     const onMessage = (data: WebSocket.RawData) => {
       try {
-        const status = JSON.parse(data.toString()) as BrokerMessage;
-        if (status.type === "status") finish({ socket, status });
+        const message = JSON.parse(data.toString()) as Record<string, unknown>;
+        if (message.type === "auth-challenge") {
+          const serverNonce = message.nonce;
+          if (
+            typeof serverNonce !== "string" ||
+            !proofMatches(message.proof, authProof(token, "broker", clientNonce, serverNonce))
+          ) {
+            finish(null);
+            return;
+          }
+          authenticated = true;
+          socket.send(JSON.stringify({
+            type: "auth-response",
+            proof: authProof(token, "client", clientNonce, serverNonce),
+          }));
+          return;
+        }
+        const status = message as unknown as BrokerMessage;
+        if (authenticated && status.type === "status") finish({ socket, status });
       } catch {
-        // A service on this port is not a lens broker.
+        // A service on this port is not an authenticated lens broker.
       }
     };
     const finish = (value: BrokerConnection | null) => {

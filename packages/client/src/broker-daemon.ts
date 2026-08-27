@@ -18,6 +18,15 @@ import { browserProfile } from "./user-config.js";
 import { createIdleExitTimer, createShutdownSequence } from "./broker-lifecycle.js";
 import { brokerBuildStamp } from "./broker-stamp.js";
 import { SerialTaskQueue } from "./serial-task-queue.js";
+import {
+  authProof,
+  brokerOriginAllowed,
+  loadBrokerAuth,
+  pairingCode,
+  proofMatches,
+  saveExtensionPairing,
+} from "./broker-auth.js";
+import { randomBytes } from "node:crypto";
 
 const port = Number(process.argv[2]);
 if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
@@ -29,8 +38,25 @@ if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
 process.on("uncaughtException", (error) => console.error("broker uncaught:", error));
 process.on("unhandledRejection", (error) => console.error("broker unhandled:", error));
 
-const server = new WebSocketServer({ port, host: "127.0.0.1" });
+const auth = loadBrokerAuth();
+const server = new WebSocketServer({
+  port,
+  host: "127.0.0.1",
+  maxPayload: 2 * 1024 * 1024,
+  verifyClient: ({ origin }, done) => {
+    const allowed = brokerOriginAllowed(origin);
+    done(allowed, allowed ? 101 : 403, allowed ? undefined : "forbidden origin");
+  },
+});
 const clients = new Set<WebSocket>();
+type Unauthenticated =
+  | { kind: "new" }
+  | { kind: "challenge"; role: "client" | "extension"; token: string; clientNonce: string; serverNonce: string; installationId?: string }
+  | { kind: "pairing"; installationId: string; code: string }
+  | { kind: "extension-hello" }
+  | { kind: "identified" };
+const unauthenticated = new Map<WebSocket, Unauthenticated>();
+const authTimers = new Map<WebSocket, ReturnType<typeof setTimeout>>();
 const cdp = createCdpBackend();
 const extension = createExtensionBackend();
 // An extension that has handshaked here before is worth waiting for: its
@@ -78,7 +104,11 @@ let idleTimer: ReturnType<typeof setTimeout> | undefined;
 const idleExit = createIdleExitTimer({
   idleMs: idleExitMs,
   noBrowserMs: noBrowserExitMs,
-  isIdle: () => clients.size === 0 && !extension.available() && inFlight === 0,
+  isIdle: () =>
+    clients.size === 0 &&
+    !extension.available() &&
+    ![...unauthenticated.values()].some((state) => state.kind === "pairing") &&
+    inFlight === 0,
   // A known extension counts as a reachable browser even while its service
   // worker sleeps: the fast no-browser exit would otherwise kill the broker
   // before the worker can reconnect, and only a resident broker keeps it awake.
@@ -169,7 +199,10 @@ server.on("error", (error) => {
   process.exit(1);
 });
 server.on("connection", (socket) => {
-  socket.once("message", (data) => identify(socket, data.toString()));
+  unauthenticated.set(socket, { kind: "new" });
+  armAuthTimeout(socket, 5_000);
+  socket.on("message", (data) => routeSocketMessage(socket, data.toString()));
+  socket.on("close", () => clearSocketAuth(socket));
 });
 server.on("close", () => {
   clearTimeout(fallbackStart);
@@ -177,26 +210,131 @@ server.on("close", () => {
   cdp.stop();
 });
 
-function identify(socket: WebSocket, raw: string): void {
+function routeSocketMessage(socket: WebSocket, raw: string): void {
+  const state = unauthenticated.get(socket);
+  if (!state || state.kind === "identified") {
+    onClientMessage(socket, raw);
+    return;
+  }
   const message = parse(raw);
-  if (message?.type === "client") {
-    clients.add(socket);
-    idleExit.reset();
-    sendStatus(socket);
-    socket.on("message", (data) => onClientMessage(socket, data.toString()));
-    socket.on("close", () => {
-      clients.delete(socket);
+  if (!message) return socket.close(1008, "invalid authentication frame");
+
+  if (state.kind === "new" && (message.type === "client-auth" || message.type === "extension-auth")) {
+    if (typeof message.nonce !== "string" || message.nonce.length < 16 || message.nonce.length > 256) {
+      return socket.close(1008, "invalid authentication nonce");
+    }
+    const role = message.type === "client-auth" ? "client" : "extension";
+    const installationId = role === "extension" && typeof message.installationId === "string"
+      ? message.installationId
+      : undefined;
+    const token = role === "client" ? auth.brokerToken : installationId ? auth.extensions[installationId] : undefined;
+    if (role === "extension" && (!installationId || installationId.length > 128)) {
+      return socket.close(1008, "invalid extension installation");
+    }
+    if (!token && role === "extension" && installationId) {
+      const code = pairingCode(auth.brokerToken, installationId, message.nonce);
+      unauthenticated.set(socket, { kind: "pairing", installationId, code });
+      armAuthTimeout(socket, 5 * 60_000);
       idleExit.reset();
+      send(socket, { type: "extension-pairing-required", code });
+      broadcastStatus();
+      return;
+    }
+    if (!token) return socket.close(1008, "not paired");
+    const serverNonce = randomBytes(24).toString("base64url");
+    unauthenticated.set(socket, {
+      kind: "challenge",
+      role,
+      token,
+      clientNonce: message.nonce,
+      serverNonce,
+      ...(installationId ? { installationId } : {}),
+    });
+    send(socket, {
+      type: "auth-challenge",
+      nonce: serverNonce,
+      proof: authProof(token, "broker", message.nonce, serverNonce),
     });
     return;
   }
-  if (message?.type === "extension-hello") {
+
+  if (state.kind === "challenge" && message.type === "auth-response") {
+    const peer = state.role === "client" ? "client" : "extension";
+    if (!proofMatches(message.proof, authProof(state.token, peer, state.clientNonce, state.serverNonce))) {
+      return socket.close(1008, "authentication failed");
+    }
+    if (state.role === "client") {
+      identifyClient(socket);
+    } else {
+      unauthenticated.set(socket, { kind: "extension-hello" });
+      armAuthTimeout(socket, 5_000);
+      send(socket, { type: "auth-ok" });
+    }
+    return;
+  }
+
+  if (state.kind === "pairing" && message.type === "extension-pair-approve" && message.code === state.code) {
+    // Deterministic per installation so concurrent brokers on different
+    // supported ports converge on the same pairing instead of invalidating
+    // one another's extension credential.
+    const token = authProof(
+      auth.brokerToken,
+      "extension",
+      state.installationId,
+      "pairing-token-v1"
+    );
+    saveExtensionPairing(state.installationId, token);
+    auth.extensions[state.installationId] = token;
+    unauthenticated.set(socket, { kind: "extension-hello" });
+    armAuthTimeout(socket, 5_000);
+    send(socket, { type: "extension-pair-complete", token });
+    broadcastStatus();
+    idleExit.reset();
+    return;
+  }
+
+  if (state.kind === "extension-hello" && message.type === "extension-hello") {
+    clearAuthTimer(socket);
+    unauthenticated.set(socket, { kind: "identified" });
     if (extension.attach(socket, message)) {
       markExtensionSeen(String(message.extensionVersion ?? ""), message.ua);
     }
     return;
   }
-  socket.close();
+  socket.close(1008, "unexpected authentication frame");
+}
+
+function identifyClient(socket: WebSocket): void {
+  clearAuthTimer(socket);
+  unauthenticated.set(socket, { kind: "identified" });
+  clients.add(socket);
+  idleExit.reset();
+  sendStatus(socket);
+  socket.on("close", () => {
+    clients.delete(socket);
+    idleExit.reset();
+  });
+}
+
+function armAuthTimeout(socket: WebSocket, milliseconds: number): void {
+  clearAuthTimer(socket);
+  authTimers.set(socket, setTimeout(() => socket.close(1008, "authentication timed out"), milliseconds));
+}
+
+function clearAuthTimer(socket: WebSocket): void {
+  const timer = authTimers.get(socket);
+  if (timer) clearTimeout(timer);
+  authTimers.delete(socket);
+}
+
+function clearSocketAuth(socket: WebSocket): void {
+  clearAuthTimer(socket);
+  const wasPairing = unauthenticated.get(socket)?.kind === "pairing";
+  unauthenticated.delete(socket);
+  if (wasPairing) {
+    broadcastStatus();
+    idleExit.reset();
+  }
 }
 
 function onClientMessage(client: WebSocket, raw: string): void {
@@ -337,7 +475,7 @@ const runShutdown = createShutdownSequence({
   log: (message) => console.error(message),
   stopListening: () => server.close(),
   closeSockets() {
-    for (const client of clients) client.close();
+    for (const socket of unauthenticated.keys()) socket.close();
   },
   stop() {
     idleExit.stop();
@@ -387,6 +525,12 @@ function sendStatus(socket: WebSocket): void {
  * but its debugging endpoint is unconsented.
  */
 function describeGap(): string | undefined {
+  const pendingPairing = [...unauthenticated.values()].find(
+    (state): state is Extract<Unauthenticated, { kind: "pairing" }> => state.kind === "pairing"
+  );
+  if (pendingPairing) {
+    return `Chrome extension pairing code ${pendingPairing.code}: verify this matches Chrome's notification, then click the notification to approve`;
+  }
   const extensionDiagnostic = extension.info().diagnostic;
   if (extensionDiagnostic) return `Lens extension compatibility mismatch: ${extensionDiagnostic}`;
   if (extension.available() || cdp.available()) return undefined;

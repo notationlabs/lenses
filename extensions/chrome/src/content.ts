@@ -17,12 +17,17 @@ export {};
 const MARK = "__lens_host__";
 
 let orphaned = false;
+let interceptToken: string | undefined;
 window.addEventListener("message", (event) => {
   const data = event.data;
   if (
+    event.source !== window ||
+    event.origin !== location.origin ||
     !data ||
     data.source !== MARK ||
     data.kind !== "intercepted" ||
+    typeof data.token !== "string" ||
+    data.token !== interceptToken ||
     orphaned
   ) {
     return;
@@ -31,6 +36,7 @@ window.addEventListener("message", (event) => {
     chrome.runtime
       .sendMessage({
         type: "intercepted",
+        token: data.token,
         response: {
           url: data.url,
           method: data.method,
@@ -49,6 +55,16 @@ chrome.runtime.onMessage.addListener(
   (message, _sender, sendResponse) => {
     try {
       if (message.type === "ping") {
+        sendResponse({ ok: true });
+        return false;
+      }
+      if (message.type === "intercepts-enable" && typeof message.token === "string") {
+        interceptToken = message.token;
+        sendResponse({ ok: true });
+        return false;
+      }
+      if (message.type === "intercepts-disable" && message.token === interceptToken) {
+        interceptToken = undefined;
         sendResponse({ ok: true });
         return false;
       }

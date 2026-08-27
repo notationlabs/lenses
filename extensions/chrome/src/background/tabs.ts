@@ -15,7 +15,8 @@ type BindOperation = Extract<
 >;
 
 export async function bindTab(
-  request: BindOperation
+  request: BindOperation,
+  beforeLoad: (tabId: number) => Promise<void> = async () => {}
 ): Promise<BoundTab> {
   const tabs = await chrome.tabs.query({});
 
@@ -25,16 +26,17 @@ export async function bindTab(
   // call. The lease stays with the call that took it, so this one borrows the
   // tab and leaves its disposal to the holder.
   const leased = await leasedTabFor(request.target, tabs);
-  if (leased) return bindExisting(leased, request);
+  if (leased) return bindExisting(leased, request, beforeLoad);
 
   const exact = tabs.find(
     (tab) => tab.url && sameTarget(tab.url, request.target)
   );
-  if (exact) return bindExisting(exact, request);
+  if (exact) return bindExisting(exact, request, beforeLoad);
 
   const created = await createTabOrWindow(request.target);
   if (created.id === undefined) throw new Error("could not create tab");
   resetIntercepts(created.id);
+  await beforeLoad(created.id);
   await waitForLoad(created.id, request.loadTimeoutMs);
   return { tabId: created.id, created: true, navigated: true };
 }
@@ -75,10 +77,12 @@ async function leasedTabFor(
 // here already belonged to someone else, the user or an earlier lease.
 async function bindExisting(
   tab: chrome.tabs.Tab,
-  request: BindOperation
+  request: BindOperation,
+  beforeLoad: (tabId: number) => Promise<void>
 ): Promise<BoundTab> {
   const tabId = tab.id;
   if (tabId === undefined) throw new Error("could not bind tab");
+  await beforeLoad(tabId);
   if (!tab.url || !sameTarget(tab.url, request.target)) {
     await navigateTab(tabId, request.target, request.loadTimeoutMs);
     return { tabId, created: false, navigated: true };
