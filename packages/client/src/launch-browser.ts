@@ -56,7 +56,9 @@ export async function openUrlInChrome(url: string, profile = "Default"): Promise
   const profileArg = `--profile-directory=${profile}`;
   try {
     if (process.platform === "darwin") {
-      await run("open", ["-g", "-a", "Google Chrome", "--args", profileArg, url]);
+      // `--args` is only for a new launch; Chrome already running ignores it,
+      // so the connect page would never appear.
+      await run("open", ["-g", "-a", "Google Chrome", url]);
       return true;
     }
     const command = process.platform === "win32" ? "chrome" : "google-chrome";

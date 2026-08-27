@@ -526,7 +526,7 @@ function capabilityMismatch(
     `No available browser backend supports ${requirement}.` +
       (connected ? ` ${connected}.` : "") +
       fallback +
-      " Update the Lens CLI and Chrome extension together and reload the extension at chrome://extensions, or enable the CDP fallback."
+      " Approve the Playwright Extension connect page, or enable the CDP fallback at chrome://inspect/#remote-debugging."
   );
 }
 

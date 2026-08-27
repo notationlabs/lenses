@@ -58,13 +58,16 @@ const extension = createPlaywrightExtensionBackend((message) =>
   console.error(message)
 );
 let extensionExpected = false;
+/** This process already failed to attach; do not wait 45s on every later call. */
+let skipExtension = false;
 void playwrightExtensionInstalled(undefined, browserProfile()).then((installed) => {
   extensionExpected = installed;
 });
 const extensionGraceMs =
   Number(process.env.LENS_BROKER_EXTENSION_GRACE_MS ?? "") || 2_000;
 const orchestrator = createBrokerOrchestrator([extension, cdp], {
-  preferredWaitMs: () => (extensionExpected ? extensionGraceMs : 0),
+  preferredWaitMs: () =>
+    extensionExpected && !skipExtension ? extensionGraceMs : 0,
   prepareFallback: () => cdp.acquire(),
 });
 let ensureBrowserInFlight: Promise<void> | undefined;
@@ -88,11 +91,8 @@ let idleTimer: ReturnType<typeof setTimeout> | undefined;
 const idleExit = createIdleExitTimer({
   idleMs: idleExitMs,
   noBrowserMs: noBrowserExitMs,
-  isIdle: () => clients.size === 0 && inFlight === 0,
-  browserLive: async () =>
-    extension.available() ||
-    extensionExpected ||
-    (await cdp.browserLive()),
+  isIdle: () => clients.size === 0 && !extension.available() && inFlight === 0,
+  browserLive: async () => extension.available() || (await cdp.browserLive()),
   onExit: (reason) => shutdown(reason),
 });
 
@@ -119,10 +119,19 @@ async function checkAndConnect(): Promise<void> {
     concedeToCdp("Playwright Extension is not installed in this Chrome profile");
     return;
   }
-  if (extension.available()) return;
+  if (extension.available()) {
+    skipExtension = false;
+    return;
+  }
+  if (skipExtension) {
+    cdp.start();
+    return;
+  }
   try {
     await extension.acquire((message) => console.error(message));
+    skipExtension = false;
   } catch (error) {
+    skipExtension = true;
     concedeToCdp(error instanceof Error ? error.message : String(error));
   }
 }
@@ -164,6 +173,7 @@ extension.onStatusChange(() => {
   broadcastStatus();
   idleExit.reset();
   if (extension.available()) {
+    skipExtension = false;
     cdp.stop();
     void cdp.release();
   }
@@ -347,6 +357,7 @@ async function handleControl(
       await cdp.release();
     }
     if (message.action === "acquire") {
+      skipExtension = false;
       await ensureBrowser();
       const target = extension.available() ? extension : cdp;
       await target.acquire((text) => send(client, { type: "progress", id: message.id, message: text }));
@@ -441,6 +452,12 @@ function describeGap(): string | undefined {
     return (
       `Playwright Extension is not installed; install it from ${PLAYWRIGHT_EXTENSION_INSTALL_URL} ` +
       "or enable chrome://inspect/#remote-debugging for the CDP fallback (Chrome will ask you to click Allow)"
+    );
+  }
+  if (skipExtension) {
+    return (
+      "Playwright Extension did not connect; using CDP until the next acquire or broker restart. " +
+      "Enable chrome://inspect/#remote-debugging (Chrome will ask you to click Allow)"
     );
   }
   if (browserPresent === false) {
