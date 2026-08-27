@@ -58,6 +58,9 @@ function createPlaywrightExtensionTransport(
     name: "playwright-extension",
     pollForConnection: false,
     retryConnect: false,
+    // The extension disconnects when its last controlled tab closes. Keep the
+    // useful lens tab after replacing the token-approved connect page.
+    closeCreatedPages: false,
     connectAttemptMs: CONNECT_ATTEMPT_MS,
     looksReady: () => true,
     probeLive: async () => true,
