@@ -63,8 +63,6 @@ export interface CdpTransport {
   /** Poll DevToolsActivePort (or equivalent) and auto-connect. Off for the extension relay. */
   readonly pollForConnection: boolean;
   readonly retryConnect: boolean;
-  /** Whether sessions should close tabs created through this transport. */
-  readonly closeCreatedPages: boolean;
   readonly connectAttemptMs?: number;
   connect(progress: (message: string) => void): Promise<Browser>;
   looksReady(): boolean;
@@ -551,7 +549,7 @@ export function createCdpBackend(
           // The user may close the page while its call is still running.
         }
       }
-      if (!cdpSession.created || disposition === "keep" || !transport.closeCreatedPages) return;
+      if (!cdpSession.created || disposition === "keep") return;
       try {
         await cdpSession.page.close();
       } catch {
@@ -746,7 +744,6 @@ export function createDirectCdpTransport(
     name: "cdp",
     pollForConnection: true,
     retryConnect: true,
-    closeCreatedPages: true,
     looksReady,
     probeLive,
     connectHint: () =>
