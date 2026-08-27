@@ -104,8 +104,13 @@ export class BrowserModel {
     );
   }
 
-  async createTarget(url: string | undefined): Promise<{ targetId: string | undefined }> {
-    const tab = await this._sendToExtension("chrome.tabs.create", [{ url }]);
+  async createTarget(
+    url: string | undefined,
+    background = false
+  ): Promise<{ targetId: string | undefined }> {
+    const tab = await this._sendToExtension("chrome.tabs.create", [
+      { url, ...(background ? { active: false } : {}) },
+    ]);
     if (tab?.id === undefined) throw new Error("Failed to create tab");
     if (!this._tabs.has(tab.id)) this._tabs.set(tab.id, {});
     const tabSession = await this._attachTab(tab.id);

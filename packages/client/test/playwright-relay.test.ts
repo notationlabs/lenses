@@ -87,7 +87,7 @@ describe("Playwright CDP relay", () => {
       JSON.stringify({
         id: 2,
         method: "Target.createTarget",
-        params: { url: "https://example.com/new" },
+        params: { url: "https://example.com/new", background: true },
       })
     );
     await viWait(() => replies.some((row) => (row as { id?: number }).id === 2));
@@ -98,7 +98,7 @@ describe("Playwright CDP relay", () => {
     ).toHaveLength(2); // the initial tab and the newly-created tab, once each
     expect(extension.commands).toContainEqual({
       method: "chrome.tabs.create",
-      params: [{ url: "https://example.com/new" }],
+      params: [{ url: "https://example.com/new", active: false }],
     });
     expect(extension.commands).toContainEqual({
       method: "chrome.tabs.remove",

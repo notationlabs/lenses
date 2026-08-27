@@ -90,7 +90,7 @@ export class ExtensionProtocolV2 {
         return { result: {} };
       }
       case "Target.createTarget": {
-        const result = await this._model.createTarget(params?.url);
+        const result = await this._model.createTarget(params?.url, params?.background === true);
         // Token approval selects the connect page itself. Keep it until a real
         // target exists so closing the relay's only tab cannot abort Puppeteer's
         // startup handshake, then remove it from the accessible group.
