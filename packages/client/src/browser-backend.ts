@@ -31,6 +31,8 @@ export interface BackendInfo {
   detail?: string;
   version?: string;
   protocolMajor?: number;
+  /** Version found in the configured Chrome profile; not a runtime attestation. */
+  installedVersion?: string;
   /** Negotiated wire capabilities (backend-specific names). */
   capabilities?: string[];
   /** A handshake, compatibility, or connection problem that explains unavailability. */

@@ -34,13 +34,20 @@ import type {
   BrowserBackend,
   BrowserSession,
 } from "../src/browser-backend.js";
-import { createCdpBackend, createDirectCdpTransport } from "../src/cdp-host.js";
+import {
+  createCdpBackend,
+  createDirectCdpTransport,
+  type CdpTransport,
+} from "../src/cdp-host.js";
+import { CDPRelayServer } from "../src/playwright-relay/cdp-relay.js";
+import { FakePlaywrightExtension } from "./playwright-relay-fake.js";
 
 interface BackendFixture {
   backend: BrowserBackend;
   emitCapture(capture: InterceptedResponse): Promise<void>;
   closed(): boolean;
   reloads(): number;
+  disconnect?(): void;
   close(): Promise<void>;
 }
 
@@ -256,6 +263,76 @@ for (const [name, createFixture] of [
   });
 }
 
+describe("Playwright relay BrowserBackend contract", () => {
+  let fixture: BackendFixture | undefined;
+
+  afterEach(async () => {
+    await fixture?.close();
+    fixture = undefined;
+  });
+
+  it("runs shared session, page, HTTP, cleanup, and disconnect primitives", async () => {
+    fixture = await createPlaywrightRelayFixture();
+    const backend = fixture.backend;
+    const session = await backend.bind({
+      target: "https://example.com/shared",
+      loadTimeoutMs: 1000,
+      navigation: "fresh",
+    });
+    expect(session).toMatchObject({ created: true, navigated: true });
+
+    await fixture.emitCapture(captured("relay"));
+    await expectCapture(session, "https://example.com/api/relay");
+    await expect(session.domExtract(domSpec.resolve[0] as never)).resolves.toMatchObject({
+      value: { title: "Shared" },
+    });
+    await expect(session.perform([
+      { fill: "#input", value: "hello" },
+      { click: "#send" },
+      { wait: { appears: "#done", timeoutMs: 100 } },
+    ])).resolves.toMatchObject({
+      url: "https://example.com/shared",
+    });
+    await expect(session.snapshot({ maxChars: 6000, html: true })).resolves.toMatchObject({
+      title: "Shared",
+      text: "Shared page",
+    });
+    await expect(session.recordingState()).resolves.toMatchObject({
+      url: "https://example.com/shared",
+      loading: false,
+    });
+    await expect(session.recordingScreenshot()).resolves.toBe(
+      Buffer.from("fake png").toString("base64")
+    );
+    await expect(backend.httpFetch!({
+      method: "GET",
+      url: "https://api.example.com/api/me",
+    })).resolves.toMatchObject({ status: 200, body: '{"me":true}' });
+
+    await backend.finish(session, "close-if-created");
+    expect(fixture.closed()).toBe(true);
+
+    const reused = await backend.bind({
+      target: "https://example.com/",
+      loadTimeoutMs: 1000,
+      navigation: "reuse",
+    });
+    expect(reused).toMatchObject({ created: false, navigated: false });
+    await backend.finish(reused, "close-if-created");
+    const fresh = await backend.bind({
+      target: "https://example.com/",
+      loadTimeoutMs: 1000,
+      navigation: "fresh",
+    });
+    expect(fresh).toMatchObject({ created: false, navigated: true });
+    await backend.finish(fresh, "close-if-created");
+
+    fixture.disconnect?.();
+    await vi.waitFor(() => expect(backend.available()).toBe(false));
+    expect(backend.info().diagnostic).toContain("disconnected");
+  }, 10_000);
+});
+
 describe("backend httpFetch", () => {
   function stubFetch(body: string) {
     const init: RequestInit[] = [];
@@ -266,7 +343,7 @@ describe("backend httpFetch", () => {
     return init;
   }
 
-  it("returns undefined when no same-origin page is open", async () => {
+  it("uses a temporary same-origin page when no matching page is open", async () => {
     const fixture = await createCdpFixture();
     try {
       const request = { method: "GET", url: "https://example.com/api/me" };
@@ -276,9 +353,14 @@ describe("backend httpFetch", () => {
         navigation: "fresh",
       });
       const init = stubFetch('{"me":true}');
-      await expect(fixture.backend.httpFetch!(request)).resolves.toBeUndefined();
-      expect(init).toHaveLength(0);
-      expect(fixture.closed()).toBe(false);
+      await expect(fixture.backend.httpFetch!(request)).resolves.toMatchObject({
+        method: "GET",
+        url: "https://example.com/api/me",
+        status: 200,
+        body: '{"me":true}',
+      });
+      expect(init).toEqual([expect.objectContaining({ credentials: "include" })]);
+      expect(fixture.closed()).toBe(true);
 
       await fixture.backend.bind({
         target: "https://example.com/shared",
@@ -291,14 +373,17 @@ describe("backend httpFetch", () => {
         status: 200,
         body: '{"me":true}',
       });
-      expect(init).toEqual([expect.objectContaining({ credentials: "include" })]);
+      expect(init).toEqual([
+        expect.objectContaining({ credentials: "include" }),
+        expect.objectContaining({ credentials: "include" }),
+      ]);
     } finally {
       vi.unstubAllGlobals();
       await fixture.close();
     }
   });
 
-  it("opens a temporary tab only for same-origin-page fetches", async () => {
+  it("opens a temporary tab for explicit same-origin-page fetches", async () => {
     const fixture = await createCdpFixture();
     try {
       await fixture.backend.bind({
@@ -529,6 +614,59 @@ class FakeBrowser {
     this.connected = false;
     this.disconnected?.();
   }
+}
+
+async function createPlaywrightRelayFixture(): Promise<BackendFixture> {
+  const relay = new CDPRelayServer();
+  await relay.start();
+  const extension = new FakePlaywrightExtension();
+  await extension.attach(relay.extensionEndpoint(), "https://example.com/");
+  await relay.waitForExtension();
+  const realPuppeteer = await vi.importActual<typeof import("puppeteer-core")>(
+    "puppeteer-core"
+  );
+  let connected: import("puppeteer-core").Browser | undefined;
+  const transport: CdpTransport = {
+    name: "playwright-extension",
+    pollForConnection: false,
+    retryConnect: false,
+    looksReady: () => true,
+    probeLive: async () => true,
+    connectHint: () => "connect test relay",
+    staleHint: () => "test relay unavailable",
+    async connect() {
+      connected = await realPuppeteer.default.connect({
+        browserWSEndpoint: relay.cdpEndpoint(),
+        defaultViewport: null,
+      });
+      return connected;
+    },
+  };
+  const backend = createCdpBackend(() => {}, transport);
+  return {
+    backend,
+    async emitCapture(capture) {
+      extension.emitJsonResponse(capture);
+      await Promise.resolve();
+    },
+    closed: () =>
+      extension.commands.some((command) => command.method === "chrome.tabs.remove"),
+    reloads: () =>
+      extension.commands.filter((command) => {
+        if (command.method !== "chrome.debugger.sendCommand") return false;
+        return (command.params as unknown[])?.[1] === "Page.reload";
+      }).length,
+    disconnect() {
+      extension.close("controlled group closed");
+    },
+    async close() {
+      backend.stop();
+      await backend.release();
+      connected = undefined;
+      extension.close();
+      relay.stop();
+    },
+  };
 }
 
 async function createCdpFixture(): Promise<BackendFixture> {

@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { PLAYWRIGHT_EXTENSION_ID } from "./playwright-relay/protocol.js";
@@ -38,6 +38,45 @@ export async function playwrightExtensionInstalled(
     if (await hasExtensionSettingsRecord(join(profileDir, fileName))) return true;
   }
   return false;
+}
+
+/**
+ * Best-effort version from the configured profile's on-disk manifest. Chrome
+ * can choose another installed revision at runtime, so callers must label this
+ * as an installed version rather than the version of the connected extension.
+ */
+export async function playwrightExtensionInstalledVersion(
+  userDataDir = defaultChromeUserDataDir(),
+  profile = "Default"
+): Promise<string | undefined> {
+  const extensionDir = join(
+    userDataDir,
+    profile,
+    "Extensions",
+    PLAYWRIGHT_EXTENSION_ID
+  );
+  try {
+    const versions = await readdir(extensionDir);
+    for (const directory of versions.sort(compareVersions).reverse()) {
+      try {
+        const manifest = JSON.parse(
+          await readFile(join(extensionDir, directory, "manifest.json"), "utf8")
+        ) as { version?: unknown };
+        if (typeof manifest.version === "string" && manifest.version) {
+          return manifest.version;
+        }
+      } catch {
+        // A partial update or unpacked layout may not contain this manifest.
+      }
+    }
+  } catch {
+    // The extension may only have a Preferences record, or the profile moved.
+  }
+  return undefined;
+}
+
+function compareVersions(left: string, right: string): number {
+  return left.localeCompare(right, undefined, { numeric: true });
 }
 
 async function hasExtensionSettingsRecord(prefsPath: string): Promise<boolean> {

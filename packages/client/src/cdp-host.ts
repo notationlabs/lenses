@@ -36,6 +36,7 @@ import type {
   FinishDisposition,
   InterceptDelta,
   SnapshotOptions,
+  BackendInfo,
 } from "./browser-backend.js";
 
 const MAX_BODY_BYTES = 512 * 1024;
@@ -69,6 +70,10 @@ export interface CdpTransport {
   probeLive(): Promise<boolean>;
   connectHint(): string;
   staleHint(): string;
+  /** Transport-specific status such as relay protocol and profile metadata. */
+  info?(): Partial<BackendInfo>;
+  /** Actionable status after an unexpected live connection loss. */
+  disconnectHint?(): string;
   dispose?(): void;
 }
 
@@ -218,6 +223,11 @@ export function createCdpBackend(
       browser = undefined;
       browserVersion = "";
       endpointPresent = false;
+      if (!released) {
+        lastConnectionError =
+          transport.disconnectHint?.() ??
+          `${transport.name} disconnected; reconnect the browser and retry`;
+      }
       transport.dispose?.();
       notifyStatusChange();
     });
@@ -358,12 +368,24 @@ export function createCdpBackend(
     info: () => ({
       name: transport.name,
       detail: browserVersion || undefined,
-      capabilities: ["browser-session", "credentialed-http", "credentialed-http-body"],
+      capabilities: [
+        "browser-session",
+        "credentialed-http",
+        "credentialed-http-body",
+        "same-origin-page-http",
+      ],
       diagnostic: lastConnectionError,
       reconnectAttempts,
       sameOriginPageRequests: true,
+      ...transport.info?.(),
     }),
-    supports: () => true,
+    supports: (capability) =>
+      [
+        "browser-session",
+        "credentialed-http",
+        "credentialed-http-body",
+        "same-origin-page-http",
+      ].includes(capability),
     lease: () =>
       available() ? "held" : released ? "released" : "disconnected",
     async browserLive() {
@@ -417,9 +439,10 @@ export function createCdpBackend(
       return undefined;
     },
     /**
-     * Cookie fetch in an already-open same-origin tab. Opening a page would
-     * cost the load this tier exists to avoid — except `same-origin-page`,
-     * which must have a document context and may create a temporary tab.
+     * Cookie fetch in a same-origin document. If no controlled page matches,
+     * use a temporary page and close it in all outcomes. This method never
+     * acquires Chrome: cache hits and credential-free host fetches do not call
+     * it, and an unavailable browser remains a cheap miss.
      */
     async httpFetch(request: BackendHttpRequest) {
       if (!browser?.connected) return undefined;
@@ -430,7 +453,6 @@ export function createCdpBackend(
       );
       let created = false;
       if (!page) {
-        if (request.context !== "same-origin-page") return undefined;
         try {
           page = await browser.newPage({ background: true });
           created = true;
