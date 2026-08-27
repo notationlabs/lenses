@@ -24,8 +24,38 @@ const PAIRING_NOTIFICATION_PREFIX = "lens-broker-pair:";
 
 const sockets = new Map<number, WebSocket>();
 const pairingSockets = new Map<string, WebSocket>();
+const acceptedPorts = new Set<number>();
+let bridgeEnabled = false;
+let bridgeInitialized = false;
 let lastDiscover = 0;
 let portUpdate = Promise.resolve();
+
+export function getBridgeStatus(): { connectedPorts: number[] } {
+  return { connectedPorts: [...acceptedPorts].sort((a, b) => a - b) };
+}
+
+/** Consent is durable, but sockets are not: disabling closes every live bridge. */
+export function setBridgeEnabled(enabled: boolean): void {
+  bridgeEnabled = enabled;
+  if (!enabled) {
+    acceptedPorts.clear();
+    for (const socket of new Set([...sockets.values(), ...pairingSockets.values()])) {
+      socket.close();
+    }
+    sockets.clear();
+    pairingSockets.clear();
+    return;
+  }
+  if (bridgeInitialized) {
+    discover(true);
+    return;
+  }
+  bridgeInitialized = true;
+  void reapAbandonedTabLeases().then(async () => {
+    await reconnectKnown();
+    setTimeout(() => discover(true), 1500);
+  });
+}
 
 export function startBridgeConnections(): void {
   chrome.notifications.onClicked.addListener((notificationId) => {
@@ -53,11 +83,6 @@ export function startBridgeConnections(): void {
       discover();
     }
   });
-
-  void reapAbandonedTabLeases().then(async () => {
-    await reconnectKnown();
-    setTimeout(() => discover(true), 1500);
-  });
 }
 
 async function loadKnownPorts(): Promise<number[]> {
@@ -79,6 +104,7 @@ async function rememberPort(port: number): Promise<void> {
 }
 
 function connectPort(port: number, persistent = false): void {
+  if (!bridgeEnabled) return;
   const existing = sockets.get(port);
   if (
     existing &&
@@ -155,7 +181,7 @@ function connectPort(port: number, persistent = false): void {
         pairingSockets.set(pairingNotification, socket);
         await chrome.notifications.create(pairingNotification, {
           type: "basic",
-          iconUrl: "icon128.png",
+          iconUrl: "icons/icon128.png",
           title: "Pair Lens with the local broker",
           message: `Verify pairing code ${authMessage.code} with “lens broker status”, then click this notification to approve.`,
         });
@@ -175,6 +201,7 @@ function connectPort(port: number, persistent = false): void {
       const accepted = await onBridgeMessage(socket, backend, raw);
       if (accepted && !handshakeAccepted) {
         handshakeAccepted = true;
+        acceptedPorts.add(port);
         void rememberPort(port);
       } else if (!accepted) {
         rejected = true;
@@ -188,8 +215,9 @@ function connectPort(port: number, persistent = false): void {
       void chrome.notifications.clear(pairingNotification);
     }
     void backend.close();
+    acceptedPorts.delete(port);
     if (sockets.get(port) === socket) sockets.delete(port);
-    if (!rejected && (connected || persistent)) {
+    if (bridgeEnabled && !rejected && (connected || persistent)) {
       setTimeout(() => connectPort(port, true), 1000);
     }
   };
@@ -197,6 +225,7 @@ function connectPort(port: number, persistent = false): void {
 }
 
 function discover(force = false): void {
+  if (!bridgeEnabled) return;
   const now = Date.now();
   if (!force && now - lastDiscover < DISCOVER_COOLDOWN_MS) return;
   lastDiscover = now;

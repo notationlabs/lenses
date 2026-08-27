@@ -1,6 +1,9 @@
 import { build } from "esbuild";
-import { copyFile, mkdir } from "node:fs/promises";
+import { cp, copyFile, mkdir, rm, writeFile } from "node:fs/promises";
 import { pageFunctionsStamp } from "@djgrant/lenses-core/page-stamp";
+import { readAndValidateMetadata } from "./scripts/validate-metadata.mjs";
+
+const { packageJson, manifest, extensionId } = await readAndValidateMetadata();
 
 // The extension bundles the page functions, so it must be able to say which
 // copy it bundled. Injected as a constant, it ships inside the bundle and
@@ -8,6 +11,8 @@ import { pageFunctionsStamp } from "@djgrant/lenses-core/page-stamp";
 const stamp = pageFunctionsStamp();
 const define = { PAGE_FUNCTIONS_STAMP: JSON.stringify(stamp) };
 
+// Never let files left by an older build leak into an unpacked extension or ZIP.
+await rm("dist", { recursive: true, force: true });
 await mkdir("dist", { recursive: true });
 
 // service worker: ESM module (manifest declares type: "module")
@@ -31,7 +36,23 @@ await build({
   define,
 });
 
-await copyFile("manifest.json", "dist/manifest.json");
-await copyFile("icon128.png", "dist/icon128.png");
-console.log(`extension built \u2192 extensions/chrome/dist (page functions ${stamp})`);
+// package.json is the release version source; validation above ensures the
+// checked-in loadable manifest was updated in the same change.
+await writeFile(
+  "dist/manifest.json",
+  `${JSON.stringify({ ...manifest, version: packageJson.version }, null, 2)}\n`
+);
+await cp("icons", "dist/icons", { recursive: true });
+for (const file of [
+  "action.html",
+  "action.css",
+  "action.js",
+  "privacy.html",
+  "privacy.css",
+]) {
+  await copyFile(file, `dist/${file}`);
+}
+
+console.log(`extension built → extensions/chrome/dist (v${packageJson.version}, ${extensionId})`);
+console.log(`page functions ${stamp}`);
 console.log("load unpacked from there, and reload at chrome://extensions to pick this up");
