@@ -18,12 +18,22 @@ const KNOWN_PORTS_KEY = "knownPorts";
 const RECONNECT_ALARM = "lens-bridge-reconnect";
 const DISCOVER_COOLDOWN_MS = 10_000;
 const epoch = crypto.randomUUID();
+const INSTALLATION_ID_KEY = "brokerInstallationId";
+const PAIRING_TOKEN_KEY = "brokerPairingToken";
+const PAIRING_NOTIFICATION_PREFIX = "lens-broker-pair:";
 
 const sockets = new Map<number, WebSocket>();
+const pairingSockets = new Map<string, WebSocket>();
 let lastDiscover = 0;
 let portUpdate = Promise.resolve();
 
 export function startBridgeConnections(): void {
+  chrome.notifications.onClicked.addListener((notificationId) => {
+    const socket = pairingSockets.get(notificationId);
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    const code = notificationId.slice(notificationId.lastIndexOf(":") + 1);
+    socket.send(JSON.stringify({ type: "extension-pair-approve", code }));
+  });
   // Re-creating the alarm on every worker start would push its next firing out
   // by another period, so a worker that keeps waking never gets its reconnect.
   void chrome.alarms.get(RECONNECT_ALARM).then((existing) => {
@@ -84,36 +94,99 @@ function connectPort(port: number, persistent = false): void {
   let rejected = false;
   let handshakeAccepted = false;
   sockets.set(port, socket);
+  let clientNonce = "";
+  let pairingToken: string | undefined;
+  let pairingNotification: string | undefined;
+  const sendHello = () => socket.send(JSON.stringify({
+    type: "extension-hello",
+    protocolMajor: EXTENSION_PROTOCOL_MAJOR,
+    extensionVersion: chrome.runtime.getManifest().version,
+    capabilities: [...EXTENSION_CAPABILITIES],
+    epoch,
+    pageStamp: PAGE_FUNCTIONS_STAMP,
+    ua: navigator.userAgent,
+  }));
   socket.onopen = () => {
     connected = true;
-    socket.send(
-      JSON.stringify({
-        type: "extension-hello",
-        protocolMajor: EXTENSION_PROTOCOL_MAJOR,
-        extensionVersion: chrome.runtime.getManifest().version,
-        capabilities: [...EXTENSION_CAPABILITIES],
-        epoch,
-        // Baked in at build time, so it names the bundle Chrome actually
-        // loaded rather than whatever is on disk now.
-        pageStamp: PAGE_FUNCTIONS_STAMP,
-        ua: navigator.userAgent,
-      })
-    );
+    void loadPairingIdentity().then((identity) => {
+      clientNonce = crypto.randomUUID();
+      pairingToken = identity.token;
+      socket.send(JSON.stringify({
+        type: "extension-auth",
+        installationId: identity.installationId,
+        nonce: clientNonce,
+      }));
+    }).catch(() => socket.close());
   };
   socket.onmessage = (event) => {
-    void onBridgeMessage(socket, backend, String(event.data)).then(
-      (accepted) => {
-        if (accepted && !handshakeAccepted) {
-          handshakeAccepted = true;
-          void rememberPort(port);
-        } else if (!accepted) {
+    void (async () => {
+      const raw = String(event.data);
+      let authMessage: Record<string, unknown>;
+      try {
+        authMessage = JSON.parse(raw) as Record<string, unknown>;
+      } catch {
+        rejected = true;
+        socket.close();
+        return;
+      }
+      if (authMessage.type === "auth-challenge") {
+        const serverNonce = authMessage.nonce;
+        if (
+          !pairingToken ||
+          typeof serverNonce !== "string" ||
+          authMessage.proof !== await browserProof(pairingToken, "broker", clientNonce, serverNonce)
+        ) {
           rejected = true;
           socket.close();
+          return;
         }
+        socket.send(JSON.stringify({
+          type: "auth-response",
+          proof: await browserProof(pairingToken, "extension", clientNonce, serverNonce),
+        }));
+        return;
       }
-    );
+      if (authMessage.type === "auth-ok") {
+        sendHello();
+        return;
+      }
+      if (authMessage.type === "extension-pairing-required" && typeof authMessage.code === "string") {
+        pairingNotification = `${PAIRING_NOTIFICATION_PREFIX}${port}:${authMessage.code}`;
+        pairingSockets.set(pairingNotification, socket);
+        await chrome.notifications.create(pairingNotification, {
+          type: "basic",
+          iconUrl: "icon128.png",
+          title: "Pair Lens with the local broker",
+          message: `Verify pairing code ${authMessage.code} with “lens broker status”, then click this notification to approve.`,
+        });
+        return;
+      }
+      if (authMessage.type === "extension-pair-complete" && typeof authMessage.token === "string") {
+        pairingToken = authMessage.token;
+        await chrome.storage.local.set({ [PAIRING_TOKEN_KEY]: pairingToken });
+        if (pairingNotification) {
+          pairingSockets.delete(pairingNotification);
+          void chrome.notifications.clear(pairingNotification);
+          pairingNotification = undefined;
+        }
+        sendHello();
+        return;
+      }
+      const accepted = await onBridgeMessage(socket, backend, raw);
+      if (accepted && !handshakeAccepted) {
+        handshakeAccepted = true;
+        void rememberPort(port);
+      } else if (!accepted) {
+        rejected = true;
+        socket.close();
+      }
+    })();
   };
   socket.onclose = () => {
+    if (pairingNotification) {
+      pairingSockets.delete(pairingNotification);
+      void chrome.notifications.clear(pairingNotification);
+    }
     void backend.close();
     if (sockets.get(port) === socket) sockets.delete(port);
     if (!rejected && (connected || persistent)) {
@@ -246,6 +319,49 @@ function sendError(
     error: { code, message },
   };
   socket.send(JSON.stringify(response));
+}
+
+async function loadPairingIdentity(): Promise<{
+  installationId: string;
+  token?: string;
+}> {
+  const stored = await chrome.storage.local.get([
+    INSTALLATION_ID_KEY,
+    PAIRING_TOKEN_KEY,
+  ]);
+  let installationId = stored[INSTALLATION_ID_KEY];
+  if (typeof installationId !== "string") {
+    installationId = crypto.randomUUID();
+    await chrome.storage.local.set({ [INSTALLATION_ID_KEY]: installationId });
+  }
+  const token = stored[PAIRING_TOKEN_KEY];
+  return {
+    installationId,
+    ...(typeof token === "string" ? { token } : {}),
+  };
+}
+
+async function browserProof(
+  token: string,
+  peer: "broker" | "extension",
+  clientNonce: string,
+  serverNonce: string
+): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(token),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const signature = new Uint8Array(await crypto.subtle.sign(
+    "HMAC",
+    key,
+    new TextEncoder().encode(`lenses-v1:${peer}:${clientNonce}:${serverNonce}`)
+  ));
+  let binary = "";
+  for (const byte of signature) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
 function errorCode(error: unknown): ExtensionRpcErrorCode {

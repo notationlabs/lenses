@@ -20,17 +20,16 @@ await build({
   define,
 });
 
-// content scripts: classic scripts, must be IIFE
-for (const name of ["content", "page"]) {
-  await build({
-    entryPoints: [`src/${name}.ts`],
-    bundle: true,
-    format: "iife",
-    outfile: `dist/${name}.js`,
-    target: "chrome120",
-    define,
-  });
-}
+// The isolated-world content script remains a classic IIFE. MAIN-world
+// interception is injected only for active sessions by the service worker.
+await build({
+  entryPoints: ["src/content.ts"],
+  bundle: true,
+  format: "iife",
+  outfile: "dist/content.js",
+  target: "chrome120",
+  define,
+});
 
 await copyFile("manifest.json", "dist/manifest.json");
 await copyFile("icon128.png", "dist/icon128.png");

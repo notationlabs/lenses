@@ -6,7 +6,12 @@ import {
   type ExtensionRpcRequest,
   type ExtensionRpcResult,
 } from "@djgrant/lenses-core";
-import { readIntercepts } from "./intercepts.js";
+import {
+  acquireIntercepts,
+  readIntercepts,
+  refreshIntercepts,
+  releaseIntercepts,
+} from "./intercepts.js";
 import {
   forgetCreatedTab,
   loadCreatedTabLeases,
@@ -160,8 +165,12 @@ export function createExtensionSessionBackend(): ExtensionSessionBackend {
       if (info.status === "loading") {
         active.documentRevision += 1;
         active.loading = true;
+        // Navigation destroys the MAIN-world patch. Reinstall as soon as Chrome
+        // exposes the new document, rather than after all load-time fetches.
+        void refreshIntercepts(tabId).catch(() => {});
       } else if (info.status === "complete") {
         active.loading = false;
+        void refreshIntercepts(tabId).catch(() => {});
       }
     }
   };
@@ -178,7 +187,17 @@ export function createExtensionSessionBackend(): ExtensionSessionBackend {
       const operation = request.operation;
       switch (operation.name) {
         case "bind": {
-          const bound = await bindTab(operation);
+          let interceptTabId: number | undefined;
+          let bound: BoundTab;
+          try {
+            bound = await bindTab(operation, async (tabId) => {
+              await acquireIntercepts(tabId);
+              interceptTabId = tabId;
+            });
+          } catch (error) {
+            if (interceptTabId !== undefined) await releaseIntercepts(interceptTabId);
+            throw error;
+          }
           const id = crypto.randomUUID();
           sessions.set(id, {
             id,
@@ -203,10 +222,9 @@ export function createExtensionSessionBackend(): ExtensionSessionBackend {
           };
         }
         case "reload": {
-          await reloadTab(
-            session(operation.sessionId).bound.tabId,
-            operation.loadTimeoutMs
-          );
+          const tabId = session(operation.sessionId).bound.tabId;
+          await reloadTab(tabId, operation.loadTimeoutMs);
+          await refreshIntercepts(tabId);
           return { name: "reload" };
         }
         case "read-intercepts": {
@@ -291,6 +309,7 @@ export function createExtensionSessionBackend(): ExtensionSessionBackend {
           sessions.delete(operation.sessionId);
           active.captureAbort.abort();
           await Promise.allSettled(active.captures);
+          await releaseIntercepts(active.bound.tabId);
           if (operation.disposition === "keep") {
             // The lease is the gate's durable memory: while the tab stays at
             // this place, find-gate reports the site as blocked, whatever
@@ -390,6 +409,7 @@ export function createExtensionSessionBackend(): ExtensionSessionBackend {
       sessions.clear();
       for (const item of active) item.captureAbort.abort();
       await Promise.allSettled(active.flatMap((item) => [...item.captures]));
+      await Promise.allSettled(active.map((item) => releaseIntercepts(item.bound.tabId)));
       await Promise.all(
         active
           .filter((item) => item.bound.created)

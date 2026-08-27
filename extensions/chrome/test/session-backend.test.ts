@@ -58,6 +58,21 @@ afterEach(() => {
 });
 
 describe("created-tab leases", () => {
+  it("installs interception only for the bound session and removes it on finish", async () => {
+    const session = await bind();
+    expect(chrome.interceptorActions).toHaveLength(1);
+    expect(chrome.interceptorActions[0].slice(0, 2)).toEqual([1, "install"]);
+
+    await finish(session.id, "keep");
+
+    expect(chrome.interceptorActions).toHaveLength(2);
+    expect(chrome.interceptorActions[1]).toEqual([
+      1,
+      "remove",
+      chrome.interceptorActions[0][2],
+    ]);
+  });
+
   it("closes a created tab and drops its lease on a close-if-created finish", async () => {
     const session = await bind();
     expect(session.created).toBe(true);

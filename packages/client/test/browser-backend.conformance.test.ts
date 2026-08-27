@@ -663,7 +663,7 @@ async function createExtensionFixture(): Promise<BackendFixture> {
     backend,
     async emitCapture(capture) {
       chrome.runtimeMessages.emit(
-        { type: "intercepted", response: capture },
+        { type: "intercepted", token: chrome.interceptToken, response: capture },
         { tab: { id: 1 } }
       );
     },
@@ -738,9 +738,13 @@ function createChromeMock() {
   const tabs = new Map<number, { id: number; url: string; status: string }>();
   const removedTabs: number[] = [];
   let reloadCount = 0;
+  let interceptToken: string | undefined;
 
   return {
     runtimeMessages,
+    get interceptToken() {
+      return interceptToken;
+    },
     removedTabs,
     get reloadCount() {
       return reloadCount;
@@ -759,6 +763,9 @@ function createChromeMock() {
           expect(injection.world).toBe("MAIN");
           const tab = tabs.get(injection.target.tabId);
           if (!tab) throw new Error("missing injection tab");
+          if (injection.args[0] === "install" || injection.args[0] === "remove") {
+            return [{ frameId: 0, result: undefined }];
+          }
           vi.stubGlobal("location", new URL(tab.url));
           return [{ frameId: 0, result: await injection.func(...injection.args) }];
         },
@@ -805,6 +812,14 @@ function createChromeMock() {
         },
         async sendMessage(_tabId: number, message: any) {
           if (message.type === "ping") return { ok: true };
+          if (message.type === "intercepts-enable") {
+            interceptToken = message.token;
+            return { ok: true };
+          }
+          if (message.type === "intercepts-disable") {
+            if (message.token === interceptToken) interceptToken = undefined;
+            return { ok: true };
+          }
           if (message.type === "perform_fill") {
             performActions.push(`fill ${message.selector} ${message.value}`);
             return { ok: true };

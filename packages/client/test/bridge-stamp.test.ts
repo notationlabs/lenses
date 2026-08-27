@@ -2,6 +2,40 @@ import { afterEach, describe, expect, it } from "vitest";
 import { WebSocketServer } from "ws";
 import { BrowserBridge } from "../src/bridge.js";
 import { brokerBuildStamp } from "../src/broker-stamp.js";
+import { authProof, loadBrokerAuth, proofMatches } from "../src/broker-auth.js";
+import { randomBytes } from "node:crypto";
+
+function authenticated(
+  socket: import("ws").WebSocket,
+  handle: (message: any) => void
+): void {
+  let challenge: { clientNonce: string; serverNonce: string } | undefined;
+  const token = loadBrokerAuth().brokerToken;
+  socket.on("message", (data) => {
+    const message = JSON.parse(data.toString());
+    if (message.type === "client-auth") {
+      challenge = {
+        clientNonce: message.nonce,
+        serverNonce: randomBytes(24).toString("base64url"),
+      };
+      socket.send(JSON.stringify({
+        type: "auth-challenge",
+        nonce: challenge.serverNonce,
+        proof: authProof(token, "broker", challenge.clientNonce, challenge.serverNonce),
+      }));
+      return;
+    }
+    if (message.type === "auth-response" && challenge) {
+      if (!proofMatches(
+        message.proof,
+        authProof(token, "client", challenge.clientNonce, challenge.serverNonce)
+      )) return socket.close();
+      handle({ type: "client" });
+      return;
+    }
+    handle(message);
+  });
+}
 
 /**
  * A stand-in broker: it reports a stale stamp until a client asks it to shut
@@ -12,8 +46,7 @@ function fakeBroker(port: number, staleStamp: string) {
   const server = new WebSocketServer({ port, host: "127.0.0.1" });
   const state = { stamp: staleStamp, shutdowns: 0 };
   server.on("connection", (socket) => {
-    socket.on("message", (data) => {
-      const message = JSON.parse(data.toString());
+    authenticated(socket, (message) => {
       if (message.type === "client") {
         socket.send(JSON.stringify({ type: "status", connected: false, stamp: state.stamp }));
         return;
@@ -77,7 +110,9 @@ describe("broker build stamp handshake", () => {
   it("exposes actionable broker diagnostics from status frames", async () => {
     const port = 45_314;
     const server = new WebSocketServer({ port, host: "127.0.0.1" });
-    server.on("connection", (socket) => socket.on("message", () => socket.send(JSON.stringify({
+    server.on("connection", (socket) => authenticated(socket, (message) => {
+      if (message.type !== "client") return;
+      socket.send(JSON.stringify({
       type: "status",
       connected: true,
       stamp: brokerBuildStamp(),
@@ -91,7 +126,8 @@ describe("broker build stamp handshake", () => {
         reconnectAttempts: 3,
         reachability: { chrome: true, extension: true },
       },
-    }))));
+    }));
+    }));
     await new Promise<void>((resolve) => server.once("listening", () => resolve()));
     try {
       const bridge = await BrowserBridge.bind(port, "127.0.0.1");
@@ -115,8 +151,7 @@ describe("broker build stamp handshake", () => {
     const port = 45_313;
     const server = new WebSocketServer({ port, host: "127.0.0.1" });
     server.on("connection", (socket) => {
-      socket.on("message", (data) => {
-        const message = JSON.parse(data.toString());
+      authenticated(socket, (message) => {
         if (message.type === "client") {
           socket.send(JSON.stringify({ type: "status", connected: false, stamp: "never0matches" }));
         }

@@ -40,6 +40,8 @@ export interface FakeChrome {
   reloads: number[];
   debuggerAttached: Set<number>;
   debuggerDetaches: number[];
+  /** MAIN-world interceptor actions as [tab id, action, token]. */
+  interceptorActions: [number, string, string][];
   storage: Map<string, unknown>;
   /** Seed a tab the extension did not open, e.g. one the user already had. */
   addTab(url: string): FakeTab;
@@ -73,6 +75,7 @@ export function createFakeChrome(): FakeChrome {
   const reloads: number[] = [];
   const debuggerAttached = new Set<number>();
   const debuggerDetaches: number[] = [];
+  const interceptorActions: [number, string, string][] = [];
   const storage = new Map<string, unknown>();
   const onUpdated = new FakeEvent<
     [number, { status?: string }, FakeTab]
@@ -100,6 +103,13 @@ export function createFakeChrome(): FakeChrome {
 
   const api = {
     runtime: { onMessage },
+    scripting: {
+      async executeScript({ target, args }: { target: { tabId: number }; args: [string, string] }) {
+        if (!tabs.has(target.tabId)) throw new Error(`No tab with id: ${target.tabId}.`);
+        interceptorActions.push([target.tabId, args[0], args[1]]);
+        return [{ result: undefined }];
+      },
+    },
     debugger: {
       async attach({ tabId }: { tabId: number }) {
         if (debuggerAttached.has(tabId)) {
@@ -168,7 +178,11 @@ export function createFakeChrome(): FakeChrome {
         if (!tabs.has(tabId)) {
           throw new Error(`No tab with id: ${tabId}.`);
         }
-        if (message.type === "ping") return { ok: true };
+        if (
+          message.type === "ping" ||
+          message.type === "intercepts-enable" ||
+          message.type === "intercepts-disable"
+        ) return { ok: true };
         throw new Error(`unexpected tab message ${message.type}`);
       },
     },
@@ -232,6 +246,7 @@ export function createFakeChrome(): FakeChrome {
     reloads,
     debuggerAttached,
     debuggerDetaches,
+    interceptorActions,
     storage,
     addTab,
     setUrl(tabId, url) {
