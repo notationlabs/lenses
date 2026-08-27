@@ -8,8 +8,9 @@ class FakeExtension {
   readonly commands: { method: string; params: unknown }[] = [];
   private socket: WebSocket | undefined;
   private nextTabId = 1;
+  private tabs = new Map<number, string>();
 
-  async attach(endpoint: string): Promise<void> {
+  async attach(endpoint: string, initialUrl = "https://example.com/"): Promise<void> {
     this.socket = new WebSocket(endpoint);
     await new Promise<void>((resolve, reject) => {
       this.socket!.once("open", () => resolve());
@@ -30,7 +31,13 @@ class FakeExtension {
         this.socket!.send(JSON.stringify({ method: "chrome.tabs.onCreated", params: [result] }));
       }
       this.socket!.send(JSON.stringify({ id: message.id, result }));
+      if (message.method === "chrome.tabs.remove") {
+        const [tabId] = message.params as [number];
+        this.tabs.delete(tabId);
+        this.socket!.send(JSON.stringify({ method: "chrome.tabs.onRemoved", params: [tabId] }));
+      }
     });
+    this.tabs.set(this.nextTabId, initialUrl);
     this.socket.send(
       JSON.stringify({
         method: "chrome.tabs.onCreated",
@@ -39,7 +46,7 @@ class FakeExtension {
             id: this.nextTabId,
             index: 0,
             windowId: 1,
-            url: "https://example.com/",
+            url: initialUrl,
             active: true,
             pinned: false,
           },
@@ -53,19 +60,27 @@ class FakeExtension {
     if (method === "chrome.tabs.create") {
       const [{ url }] = params as [{ url?: string }];
       this.nextTabId += 1;
+      const createdUrl = url ?? "about:blank";
+      this.tabs.set(this.nextTabId, createdUrl);
       return {
         id: this.nextTabId,
         index: 1,
         windowId: 1,
-        url: url ?? "about:blank",
+        url: createdUrl,
         active: true,
         pinned: false,
       };
     }
     if (method === "chrome.debugger.sendCommand") {
-      const [, cdpMethod] = params as [unknown, string];
+      const [target, cdpMethod] = params as [{ tabId: number }, string];
       if (cdpMethod === "Target.getTargetInfo") {
-        return { targetInfo: { targetId: `target-${this.nextTabId}`, type: "page" } };
+        return {
+          targetInfo: {
+            targetId: `target-${target.tabId}`,
+            type: "page",
+            url: this.tabs.get(target.tabId) ?? "",
+          },
+        };
       }
       return {};
     }
@@ -134,11 +149,14 @@ describe("Playwright CDP relay", () => {
     await browser.disconnect();
   });
 
-  it("translates Target.createTarget into chrome.tabs.create after handshake", async () => {
+  it("creates the first real target and removes the token-approved connect page", async () => {
     relay = new CDPRelayServer();
     await relay.start();
     extension = new FakeExtension();
-    await extension.attach(relay.extensionEndpoint());
+    await extension.attach(
+      relay.extensionEndpoint(),
+      "chrome-extension://mmlmfjhmonkocbjadbfplnigmagldckm/connect.html"
+    );
     await relay.waitForExtension();
 
     cdp = new WebSocket(relay.cdpEndpoint());
@@ -167,6 +185,10 @@ describe("Playwright CDP relay", () => {
     expect(extension.commands).toContainEqual({
       method: "chrome.tabs.create",
       params: [{ url: "https://example.com/new" }],
+    });
+    expect(extension.commands).toContainEqual({
+      method: "chrome.tabs.remove",
+      params: [1],
     });
     expect(replies).toContainEqual(
       expect.objectContaining({

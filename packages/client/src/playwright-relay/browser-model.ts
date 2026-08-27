@@ -117,8 +117,16 @@ export class BrowserModel {
       ? this._findTabSession((session) => session.targetInfo?.targetId === targetId)
       : undefined;
     if (!tabSession) return { success: false };
-    await this._sendToExtension("chrome.tabs.remove", [tabSession.tabId]);
+    await this._removeTab(tabSession.tabId);
     return { success: true };
+  }
+
+  async closeTargets(predicate: (targetInfo: any) => boolean): Promise<void> {
+    const tabIds = [...this._tabs.values()]
+      .map((state) => state.session)
+      .filter((session): session is TabSession => !!session && predicate(session.targetInfo))
+      .map((session) => session.tabId);
+    await Promise.all(tabIds.map((tabId) => this._removeTab(tabId)));
   }
 
   getTargetInfo(sessionId: string | undefined): any {
@@ -198,6 +206,10 @@ export class BrowserModel {
       }
       throw error;
     }
+  }
+
+  private async _removeTab(tabId: number): Promise<void> {
+    await this._sendToExtension("chrome.tabs.remove", [tabId]);
   }
 
   private _detachTab(tabId: number): void {
