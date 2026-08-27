@@ -25,7 +25,7 @@ export async function notifySignInNeeded(tabId: number): Promise<void> {
       `${GATE_NOTIFICATION_PREFIX}${tabId}`,
       {
         type: "basic",
-        iconUrl: "icon128.png",
+        iconUrl: "icons/icon128.png",
         title: "Sign-in needed",
         message: `A lens call is waiting for you to sign in to ${host}. Click to open the tab.`,
       }

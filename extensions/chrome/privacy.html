@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Lenses privacy and data handling</title>
+  <link rel="stylesheet" href="privacy.css">
+</head>
+<body>
+  <main>
+    <h1>Lenses privacy and data handling</h1>
+    <p class="effective">Effective: 6 August 2026</p>
+    <p>Lenses is a local browser bridge. It does not operate an analytics, advertising, account, or remote data-collection service.</p>
+    <h2>Data the extension can process</h2>
+    <p>Only when enabled, local lens calls may ask the extension to process page URLs, titles, visible page content, JSON responses, screenshots, and the results of actions you requested. Those calls can use your existing website session. This can include personal or sensitive information shown by a website.</p>
+    <h2>How data is used</h2>
+    <p>Data is used only to complete the lens call you or your local software requested. The extension exchanges call data with the Lenses broker over loopback WebSocket connections at <code>127.0.0.1</code>. It does not send this data to the extension developer. A requested website operation may, as expected, send data to that website.</p>
+    <h2>Storage and retention</h2>
+    <p>The extension stores your enable/disable choice locally. It stores local broker ports and temporary tab bookkeeping in browser session storage. Captured response data is held in memory and is discarded when the extension service worker, tab, or browser session ends. Other Lenses software may save output or recordings when you explicitly request it; its storage is outside this extension.</p>
+    <h2>Sharing and sale</h2>
+    <p>The developer does not sell extension data, use it for advertising or credit decisions, or share it with third parties. Data is disclosed only to the local software and websites needed to carry out your request, or if legally required.</p>
+    <h2>Your choices</h2>
+    <p>Use the toolbar action to disable the local bridge at any time. You can remove the extension to revoke its Chrome permissions and delete its local extension storage. Website account data remains controlled by each website.</p>
+    <h2>Contact</h2>
+    <p>For privacy questions, security reports, or deletion requests concerning developer-held data, use the repository's public issue/contact channel. Because the extension has no developer-operated collection service, the developer normally has no extension data to identify or delete.</p>
+  </main>
+</body>
+</html>
