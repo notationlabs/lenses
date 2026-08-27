@@ -48,6 +48,7 @@ interface BackendFixture {
   closed(): boolean;
   reloads(): number;
   disconnect?(): void;
+  backgroundCreates?(): number;
   close(): Promise<void>;
 }
 
@@ -280,6 +281,7 @@ describe("Playwright relay BrowserBackend contract", () => {
       navigation: "fresh",
     });
     expect(session).toMatchObject({ created: true, navigated: true });
+    expect(fixture.backgroundCreates?.()).toBe(1);
 
     await fixture.emitCapture(captured("relay"));
     await expectCapture(session, "https://example.com/api/relay");
@@ -656,6 +658,11 @@ async function createPlaywrightRelayFixture(): Promise<BackendFixture> {
         if (command.method !== "chrome.debugger.sendCommand") return false;
         return (command.params as unknown[])?.[1] === "Page.reload";
       }).length,
+    backgroundCreates: () =>
+      extension.commands.filter((command) =>
+        command.method === "chrome.tabs.create" &&
+        (command.params as [{ active?: boolean }])[0]?.active === false
+      ).length,
     disconnect() {
       extension.close("controlled group closed");
     },

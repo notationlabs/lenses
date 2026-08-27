@@ -87,8 +87,8 @@ export class FakePlaywrightExtension {
     }]);
   }
 
-  private tab(id: number, url: string) {
-    return { id, index: id - 1, windowId: 1, url, active: true, pinned: false };
+  private tab(id: number, url: string, active = true) {
+    return { id, index: id - 1, windowId: 1, url, active, pinned: false };
   }
 
   private sendEvent(method: string, params: unknown[]): void {
@@ -149,11 +149,11 @@ export class FakePlaywrightExtension {
 
   private result(method: string, params: unknown): unknown {
     if (method === "chrome.tabs.create") {
-      const [{ url }] = params as [{ url?: string }];
+      const [{ url, active }] = params as [{ url?: string; active?: boolean }];
       const id = ++this.nextTabId;
       const createdUrl = url ?? "about:blank";
       this.tabs.set(id, createdUrl);
-      return this.tab(id, createdUrl);
+      return this.tab(id, createdUrl, active ?? true);
     }
     if (method === "chrome.tabs.remove") return {};
     if (method !== "chrome.debugger.sendCommand") return {};
