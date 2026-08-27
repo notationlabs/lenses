@@ -107,6 +107,41 @@ describe("broker build stamp handshake", () => {
     expect(broker.state.shutdowns).toBe(0);
   });
 
+  it("waits for the broker result when a backend disconnects during cleanup", async () => {
+    const port = 45_315;
+    const server = new WebSocketServer({ port, host: "127.0.0.1" });
+    server.on("connection", (socket) => authenticated(socket, (message) => {
+      if (message.type === "client") {
+        socket.send(JSON.stringify({
+          type: "status",
+          connected: true,
+          stamp: brokerBuildStamp(),
+        }));
+        return;
+      }
+      if (message.type === "observe") {
+        socket.send(JSON.stringify({ type: "status", connected: false }));
+        socket.send(JSON.stringify({
+          type: "result",
+          id: message.id,
+          result: { kind: "value", value: "finished" },
+        }));
+      }
+    }));
+    await new Promise<void>((resolve) => server.once("listening", () => resolve()));
+    try {
+      const bridge = await BrowserBridge.bind(port, "127.0.0.1");
+      bridges.push(bridge);
+      await expect(bridge.observe("https://example.com")).resolves.toMatchObject({
+        kind: "value",
+        value: "finished",
+      });
+    } finally {
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   it("exposes actionable broker diagnostics from status frames", async () => {
     const port = 45_314;
     const server = new WebSocketServer({ port, host: "127.0.0.1" });

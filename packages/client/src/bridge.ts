@@ -114,7 +114,6 @@ export class BrowserBridge implements LensTransport {
     {
       resolve: (result: LensTransportResult) => void;
       timer: NodeJS.Timeout;
-      control?: boolean;
       description: string;
       lastProgress?: string;
     }
@@ -316,7 +315,6 @@ export class BrowserBridge implements LensTransport {
       this.pending.set(id, {
         resolve,
         timer,
-        control: message.type === "control",
         description,
       });
       this.socket.send(JSON.stringify(message), (error) => {
@@ -360,8 +358,8 @@ export class BrowserBridge implements LensTransport {
         this.connectionWaiters.clear();
       } else if (!message.connected && wasConnected) {
         this.log("browser disconnected from lens broker");
-        // Control requests survive: a "release" causes this very transition.
-        this.resolvePending({ kind: "error", message: "browser disconnected" }, true);
+        // Backend availability is status, not request completion. The broker
+        // still owns in-flight work and will send its authoritative result.
       }
       return;
     }
@@ -388,9 +386,8 @@ export class BrowserBridge implements LensTransport {
     this.brokerDiagnostics = status.diagnostics;
   }
 
-  private resolvePending(result: LensResult, keepControl = false): void {
+  private resolvePending(result: LensResult): void {
     for (const [id, pending] of this.pending) {
-      if (keepControl && pending.control) continue;
       clearTimeout(pending.timer);
       pending.resolve(result);
       this.pending.delete(id);
