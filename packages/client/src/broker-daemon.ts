@@ -26,7 +26,7 @@ import {
   proofMatches,
 } from "./broker-auth.js";
 import { randomBytes } from "node:crypto";
-import { PLAYWRIGHT_EXTENSION_INSTALL_URL } from "./playwright-relay/protocol.js";
+import { browserAdvice } from "./broker-advice.js";
 
 const port = Number(process.argv[2]);
 if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
@@ -54,12 +54,13 @@ type Unauthenticated =
 const unauthenticated = new Map<WebSocket, Unauthenticated>();
 const authTimers = new Map<WebSocket, ReturnType<typeof setTimeout>>();
 const profile = browserProfile();
+const extensionToken = playwrightExtensionToken();
 const cdp = createCdpBackend();
 const extension = createPlaywrightExtensionBackend(
   (message) => console.error(message),
-  { profile, token: playwrightExtensionToken() }
+  { profile, token: extensionToken }
 );
-let extensionInstalled = false;
+let extensionInstalled: boolean | undefined;
 /** This process already failed to attach; do not wait 45s on every later call. */
 let extensionAttemptFailed = false;
 void playwrightExtensionInstalled(undefined, profile).then((installed) => {
@@ -70,7 +71,7 @@ const extensionGraceMs =
 const orchestrator = createBrokerOrchestrator([extension, cdp], {
   prepareBackends: ensureBrowser,
   preferredWaitMs: () =>
-    extensionInstalled && !extensionAttemptFailed ? extensionGraceMs : 0,
+    extensionInstalled === true && !extensionAttemptFailed ? extensionGraceMs : 0,
   prepareFallback: () => cdp.acquire(),
 });
 let ensureBrowserInFlight: Promise<void> | undefined;
@@ -90,6 +91,12 @@ let inFlight = 0;
 let activeCall: { id: string; type: "call" | "observe"; lens?: string; startedAt: number } | undefined;
 let lastBackendError: string | undefined;
 let idleTimer: ReturnType<typeof setTimeout> | undefined;
+let leaseReleaseRequested = false;
+let leaseReleaseInFlight: Promise<void> | undefined;
+let leaseReleaseWaiters: Array<{
+  resolve: () => void;
+  reject: (error: unknown) => void;
+}> = [];
 
 const idleExit = createIdleExitTimer({
   idleMs: idleExitMs,
@@ -117,7 +124,7 @@ async function checkAndConnect(): Promise<void> {
     console.error(`started Chrome with profile "${profile}"`);
   }
   extensionInstalled = await playwrightExtensionInstalled(undefined, profile);
-  if (!extensionInstalled) {
+  if (extensionInstalled === false) {
     startCdpFallback("Playwright Extension is not installed in this Chrome profile");
     return;
   }
@@ -159,16 +166,52 @@ function endWork(): void {
   idleExit.reset();
   if (idleReleaseMs <= 0 || inFlight > 0) return;
   idleTimer = setTimeout(() => {
-    if (inFlight === 0) {
-      void extension.release();
-      void cdp.release();
-    }
+    if (inFlight === 0) void requestLeaseRelease();
   }, idleReleaseMs);
+}
+
+/**
+ * Queue a lease release behind the authoritative result of the active call.
+ * This is also used when the user closes the broker-owned anchor: queued calls
+ * will observe a released lease and may acquire a fresh anchor in turn.
+ */
+function requestLeaseRelease(): Promise<void> {
+  leaseReleaseRequested = true;
+  const completion = new Promise<void>((resolve, reject) => {
+    leaseReleaseWaiters.push({ resolve, reject });
+  });
+  if (activeCall || leaseReleaseInFlight) return completion;
+  leaseReleaseInFlight = (async () => {
+    try {
+      while (leaseReleaseRequested && !activeCall) {
+        leaseReleaseRequested = false;
+        await extension.release();
+        await cdp.release();
+      }
+      const waiters = leaseReleaseWaiters;
+      leaseReleaseWaiters = [];
+      for (const waiter of waiters) waiter.resolve();
+    } catch (error) {
+      const waiters = leaseReleaseWaiters;
+      leaseReleaseWaiters = [];
+      for (const waiter of waiters) waiter.reject(error);
+      throw error;
+    } finally {
+      leaseReleaseInFlight = undefined;
+    }
+  })();
+  // The completion carries the same error without leaving the internal worker
+  // as an unhandled rejected promise.
+  void leaseReleaseInFlight.catch(() => {});
+  return completion;
 }
 
 cdp.onStatusChange(() => {
   rememberBackendError(cdp);
   broadcastStatus();
+});
+extension.onLeaseReleaseRequest(() => {
+  void requestLeaseRelease();
 });
 extension.onStatusChange(() => {
   rememberBackendError(extension);
@@ -331,6 +374,9 @@ function onClientMessage(client: WebSocket, raw: string): void {
         await handleClientMessage(client, message);
       } finally {
         activeCall = undefined;
+        // handleClientMessage has already sent the authoritative result and
+        // backend finish has completed all transient-tab cleanup.
+        if (leaseReleaseRequested) await requestLeaseRelease();
         broadcastStatus();
       }
     })
@@ -352,10 +398,7 @@ async function handleControl(
     return;
   }
   try {
-    if (message.action === "release") {
-      await extension.release();
-      await cdp.release();
-    }
+    if (message.action === "release") await requestLeaseRelease();
     if (message.action === "acquire") {
       extensionAttemptFailed = false;
       await ensureBrowser();
@@ -447,27 +490,15 @@ function sendStatus(socket: WebSocket): void {
 }
 
 function describeGap(): string | undefined {
-  if (extension.available() || cdp.available()) return undefined;
-  if (!extensionInstalled) {
-    return (
-      `Playwright Extension is not installed; install it from ${PLAYWRIGHT_EXTENSION_INSTALL_URL} ` +
-      "or enable chrome://inspect/#remote-debugging for the CDP fallback (Chrome will ask you to click Allow)"
-    );
-  }
-  if (extensionAttemptFailed) {
-    return (
-      "Playwright Extension did not connect; using CDP until the next acquire or broker restart. " +
-      "Enable chrome://inspect/#remote-debugging (Chrome will ask you to click Allow)"
-    );
-  }
-  if (browserPresent === false) {
-    return "Chrome is not running; start it, then approve the Playwright Extension connect page";
-  }
-  return (
-    "waiting for the Playwright Extension: select tabs for the Lenses group on the connect page. " +
-    "Chrome shows a debugger infobar on attached tabs. Set PLAYWRIGHT_MCP_EXTENSION_TOKEN to skip repeated approval. " +
-    "Direct CDP remains available at chrome://inspect/#remote-debugging"
-  );
+  return browserAdvice({
+    extensionAvailable: extension.available(),
+    cdpAvailable: cdp.available(),
+    extensionInstalled,
+    extensionAttemptFailed,
+    browserPresent,
+    acquiring: !!ensureBrowserInFlight,
+    extensionToken: !!extensionToken,
+  });
 }
 
 function rememberBackendError(backend: { info(): { name: string; diagnostic?: string } }): void {
