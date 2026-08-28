@@ -75,6 +75,8 @@ export interface CdpTransport {
   staleHint(): string;
   /** Transport-specific status such as relay protocol and profile metadata. */
   info?(): Partial<BackendInfo>;
+  /** Add a short entry to a transport-owned status page, when present. */
+  recordEvent?(message: string): void;
   /** Actionable status after an unexpected live connection loss. */
   disconnectHint?(): string;
   /** Transport cleanup before the browser lease is disconnected. */
@@ -482,6 +484,7 @@ export function createCdpBackend(
         try {
           page = await browser.newPage({ background: true });
           created = true;
+          transport.recordEvent?.("HTTP tab opened");
           await settle(
             page.goto(`${origin}/`, { waitUntil: "load", timeout: 15_000 })
           );
@@ -495,6 +498,7 @@ export function createCdpBackend(
                 true
               );
               await page.close();
+              transport.recordEvent?.("HTTP tab closed");
             } catch {
               // The tab may already be gone.
             }
@@ -553,6 +557,7 @@ export function createCdpBackend(
               true
             );
             await page.close();
+            transport.recordEvent?.("HTTP tab closed");
           } catch {
             // The user may close the temporary tab.
           }
@@ -579,6 +584,7 @@ export function createCdpBackend(
         return session;
       }
       const page = await current.newPage({ background: true });
+      transport.recordEvent?.("Call tab opened");
       resetCaptures(page);
       await settle(
         page.goto(request.target, {
@@ -609,6 +615,7 @@ export function createCdpBackend(
         }
       }
       if (disposition === "keep" && !cdpSession.page.isClosed()) {
+        transport.recordEvent?.("Tab kept");
         keptGates.set(cdpSession.page, {
           target: cdpSession.target,
           keptUrl: cdpSession.page.url(),
@@ -624,6 +631,7 @@ export function createCdpBackend(
       if (!cdpSession.created || disposition === "keep") return;
       try {
         await cdpSession.page.close();
+        transport.recordEvent?.("Call tab closed");
       } catch {
         // The user may close the page while its call is still running.
       }
