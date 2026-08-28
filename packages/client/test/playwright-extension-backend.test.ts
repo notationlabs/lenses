@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   isPlaywrightConnectPage,
+  renderPlaywrightAnchor,
   retainPlaywrightAnchor,
 } from "../src/playwright-extension-backend.js";
 
@@ -8,6 +9,23 @@ const connectUrl =
   "chrome-extension://mmlmfjhmonkocbjadbfplnigmagldckm/connect.html?token=redacted";
 
 describe("Playwright broker anchor", () => {
+  it("renders a small status page", async () => {
+    const setContent = vi.fn(async () => {});
+
+    await renderPlaywrightAnchor(
+      { setContent } as never,
+      "Profile <4>",
+      "0.3.0"
+    );
+
+    const html = setContent.mock.calls[0]?.[0] ?? "";
+    expect(html).toContain("<title>Lenses</title>");
+    expect(html).toContain("<dt>Status</dt><dd>Connected</dd>");
+    expect(html).toContain("<dt>Profile</dt><dd>Profile &lt;4&gt;</dd>");
+    expect(html).toContain("<dt>Extension</dt><dd>0.3.0</dd>");
+    expect(html).toContain('<ol id="events"></ol>');
+  });
+
   it("requests lease release only when the user closes the anchor", async () => {
     let closeListener: (() => void) | undefined;
     let closed = false;

@@ -87,6 +87,9 @@ function createPlaywrightExtensionTransport(
     disconnectHint: () =>
       "Playwright Extension disconnected. Keep at least one tab in the Lenses group, " +
       "then retry to reopen the connect page.",
+    recordEvent(message) {
+      anchor?.record(message);
+    },
     async prepareLeaseRelease() {
       const current = anchor;
       anchor = undefined;
@@ -144,18 +147,14 @@ function createPlaywrightExtensionTransport(
           browserWSEndpoint: next.cdpEndpoint(),
           defaultViewport: null,
         });
-        let anchorPage = (await connected.pages()).find(isPlaywrightConnectPage);
-        if (!anchorPage) {
-          // Manual approval may select an existing tab, in which case the
-          // extension removes its selector page. Create a broker-owned,
-          // background-only controlled tab rather than borrowing that tab as
-          // the lease anchor.
-          anchorPage = await connected.newPage({ background: true });
-          await anchorPage.evaluate(() => {
-            document.title = "Lenses broker anchor";
-          }).catch(() => {});
-        }
+        const connectPage = (await connected.pages()).find(isPlaywrightConnectPage);
+        const anchorPage = await connected.newPage({ background: true });
+        await renderPlaywrightAnchor(anchorPage, options.profile, installedVersion);
         anchor = retainPlaywrightAnchor(anchorPage, requestLeaseRelease);
+        anchor.record("Connected");
+        // The controlled status page is now the lease anchor; the extension's
+        // one-shot connection UI is no longer needed.
+        await connectPage?.close().catch(() => {});
         return connected;
       } catch (error) {
         dispose();
@@ -168,12 +167,16 @@ function createPlaywrightExtensionTransport(
 interface PlaywrightAnchor {
   release(): Promise<void>;
   dispose(): void;
+  record(message: string): void;
 }
 
 /** Keep the controlled connect page as the lease anchor and distinguish its
  * user-initiated closure from the broker's intentional release. */
 export function retainPlaywrightAnchor(
-  page: Pick<import("puppeteer-core").Page, "on" | "off" | "close" | "isClosed">,
+  page: Pick<
+    import("puppeteer-core").Page,
+    "on" | "off" | "close" | "isClosed" | "evaluate"
+  >,
   requestLeaseRelease: () => void
 ): PlaywrightAnchor {
   let watching = true;
@@ -190,11 +193,74 @@ export function retainPlaywrightAnchor(
   };
   return {
     dispose,
+    record(message) {
+      if (!watching || page.isClosed()) return;
+      void page.evaluate(
+        ({ message, time }) => {
+          const events = document.querySelector("#events");
+          if (!events) return;
+          const item = document.createElement("li");
+          const timestamp = document.createElement("time");
+          timestamp.textContent = time;
+          item.append(timestamp, document.createTextNode(message));
+          events.prepend(item);
+          while (events.children.length > 30) events.lastElementChild?.remove();
+        },
+        { message, time: new Date().toLocaleTimeString() }
+      ).catch(() => {});
+    },
     async release() {
       dispose();
       if (!page.isClosed()) await page.close().catch(() => {});
     },
   };
+}
+
+export async function renderPlaywrightAnchor(
+  page: Pick<import("puppeteer-core").Page, "setContent">,
+  profile: string,
+  extensionVersion?: string
+): Promise<void> {
+  const version = extensionVersion ?? "Unknown";
+  await page.setContent(`<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="color-scheme" content="light dark">
+  <title>Lenses</title>
+  <style>
+    body { font: 15px system-ui, sans-serif; max-width: 640px; margin: 48px auto; padding: 0 24px; }
+    h1 { font-size: 24px; margin: 0 0 24px; }
+    dl { display: grid; grid-template-columns: max-content 1fr; gap: 8px 16px; margin: 0 0 32px; }
+    dt { color: #777; }
+    dd { margin: 0; }
+    h2 { font-size: 15px; margin: 0 0 12px; }
+    ol { list-style: none; margin: 0; padding: 0; }
+    li { display: flex; gap: 12px; padding: 7px 0; border-top: 1px solid color-mix(in srgb, currentColor 15%, transparent); }
+    time { color: #777; font-variant-numeric: tabular-nums; }
+  </style>
+</head>
+<body>
+  <h1>Lenses</h1>
+  <dl>
+    <dt>Status</dt><dd>Connected</dd>
+    <dt>Profile</dt><dd>${escapeHtml(profile)}</dd>
+    <dt>Extension</dt><dd>${escapeHtml(version)}</dd>
+  </dl>
+  <h2>Events</h2>
+  <ol id="events"></ol>
+</body>
+</html>`);
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (character) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  })[character] ?? character);
 }
 
 export function isPlaywrightConnectPage(
