@@ -86,7 +86,7 @@ export function createLensMcpServer(client: LensClient): McpServer {
 
   server.registerTool(
     "broker_status",
-    { description: "Diagnose browser connectivity: connected backends, extension versions/capabilities, Chrome-vs-extension reachability, CDP lease/reconnects/errors, and active or queued calls. Browser calls use one serial broker queue." },
+    { description: "Diagnose browser connectivity: connected backends, extension versions/capabilities, CDP lease/reconnects/errors, and active or queued calls. Browser calls use one serial broker queue." },
     async () => ok(await client.status())
   );
 

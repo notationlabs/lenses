@@ -159,7 +159,6 @@ describe("broker build stamp handshake", () => {
         queuedCalls: 2,
         lastBackendError: "CDP permission denied",
         reconnectAttempts: 3,
-        reachability: { chrome: true, extension: true },
       },
     }));
     }));

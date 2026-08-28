@@ -48,7 +48,6 @@ export interface BrokerDiagnostics {
   queuedCalls: number;
   lastBackendError?: string;
   reconnectAttempts: number;
-  reachability: { chrome?: boolean; extension: boolean };
 }
 
 export interface LensTransport {
