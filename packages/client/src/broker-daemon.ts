@@ -121,6 +121,9 @@ async function checkAndConnect(): Promise<void> {
       return;
     }
     browserPresent = true;
+    // A failure from the previous Chrome process does not apply to this new
+    // session; let the extension be preferred again.
+    extensionAttemptFailed = false;
     console.error(`started Chrome with profile "${profile}"`);
   }
   extensionInstalled = await playwrightExtensionInstalled(undefined, profile);
@@ -480,10 +483,6 @@ function sendStatus(socket: WebSocket): void {
       lastBackendError:
         lastBackendError ?? backends.find((backend) => backend.diagnostic)?.diagnostic,
       reconnectAttempts: cdp.info().reconnectAttempts ?? 0,
-      reachability: {
-        chrome: cdp.available() ? true : browserPresent,
-        extension: extension.available(),
-      },
     },
     advice: describeGap(),
   });

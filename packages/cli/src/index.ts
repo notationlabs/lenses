@@ -163,9 +163,9 @@ Example:
 `,
   status: `Usage: lens status [options]
 
-Report the local broker port, connected backends and capabilities, Chrome vs
-Playwright Extension reachability, active/queued call state, recent backend errors and CDP
-reconnect attempts. The CDP lease is "held", "released", or "disconnected".
+Report the local broker port, connected backends and capabilities, active/queued
+call state, recent backend errors and CDP reconnect attempts. The CDP lease is
+"held", "released", or "disconnected".
 Browser calls use one serial broker queue. No catalog needed.
 
 Options:

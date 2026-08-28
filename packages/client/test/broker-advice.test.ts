@@ -32,15 +32,20 @@ describe("broker browser advice", () => {
     );
   });
 
-  it("retains actionable setup and failure advice", () => {
+  it("does not prescribe setup when the next call will launch Chrome", () => {
+    expect(browserAdvice({
+      ...readyOnDemand,
+      browserPresent: false,
+      extensionAttemptFailed: true,
+    })).toBeUndefined();
+  });
+
+  it("retains actionable setup and failure advice while Chrome is present", () => {
     expect(browserAdvice({ ...readyOnDemand, extensionInstalled: false })).toContain(
       "not installed"
     );
     expect(browserAdvice({ ...readyOnDemand, extensionAttemptFailed: true })).toContain(
       "did not connect"
-    );
-    expect(browserAdvice({ ...readyOnDemand, browserPresent: false })).toContain(
-      "Chrome is not running"
     );
   });
 });

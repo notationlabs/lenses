@@ -13,6 +13,9 @@ export interface BrowserAdviceState {
 /** Only report an action the user must take; lazy idle disconnect is healthy. */
 export function browserAdvice(state: BrowserAdviceState): string | undefined {
   if (state.extensionAvailable || state.cdpAvailable) return undefined;
+  // Chrome is launched lazily by the next uncached browser call. No setup or
+  // control action is required while it is simply absent.
+  if (state.browserPresent === false) return undefined;
   if (state.extensionInstalled === false) {
     return (
       `Playwright Extension is not installed; install it from ${PLAYWRIGHT_EXTENSION_INSTALL_URL} ` +
@@ -24,9 +27,6 @@ export function browserAdvice(state: BrowserAdviceState): string | undefined {
       "Playwright Extension did not connect; using CDP until the next acquire or broker restart. " +
       "Enable chrome://inspect/#remote-debugging (Chrome will ask you to click Allow)"
     );
-  }
-  if (state.browserPresent === false) {
-    return "Chrome is not running; start it, then retry the browser call";
   }
   if (
     state.extensionInstalled === undefined ||
