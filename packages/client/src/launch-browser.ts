@@ -36,9 +36,41 @@ export function launchBrowser(profile = "Default"): Promise<boolean> {
   return runChrome([profileArgument(profile)]);
 }
 
-/** Open a URL in the selected profile (used for the Playwright Extension connect page). */
+/**
+ * Open the Playwright Extension connect page in the selected profile. Invoke
+ * Chrome directly so its singleton forwards the URL to the existing profile;
+ * macOS `open -n` incorrectly launches another application instance.
+ */
 export function openUrlInChrome(url: string, profile = "Default"): Promise<boolean> {
   return runChrome([profileArgument(profile), url]);
+}
+
+/** Capture/restore focus because the stock extension explicitly focuses its selected tab. */
+export async function foregroundApplication(): Promise<string | undefined> {
+  if (process.platform !== "darwin") return undefined;
+  try {
+    const { stdout } = await run("/usr/bin/osascript", [
+      "-l",
+      "JavaScript",
+      "-e",
+      'ObjC.import("AppKit"); const app = $.NSWorkspace.sharedWorkspace.frontmostApplication; app ? ObjC.unwrap(app.bundleIdentifier) : ""',
+    ]);
+    const bundleId = stdout.trim();
+    return bundleId || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export async function restoreForegroundApplication(
+  bundleId: string | undefined
+): Promise<void> {
+  if (process.platform !== "darwin" || !bundleId || bundleId === "com.google.Chrome") return;
+  try {
+    await run("/usr/bin/open", ["-b", bundleId]);
+  } catch {
+    // Focus restoration is best-effort and must not fail browser acquisition.
+  }
 }
 
 function profileArgument(profile: string): string {
@@ -57,6 +89,10 @@ function runChrome(args: string[]): Promise<boolean> {
       : process.platform === "win32"
         ? "chrome"
         : "google-chrome";
+  return runDetached(command, args);
+}
+
+function runDetached(command: string, args: string[]): Promise<boolean> {
   try {
     const child = spawn(command, args, { detached: true, stdio: "ignore" });
     child.unref();

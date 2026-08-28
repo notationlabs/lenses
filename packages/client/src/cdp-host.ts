@@ -65,7 +65,10 @@ export interface CdpTransport {
   readonly pollForConnection: boolean;
   readonly retryConnect: boolean;
   readonly connectAttemptMs?: number;
-  connect(progress: (message: string) => void): Promise<Browser>;
+  connect(
+    progress: (message: string) => void,
+    requestLeaseRelease: () => void
+  ): Promise<Browser>;
   looksReady(): boolean;
   probeLive(): Promise<boolean>;
   connectHint(): string;
@@ -74,6 +77,15 @@ export interface CdpTransport {
   info?(): Partial<BackendInfo>;
   /** Actionable status after an unexpected live connection loss. */
   disconnectHint?(): string;
+  /** Transport cleanup before the browser lease is disconnected. */
+  prepareLeaseRelease?(browser: Browser): Promise<void>;
+  /** Transport cleanup before a session or temporary page is released. */
+  preparePageRelease?(
+    browser: Browser,
+    page: Page,
+    disposition: FinishDisposition,
+    releasePage: boolean
+  ): Promise<void>;
   dispose?(): void;
 }
 
@@ -86,6 +98,8 @@ export interface CdpBackend extends BrowserBackend {
    */
   browserLive(): Promise<boolean>;
   release(): Promise<void>;
+  /** The transport's broker-owned anchor was explicitly closed by the user. */
+  onLeaseReleaseRequest(listener: () => void): () => void;
   acquire(progress?: (message: string) => void): Promise<void>;
   start(): void;
   stop(): void;
@@ -116,6 +130,7 @@ export function createCdpBackend(
   let sessionSequence = 0;
   const captureBuffers = new WeakMap<Page, CaptureBuffer>();
   const statusListeners = new Set<() => void>();
+  const leaseReleaseListeners = new Set<() => void>();
   /**
    * Pages kept by a needs_* outcome, and where they were kept. The map dies
    * with the process: neither CDP transport has durable tab leases.
@@ -197,7 +212,9 @@ export function createCdpBackend(
     for (;;) {
       try {
         connected = await attemptWithTimeout(
-          transport.connect(progress),
+          transport.connect(progress, () => {
+            for (const listener of leaseReleaseListeners) listener();
+          }),
           transport.connectAttemptMs ?? CONNECT_ATTEMPT_MS
         );
         break;
@@ -400,12 +417,21 @@ export function createCdpBackend(
         return;
       }
       try {
+        await transport.prepareLeaseRelease?.(current);
+      } catch {
+        // Release must continue even if the anchor was already closed.
+      }
+      try {
         await current.disconnect();
       } catch {
         // The disconnected listener handles an already-closed socket.
       }
       transport.dispose?.();
       log(`${transport.name} lease released`);
+    },
+    onLeaseReleaseRequest(listener) {
+      leaseReleaseListeners.add(listener);
+      return () => leaseReleaseListeners.delete(listener);
     },
     async acquire(progress = () => {}) {
       await ensureBrowser(progress);
@@ -462,6 +488,12 @@ export function createCdpBackend(
         } catch {
           if (created && page) {
             try {
+              await transport.preparePageRelease?.(
+                browser,
+                page,
+                "close-if-created",
+                true
+              );
               await page.close();
             } catch {
               // The tab may already be gone.
@@ -514,6 +546,12 @@ export function createCdpBackend(
       } finally {
         if (created) {
           try {
+            await transport.preparePageRelease?.(
+              browser,
+              page,
+              "close-if-created",
+              true
+            );
             await page.close();
           } catch {
             // The user may close the temporary tab.
@@ -558,6 +596,18 @@ export function createCdpBackend(
       cdpSession.closed = true;
       cdpSession.stopRecordingState();
       wakeCaptureWaiters(cdpSession.captures);
+      if (browser?.connected) {
+        try {
+          await transport.preparePageRelease?.(
+            browser,
+            cdpSession.page,
+            disposition,
+            cdpSession.created && disposition !== "keep"
+          );
+        } catch {
+          // Cleanup must not replace the lens result.
+        }
+      }
       if (disposition === "keep" && !cdpSession.page.isClosed()) {
         keptGates.set(cdpSession.page, {
           target: cdpSession.target,

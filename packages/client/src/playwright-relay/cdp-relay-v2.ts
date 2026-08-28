@@ -19,7 +19,7 @@
 
 import { BrowserModel, type SendCommand, type SendToCDPClient } from "./browser-model.js";
 import { createDeferred } from "./deferred.js";
-import { PLAYWRIGHT_EXTENSION_ID, type ExtensionEventsV2 } from "./protocol.js";
+import type { ExtensionEventsV2 } from "./protocol.js";
 
 export class ExtensionProtocolV2 {
   private _model: BrowserModel;
@@ -89,14 +89,16 @@ export class ExtensionProtocolV2 {
         await this._model.enableAutoAttach();
         return { result: {} };
       }
-      case "Target.createTarget": {
-        const result = await this._model.createTarget(params?.url, params?.background === true);
-        // Token approval selects the connect page itself. Keep it until a real
-        // target exists so closing the relay's only tab cannot abort Puppeteer's
-        // startup handshake, then remove it from the accessible group.
-        await this._model.closeTargets(isConnectPage);
-        return { result };
-      }
+      case "Target.createTarget":
+        // The host keeps the token-approved connect page as its lease anchor.
+        // Closing it here would make each newly created tab active and force a
+        // focus-stealing extension reconnection after ordinary call cleanup.
+        return {
+          result: await this._model.createTarget(
+            params?.url,
+            params?.background === true
+          ),
+        };
       case "Target.closeTarget":
         return { result: await this._model.closeTarget(params?.targetId) };
       case "Target.getTargetInfo":
@@ -108,18 +110,5 @@ export class ExtensionProtocolV2 {
   async forwardToExtension(method: string, params: any, sessionId: string | undefined): Promise<any> {
     if (!sessionId) return await this._model.sendBrowserCommand(method, params);
     return await this._model.sendCommand(sessionId, method, params);
-  }
-}
-
-function isConnectPage(targetInfo: any): boolean {
-  try {
-    const url = new URL(targetInfo?.url);
-    return (
-      url.protocol === "chrome-extension:" &&
-      url.hostname === PLAYWRIGHT_EXTENSION_ID &&
-      url.pathname === "/connect.html"
-    );
-  } catch {
-    return false;
   }
 }

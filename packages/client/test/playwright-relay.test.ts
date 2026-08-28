@@ -63,7 +63,7 @@ describe("Playwright CDP relay", () => {
     await browser.disconnect();
   });
 
-  it("creates the first real target and removes the token-approved connect page", async () => {
+  it("creates the first real target without prematurely activating it", async () => {
     relay = new CDPRelayServer();
     await relay.start();
     extension = new FakePlaywrightExtension();
@@ -100,7 +100,7 @@ describe("Playwright CDP relay", () => {
       method: "chrome.tabs.create",
       params: [{ url: "https://example.com/new", active: false }],
     });
-    expect(extension.commands).toContainEqual({
+    expect(extension.commands).not.toContainEqual({
       method: "chrome.tabs.remove",
       params: [1],
     });
