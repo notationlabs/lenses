@@ -3,8 +3,6 @@ dist/
 artifacts/
 *.log
 .DS_Store
-apps/extension/dist/
-
 # build-time copies included in published packages
 packages/cli/SKILL.md
 packages/lenses/README.md

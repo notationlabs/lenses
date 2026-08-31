@@ -1,6 +1,6 @@
 /**
- * Functions executed inside the target page, via CDP `Runtime.evaluate` or a
- * content script. Each exported function must remain fully self-contained —
+ * Functions executed inside the target page via CDP `Runtime.evaluate`.
+ * Each exported function must remain fully self-contained —
  * hosts serialize the single function's source, so it cannot reference
  * imports, module state, or sibling functions.
  */

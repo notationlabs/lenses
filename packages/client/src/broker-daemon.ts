@@ -122,7 +122,7 @@ async function checkAndConnect(): Promise<void> {
     }
     browserPresent = true;
     // A failure from the previous Chrome process does not apply to this new
-    // session; let the extension be preferred again.
+    // session; let Playwright Extension be preferred again.
     extensionAttemptFailed = false;
     console.error(`started Chrome with profile "${profile}"`);
   }

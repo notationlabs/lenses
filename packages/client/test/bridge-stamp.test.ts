@@ -151,8 +151,8 @@ describe("broker build stamp handshake", () => {
       type: "status",
       connected: true,
       stamp: brokerBuildStamp(),
-      backend: "extension",
-      backends: [{ name: "extension", available: true, version: "1.2.3", capabilities: ["perform"] }],
+      backend: "playwright-extension",
+      backends: [{ name: "playwright-extension", available: true, version: "1.2.3", capabilities: ["browser-session"] }],
       diagnostics: {
         concurrency: "serial_queue",
         activeCall: { id: "call_9", type: "call", lens: "@example/send", startedAt: 123 },
@@ -167,7 +167,7 @@ describe("broker build stamp handshake", () => {
       const bridge = await BrowserBridge.bind(port, "127.0.0.1");
       bridges.push(bridge);
       expect(bridge.backends).toEqual([
-        expect.objectContaining({ name: "extension", version: "1.2.3", capabilities: ["perform"] }),
+        expect.objectContaining({ name: "playwright-extension", version: "1.2.3", capabilities: ["browser-session"] }),
       ]);
       expect(bridge.diagnostics).toMatchObject({
         concurrency: "serial_queue",

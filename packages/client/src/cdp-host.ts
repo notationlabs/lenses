@@ -61,7 +61,7 @@ export type CdpLease = "held" | "released" | "disconnected";
  */
 export interface CdpTransport {
   readonly name: string;
-  /** Poll DevToolsActivePort (or equivalent) and auto-connect. Off for the extension relay. */
+  /** Poll DevToolsActivePort (or equivalent) and auto-connect. Off for the Playwright Extension relay. */
   readonly pollForConnection: boolean;
   readonly retryConnect: boolean;
   readonly connectAttemptMs?: number;
@@ -644,10 +644,10 @@ function assertOpen(session: CdpSession): void {
 }
 
 /**
- * Run perform steps in order, stopping at the first failure. The in-page
- * primitives are the same page functions the extension injects, so both
- * backends act identically. A throw inside a step (e.g. a click that
- * navigates the page away mid-evaluation) fails that step, not the session.
+ * Run perform steps in order, stopping at the first failure. Both CDP
+ * transports evaluate the same in-page primitives. A throw inside a step
+ * (e.g. a click that navigates the page away mid-evaluation) fails that
+ * step, not the session.
  */
 async function performSteps(
   page: Page,

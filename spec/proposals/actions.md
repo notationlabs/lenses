@@ -56,7 +56,7 @@ Every `wait` form takes `timeoutMs` (default 10000). The poll interval is intern
 
 ## Naming
 
-`perform` is the one verb end-to-end: document key, `EngineIO.perform(steps)`, `BrowserSession.perform`, extension RPC op. `effects` stays the declaration surface ({reads, writes, idempotent, cache}) and is never overloaded with opcodes — "what it does" stays split from "how it does it". Steps are a closed, validated opcode set; the same trust story as JSONata-only maps.
+`perform` is the one verb end-to-end: document key, `EngineIO.perform(steps)`, `BrowserSession.perform`. `effects` stays the declaration surface ({reads, writes, idempotent, cache}) and is never overloaded with opcodes — "what it does" stays split from "how it does it". Steps are a closed, validated opcode set; the same trust story as JSONata-only maps.
 
 ## Touchpoints
 

@@ -1,6 +1,6 @@
 /**
  * A cursor-addressed ring buffer of intercepted responses, shared by every
- * browser backend (CDP host and Chrome extension) so cursor semantics —
+ * browser backend so cursor semantics —
  * capping, truncation reporting, long-poll wakeups — are defined once.
  */
 import type { InterceptedResponse } from "./types.js";

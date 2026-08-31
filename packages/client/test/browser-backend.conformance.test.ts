@@ -17,7 +17,7 @@ const cdpState = vi.hoisted(() => ({
 }));
 
 // existsSync is stubbed for the Chrome-binary probe; the rest must stay real,
-// since the extension backend hashes the page-functions module off disk.
+// since page-functions stamps hash the module off disk.
 vi.mock("node:fs", async (importOriginal) => ({
   ...(await importOriginal<typeof import("node:fs")>()),
   existsSync: () => true,
