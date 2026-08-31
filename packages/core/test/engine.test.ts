@@ -865,7 +865,7 @@ describe("cross-tier reconciliation", () => {
 });
 
 describe("dom extraction spec shape", () => {
-  it("passes the resolver spec through to the content-script adapter", async () => {
+  it("passes the resolver spec through to the page extractor", async () => {
     let received: DomResolver | undefined;
     await executeLens(spec, {}, io({
       domExtract: async (r) => {

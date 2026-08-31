@@ -131,7 +131,7 @@ export function createBrokerOrchestrator(
     if (afterGrace.available() || !options.prepareFallback) return afterGrace;
 
     // The grace controls when fallback preparation starts, not when the
-    // expected extension stops being eligible. Until the request deadline,
+    // expected preferred backend stops being eligible. Until the request deadline,
     // whichever backend actually becomes available first wins; a failed CDP
     // probe is merely remembered for the bounded no-backend failure.
     return waitForAvailableBackend(
@@ -437,7 +437,7 @@ async function withinCallDeadline(
 export function capabilitiesForSpec(spec: LensSpec): BrowserCapability[] {
   // A later page tier is an explicit fallback when ordinary browser HTTP is
   // unsupported. Same-origin requirements are selected again per request, so
-  // mixed chains may use the extension for a cheap read and CDP for a mutation.
+  // mixed chains may use Playwright Extension for a cheap read and CDP for a mutation.
   if (spec.resolve.some((resolver) => resolver.kind !== "http")) {
     return ["browser-session"];
   }
@@ -473,8 +473,8 @@ function backendSupports(
   capability: BrowserCapability
 ): boolean {
   if (backend.supports) return backend.supports(capability);
-  // Compatibility for custom transports/backends built against the previous
-  // interface. Session support was implicit; httpFetch advertised cookie fetch.
+  // Backends that omit supports() advertise sessions; httpFetch means cookie
+  // fetch. Same-origin page fetch is not assumed.
   if (capability === "same-origin-page-http") return false;
   return capability === "browser-session" || backend.httpFetch !== undefined;
 }
@@ -594,7 +594,7 @@ function waitForAvailableBackend(
     void Promise.resolve()
       .then(prepareFallback)
       .then(changed, (error) => {
-        // CDP absence/failure must not end an expected extension's rendezvous.
+        // CDP absence/failure must not end an expected preferred backend's rendezvous.
         fallbackError = error;
         changed();
       });

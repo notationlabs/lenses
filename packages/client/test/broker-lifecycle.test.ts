@@ -64,7 +64,7 @@ describe("idle self-exit", () => {
     expect(exits).toHaveLength(0);
   });
 
-  it("stays resident while the extension is attached, so its socket survives", async () => {
+  it("stays resident while Playwright Extension is attached, so its socket survives", async () => {
     const { world, exits, timer } = idleWorld(1_000);
     world.extensionAttached = true;
     timer.reset();

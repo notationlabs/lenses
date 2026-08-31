@@ -109,7 +109,7 @@ class FakeBackend implements BrowserBackend {
     this.name = name;
     this.isAvailable = available;
     this.session = session;
-    this.sameOriginPageRequests = name === "cdp";
+    this.sameOriginPageRequests = true;
   }
 
   available(): boolean {
@@ -192,7 +192,7 @@ async function request(
 
 describe("broker orchestration", () => {
   it("bounds a stuck call and identifies it in the timeout", async () => {
-    const backend = new FakeBackend("extension");
+    const backend = new FakeBackend("playwright-extension");
     backend.bind = async () => new Promise<BrowserSession>(() => {});
     const orchestrator = createBrokerOrchestrator([backend]);
 
@@ -226,7 +226,7 @@ describe("broker orchestration", () => {
   });
 
   it("pins a selected backend for the whole call", async () => {
-    const preferred = new FakeBackend("extension");
+    const preferred = new FakeBackend("playwright-extension");
     const fallback = new FakeBackend("cdp");
     preferred.onBind = () => {
       preferred.isAvailable = false;
@@ -447,8 +447,8 @@ describe("broker orchestration", () => {
 
   it("fails on backend loss without switching backend mid-call", async () => {
     const session = new FakeSession();
-    session.failDom = new Error("extension disconnected");
-    const extension = new FakeBackend("extension", true, session);
+    session.failDom = new Error("Playwright Extension disconnected");
+    const extension = new FakeBackend("playwright-extension", true, session);
     const cdp = new FakeBackend("cdp");
     const result = await request(createBrokerOrchestrator([extension, cdp]), {
       type: "call",
@@ -458,7 +458,7 @@ describe("broker orchestration", () => {
       timeoutMs: 1000,
     });
 
-    expect(result).toEqual({ kind: "error", message: "extension disconnected" });
+    expect(result).toEqual({ kind: "error", message: "Playwright Extension disconnected" });
     expect(extension.finishes).toEqual(["close-if-created"]);
     expect(cdp.binds).toHaveLength(0);
   });
@@ -468,7 +468,7 @@ describe("broker orchestration", () => {
     async (failure) => {
       vi.useFakeTimers();
       try {
-        const extension = new FakeBackend("extension", false);
+        const extension = new FakeBackend("playwright-extension", false);
         const cdp = new FakeBackend("cdp", false);
         const prepareFallback = vi.fn(async () => {
           throw new Error(`CDP endpoint ${failure}`);
@@ -480,7 +480,7 @@ describe("broker orchestration", () => {
           }),
           {
             type: "call",
-            id: "91bc-ordering",
+            id: "preferred-ordering",
             spec: domSpec(),
             params: {},
             timeoutMs: 90_000,
@@ -488,14 +488,13 @@ describe("broker orchestration", () => {
           }
         );
 
-        // Actual ordering: the extension had scanned before the broker existed;
-        // its nominal 30s alarm was delayed beyond the broker's 35s grace.
+        // Preferred-backend grace elapses with CDP still failing; rendezvous
+        // continues until the preferred backend becomes available.
         await vi.advanceTimersByTimeAsync(35_000);
         expect(prepareFallback).toHaveBeenCalledOnce();
         expect(cdp.binds).toHaveLength(0);
 
-        // The immediate fallback rejection does not end the rendezvous. The
-        // 91bc handshake landed 48.8s after broker startup.
+        // The immediate fallback rejection does not end the rendezvous.
         await vi.advanceTimersByTimeAsync(13_800);
         extension.setAvailable(true);
         await vi.advanceTimersByTimeAsync(0);
@@ -512,7 +511,7 @@ describe("broker orchestration", () => {
   it("selects a live fallback that becomes available during rendezvous", async () => {
     vi.useFakeTimers();
     try {
-      const extension = new FakeBackend("extension", false);
+      const extension = new FakeBackend("playwright-extension", false);
       const cdp = new FakeBackend("cdp", false);
       const prepareFallback = vi.fn(async () => cdp.setAvailable(true));
       const result = request(
@@ -541,10 +540,10 @@ describe("broker orchestration", () => {
     }
   });
 
-  it("bounds an unavailable extension and failed fallback by the call deadline", async () => {
+  it("bounds an unavailable preferred backend and failed fallback by the call deadline", async () => {
     vi.useFakeTimers();
     try {
-      const extension = new FakeBackend("extension", false);
+      const extension = new FakeBackend("playwright-extension", false);
       const cdp = new FakeBackend("cdp", false);
       const result = request(
         createBrokerOrchestrator([extension, cdp], {
@@ -586,7 +585,7 @@ describe("broker orchestration", () => {
 
   it("uses an available fallback without waiting for a preferred backend", async () => {
     vi.useFakeTimers();
-    const extension = new FakeBackend("extension", false);
+    const extension = new FakeBackend("playwright-extension", false);
     const cdp = new FakeBackend("cdp", true);
     const result = request(
       createBrokerOrchestrator([extension, cdp], {
@@ -639,7 +638,7 @@ describe("write consent and execution", () => {
   });
 
   it("denies a mutating HTTP resolver without allowWrites before making a request", async () => {
-    const backend = new FakeBackend("extension");
+    const backend = new FakeBackend("playwright-extension");
     const requests: unknown[] = [];
     backend.httpFetch = async (httpRequest) => {
       requests.push(httpRequest);
@@ -664,7 +663,7 @@ describe("write consent and execution", () => {
   });
 
   it("forwards a mutating HTTP body after explicit consent", async () => {
-    const backend = new FakeBackend("extension");
+    const backend = new FakeBackend("playwright-extension");
     const requests: unknown[] = [];
     backend.httpFetch = async (httpRequest) => {
       requests.push(httpRequest);
@@ -696,14 +695,14 @@ describe("write consent and execution", () => {
     expect(second).not.toHaveProperty("cached");
   });
 
-  it("selects a capable CDP fallback when an older extension cannot send request bodies", async () => {
-    const extension = new FakeBackend("extension");
+  it("selects a capable CDP fallback when the preferred backend cannot send request bodies", async () => {
+    const extension = new FakeBackend("playwright-extension");
     extension.httpFetch = async () => {
-      throw new Error("stale extension must not execute the request");
+      throw new Error("incapable preferred backend must not execute the request");
     };
     extension.supportsHttpBody = false;
     extension.version = "0.1.0";
-    extension.negotiatedCapabilities = ["http-fetch"];
+    extension.negotiatedCapabilities = ["credentialed-http"];
     const cdp = new FakeBackend("cdp", false);
     const requests: unknown[] = [];
     cdp.httpFetch = async (httpRequest) => {
@@ -743,7 +742,8 @@ describe("write consent and execution", () => {
   });
 
   it("selects per-source backends and uses CDP for a same-origin page mutation", async () => {
-    const extension = new FakeBackend("extension");
+    const extension = new FakeBackend("playwright-extension");
+    extension.sameOriginPageRequests = false;
     const extensionRequests: string[] = [];
     extension.httpFetch = async (httpRequest) => {
       extensionRequests.push(httpRequest.url);
@@ -811,8 +811,8 @@ describe("write consent and execution", () => {
     }));
   });
 
-  it("uses a capable extension for same-origin page requests without CDP", async () => {
-    const extension = new FakeBackend("extension");
+  it("uses a capable preferred backend for same-origin page requests without CDP", async () => {
+    const extension = new FakeBackend("playwright-extension");
     extension.sameOriginPageRequests = true;
     const sent: unknown[] = [];
     extension.httpFetch = async (httpRequest) => {
@@ -827,7 +827,7 @@ describe("write consent and execution", () => {
     };
     const result = await request(createBrokerOrchestrator([extension]), {
       type: "call",
-      id: "same-origin-extension",
+      id: "same-origin-preferred",
       spec: {
         name: "@example/delete",
         url: "https://example.com/items/1",
@@ -848,7 +848,8 @@ describe("write consent and execution", () => {
   });
 
   it("fails a same-origin page request before transmission when no backend qualifies", async () => {
-    const extension = new FakeBackend("extension");
+    const extension = new FakeBackend("playwright-extension");
+    extension.sameOriginPageRequests = false;
     const sent = vi.fn();
     extension.httpFetch = sent;
     const result = await request(createBrokerOrchestrator([extension]), {
@@ -877,13 +878,13 @@ describe("write consent and execution", () => {
   });
 
   it("fails before execution with version and capability upgrade guidance", async () => {
-    const extension = new FakeBackend("extension");
+    const extension = new FakeBackend("playwright-extension");
     extension.httpFetch = async () => {
       throw new Error("must not execute");
     };
     extension.supportsHttpBody = false;
     extension.version = "0.1.0";
-    extension.negotiatedCapabilities = ["sessions", "http-fetch"];
+    extension.negotiatedCapabilities = ["browser-session", "credentialed-http"];
     const result = await request(createBrokerOrchestrator([extension]), {
       type: "call",
       id: "capability-mismatch",
@@ -905,8 +906,8 @@ describe("write consent and execution", () => {
 
     expect(result).toMatchObject({ kind: "error" });
     expect((result as { message: string }).message).toContain("credentialed HTTP request bodies");
-    expect((result as { message: string }).message).toContain("extension 0.1.0");
-    expect((result as { message: string }).message).toContain("http-fetch");
+    expect((result as { message: string }).message).toContain("playwright-extension 0.1.0");
+    expect((result as { message: string }).message).toContain("credentialed-http");
     expect((result as { message: string }).message).toContain(
       "chrome://inspect/#remote-debugging"
     );
@@ -1134,12 +1135,11 @@ describe("http tiers", () => {
   });
 
   it("routes a credentialed http tier through the backend's httpFetch", async () => {
-    const backend = new FakeBackend("extension");
+    const backend = new FakeBackend("playwright-extension");
     const seen: string[] = [];
     backend.httpFetch = async (req) => {
       seen.push(`${req.method} ${req.url}`);
-      // The engine's credentials flag must not leak into the backend request:
-      // the extension's strict protocol schema rejects unknown keys.
+      // The engine's credentials flag must not leak into the backend request.
       expect(req).not.toHaveProperty("credentials");
       return {
         url: req.url,

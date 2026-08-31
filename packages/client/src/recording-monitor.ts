@@ -39,7 +39,7 @@ export class RecordingMonitor {
 
   async finish(): Promise<void> {
     // Stop the background capturer first: the final waiter performs the same
-    // transition invalidation and must not race it for an extension debugger.
+    // transition invalidation and must not race it for a page debugger.
     this.stopped = true;
     await this.loop;
     await this.waitAndCapture("final", true);

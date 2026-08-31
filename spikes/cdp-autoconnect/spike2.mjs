@@ -1,6 +1,5 @@
-// Spike 2: JSON response capture on an API-driven page, and early-request
-// coverage (requests fired before any content script could have attached —
-// the case the extension's document_start patch can miss).
+// Spike 2: JSON response capture on an API-driven page, including requests
+// fired before page scripts run.
 import puppeteer from "puppeteer-core";
 
 const browser = await puppeteer.connect({ channel: "chrome" });

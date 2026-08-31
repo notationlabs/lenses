@@ -16,7 +16,7 @@ export interface BackendHttpRequest {
   url: string;
   headers?: Record<string, string>;
   body?: HttpFetchBody;
-  /** Execute in a matching top-level page rather than an extension/service-worker context. */
+  /** Execute in a matching top-level page rather than a cookie-only fetch. */
   context?: "same-origin-page";
 }
 

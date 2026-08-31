@@ -99,12 +99,7 @@ host/path, and hash prefix (never query or fragment); `index.json` retains the f
 timestamp, lens, call ID, and SHA-256. Calling `stop()` affects new calls; a call started while
 the handle was active remains part of that run.
 
-The Chrome extension uses Chrome's `debugger` permission for screenshots. Chrome only lets
-`captureVisibleTab` capture the active tab, so using it would either miss background lens tabs
-or briefly expose and risk capturing an unrelated tab. The debugger API captures the bound
-background tab without activating it; Chrome may show its standard debugging indicator, and
-a tab already attached to DevTools or another debugger cannot be recorded. The CDP fallback
-uses its existing debugging connection.
+Screenshots go through the bound tab's CDP connection (`Page.captureScreenshot`), so a background lens tab is captured without activating it. Chrome may show its standard debugging indicator, and a tab already attached to DevTools or another debugger cannot be recorded.
 
 Catalog sources are tried in order. A source is a directory path (`file:` optional), a
 `git:host/owner/repo[#ref][/subdir]` reference (`git:/abs/path` clones a local
@@ -267,26 +262,26 @@ expression can be iterated on offline before it goes into a lens document.
 ## Architecture
 
 ```text
-application ─┐                                              ┌─ extension ─► Chrome
+application ─┐                                              ┌─ Playwright Extension ─► Chrome
 lens CLI ────┼─► @djgrant/lenses ── WebSocket ──► broker ┤
 lens MCP ────┘                           │             └─ CDP fallback
                               core resolver engine
 ```
 
-The broker hosts the resolver engine, caching, retry policy, and page-retention policy once. Credential-free `http` tiers run in the broker process itself. Bound-page work pins the call to one session backend, while chained HTTP requests select a backend per source. Both the extension and CDP execute same-origin requests in an existing matching page; the extension is preferred when compatible, with CDP as fallback. Pages are bound lazily.
+The broker hosts the resolver engine, caching, retry policy, and page-retention policy once. Credential-free `http` tiers run in the broker process itself. Bound-page work pins the call to one session backend, while chained HTTP requests select a backend per source. Playwright Extension and CDP both execute same-origin requests in an existing matching page; Playwright Extension is preferred when connected, with CDP as fallback. Pages are bound lazily.
 
-Browser calls use one explicit **serial queue** across clients; there is never concurrent mutation of the shared browser session. Queue time counts against each request deadline, and an expired queued request is rejected before browser work begins. If backend work outlives its caller timeout, subsequent calls receive `code: "broker_busy"` until that work settles rather than overlapping it. `lens status` / `broker_status` reports the policy, active call, queue depth, each backend's version and capabilities, last backend error, CDP reconnect attempts, and separate Chrome/extension reachability (unknown Chrome reachability is omitted until probed).
+Browser calls use one explicit **serial queue** across clients; there is never concurrent mutation of the shared browser session. Queue time counts against each request deadline, and an expired queued request is rejected before browser work begins. If backend work outlives its caller timeout, subsequent calls receive `code: "broker_busy"` until that work settles rather than overlapping it. `lens status` / `broker_status` reports the policy, active call, queue depth, each backend's version and capabilities, last backend error, CDP reconnect attempts, and separate Chrome/Playwright Extension reachability (unknown Chrome reachability is omitted until probed).
 
 ### Broker lifecycle
 
 The first client to need the broker spawns it as a detached process on port 4319 and every later client shares it. Because it outlives the command that started it, the daemon stamps itself at startup with a content hash of its own module directory and reports that stamp in its status frame. A client whose own stamp differs — the normal state after a rebuild or a pull — asks the broker to shut down and reconnects to a freshly spawned one, so nobody keeps talking to yesterday's code. Concurrent clients coordinate through a lock file, so exactly one restarts the broker while the rest wait and reconnect; a stamp that never converges fails the bind after three attempts rather than looping. A retiring broker stops listening first — freeing the port for the replacement — then drains in-flight calls (bounded at 10s) so a call already running still receives its result, then releases the CDP lease under a 5s bound and exits. The replacement binds the port while the old process is still draining.
 
-The broker also retires itself when nobody needs it. Two windows govern this, and any connected client, attached extension or in-flight call restarts both:
+The broker also retires itself when nobody needs it. Two windows govern this, and any connected client, attached Playwright Extension relay or in-flight call restarts both:
 
 - **No browser reachable** — `LENS_BROKER_NO_BROWSER_EXIT_MS`, default 10s. A browserless broker can still serve credential-free `http` tiers, but only for a connected client — and a connected client holds the broker open anyway, so an idle one only occupies memory (~56MB), and respawning costs ~200ms; it goes almost immediately. Chrome leaves its `DevToolsActivePort` file behind when it quits, so the check is an HTTP probe of the endpoint rather than the file's presence.
 - **Browser present but unused** — `LENS_BROKER_IDLE_EXIT_MS`, default 15m (`0` disables both). Longer, because exiting here throws away a working CDP lease: consent is session-scoped, so reacquiring is silent while Chrome keeps running but costs an **Allow** dialog once Chrome restarts.
 
-The extension guard matters: exiting while the extension is attached would drop its socket and push it back through broker rediscovery (~7s, longer on a port it has not seen), which costs more than the resident process saves. In practice that means a broker stays up while you have Chrome open with the extension, and is reclaimed shortly after you quit Chrome. `lens broker shutdown` retires it immediately.
+The Playwright Extension guard matters: exiting while the relay is attached would drop its socket and push it back through broker rediscovery (~7s, longer on a port it has not seen), which costs more than the resident process saves. In practice that means a broker stays up while you have Chrome open with Playwright Extension connected, and is reclaimed shortly after you quit Chrome. `lens broker shutdown` retires it immediately.
 
 ## Lens spec reference
 
