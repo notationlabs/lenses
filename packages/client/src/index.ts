@@ -38,10 +38,10 @@ const DEFAULT_PORT_START = 4319;
 export interface LensClientOptions {
   /**
    * One or more lens catalog sources, tried in order — never assumed.
-   * A source is a directory path (`./examples` or `file:./examples`), a git
-   * reference (`git:github.com/owner/repo#ref/subdir`), or an HTTP catalog
-   * index URL (`https://…/catalog.json`). May be omitted for catalog-independent
-   * operations (status, observe, calling a lens by file path or URL).
+   * A source is a directory path (`./examples` or `file:./examples`) or a git
+   * reference (`git:github.com/owner/repo#ref/subdir`). May be omitted for
+   * catalog-independent operations (status, observe, calling a lens by file
+   * path or URL).
    */
   catalog?: string | string[];
   port?: number;
@@ -451,7 +451,7 @@ export class LensClient {
     return { ...result, warnings: issues };
   }
 
-  /** Refresh cached catalog sources (git clones, HTTP indexes) from their origins. */
+  /** Refresh cached catalog sources (git clones) from their origins. */
   async update(): Promise<CatalogUpdate[]> {
     return this.store.update();
   }

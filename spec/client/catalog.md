@@ -10,13 +10,11 @@ The @caller configures ordered catalog sources; the store resolves names, files,
 
 ## Rules
 
-- **Source schemes:** A source reference dispatches by scheme — a bare or `file:` path is a live-read local directory, `git:host/owner/repo[#ref][/subdir]` is a shallow clone (`git:/abs/path` clones a local repository over a `file://` URL), and an `http(s)` URL is a catalog index.
+- **Source schemes:** A source reference dispatches by scheme — a bare or `file:` path is a live-read local directory, `git:host/owner/repo[#ref][/subdir]` is a shallow clone (`git:/abs/path` clones a local repository over a `file://` URL).
 - **Directory read:** A directory source reads every `*.json` (sorted, `catalog.json` excluded) as a validated lens document; a file that fails validation fails the load naming the file.
-- **Cache root:** Git clones and HTTP index caches live under `LENS_CACHE_DIR`, defaulting to `~/.cache/lenses`, keyed by a hash of the normalised reference.
+- **Cache root:** Git clones live under `LENS_CACHE_DIR`, defaulting to `~/.cache/lenses`, keyed by a hash of the normalised reference.
 - **Git materialisation:** A git source clones once with `--depth 1` (and `--branch <ref>` when a ref is given); !update re-fetches the ref with depth 1 and hard-resets to `FETCH_HEAD`.
-- **HTTP index shape:** An HTTP catalog is an index document `{"lenses": [...]}` whose string entries are document URLs resolved against the index URL; an entry may also inline a whole document.
-- **ETag revalidation:** The index is revalidated with `If-None-Match` on every load; a 304 serves the cached documents, a network failure serves the cached copy when one exists, and !update deletes the cache file so the next load refetches.
-- **Catalogue settings:** A `catalog.json` beside the documents (or the HTTP index itself) may supply `helpers` and `params` to every document, with a document's own entry of the same name winning. Shared parameters let tenant catalogs declare one required input used by every URL. For HTTP sources settings are folded in before caching so the 304 and offline paths serve documents that already carry them.
+- **Catalogue settings:** A `catalog.json` beside the documents may supply `helpers` and `params` to every document, with a document's own entry of the same name winning. Shared parameters let tenant catalogs declare one required input used by every URL.
 - **Ordered load:** Sources load in configuration order; a shortname declared by several sources resolves to the earliest one.
 - **Reference resolution:** A lens reference resolves as an `http(s)` URL fetched and validated directly, a path ending `.json` read from disk with the settings of its own directory's `catalog.json`, or otherwise a scoped name or shortname looked up across the loaded sources.
 

@@ -24,9 +24,8 @@ Run lens <command> --help for command-specific help.
 Global options:
   --catalog, -c    Lens catalog source; repeatable, tried in order (required
                    except for status, observe, eval, and skill).
-                   A directory path (./examples or file:./examples), a git
-                   reference (git:github.com/owner/repo#ref/subdir), or an
-                   HTTP catalog index URL (https://…/catalog.json)
+                   A directory path (./examples or file:./examples) or a git
+                   reference (git:github.com/owner/repo#ref/subdir).
   --port, -p       Persistent browser broker port (default: 4319)
   --profile        Chrome profile directory (default: config or Default)
   --playwright-extension-token
@@ -208,9 +207,9 @@ Options:
 `,
   update: `Usage: lens update [options]
 
-Refresh cached catalog sources — git clones and HTTP indexes — from their
-origins, then report the lens count per source. File sources are read live
-and have nothing to refresh.
+Refresh cached catalog sources — git clones — from their origins, then
+report the lens count per source. File sources are read live and have
+nothing to refresh.
 
 Options:
   --catalog, -c <source>  Lens catalog source; repeatable, tried in order (required)
