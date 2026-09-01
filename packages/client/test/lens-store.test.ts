@@ -176,12 +176,9 @@ describe("parseCatalogSource", () => {
     expect(parseCatalogSource("./examples").id).toBe(parseCatalogSource("file:./examples").id);
   });
 
-  it("keeps git and http references as their own ids", () => {
+  it("keeps git references as their own ids", () => {
     expect(parseCatalogSource("git:github.com/o/r#main/catalog").id).toBe(
       "git:github.com/o/r#main/catalog"
-    );
-    expect(parseCatalogSource("https://example.com/catalog.json").id).toBe(
-      "https://example.com/catalog.json"
     );
   });
 

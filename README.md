@@ -68,7 +68,6 @@ await using lenses = await createLensClient({
   catalog: [
     "./examples", // file:./examples — a local directory, read live
     "git:github.com/notationlabs/lenses#main/examples", // shallow clone, cached under ~/.cache/lenses
-    "https://lenses.example.com/catalog.json", // HTTP index of documents, ETag-cached
   ],
 });
 
@@ -101,15 +100,13 @@ the handle was active remains part of that run.
 
 Screenshots go through the bound tab's CDP connection (`Page.captureScreenshot`), so a background lens tab is captured without activating it. Chrome may show its standard debugging indicator, and a tab already attached to DevTools or another debugger cannot be recorded.
 
-Catalog sources are tried in order. A source is a directory path (`file:` optional), a
+Catalog sources are tried in order. A source is a directory path (`file:` optional) or a
 `git:host/owner/repo[#ref][/subdir]` reference (`git:/abs/path` clones a local
-repository), or the URL of an HTTP catalog index —
-`{ "lenses": ["hn.top.json", …] }` — whose entries are document URLs resolved against it
-(whole documents may also be inlined). Scoped lens names must be unique across all
-sources; a contested shortname resolves to the earliest source. Git clones and HTTP
-indexes load from `~/.cache/lenses` once fetched; `lens update` (or `client.update()`)
-refreshes them from their origins. A directory's `catalog.json` (or an HTTP index) can declare
-`helpers` and shared `params` inherited by every lens, with each document winning on conflicts.
+repository). Scoped lens names must be unique across all sources; a contested
+shortname resolves to the earliest source. Git clones load from `~/.cache/lenses`
+once fetched; `lens update` (or `client.update()`) refreshes them from their origins.
+A directory's `catalog.json` can declare `helpers` and shared `params` inherited by
+every lens, with each document winning on conflicts.
 
 The client owns lens discovery, reference resolution, parameter validation, TTL caching, and the
 local broker connection. `call` returns a `value`, a structured `outcome`, or an `error`.
@@ -285,8 +282,8 @@ The Playwright Extension guard matters: exiting while the relay is attached woul
 
 ## Lens spec reference
 
-A lens is a JSON file in a catalog source — a local directory such as `examples/`, a git
-repository, or an HTTP catalog index — or at a direct HTTP URL.
+A lens is a JSON file in a catalog source — a local directory such as `examples/` or a git
+repository — or at a direct HTTP URL.
 
 - `name` — globally scoped name such as `@djgrant/hn/item`. The local catalog also
   resolves the shortname `hn/item`.

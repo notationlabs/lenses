@@ -55,7 +55,7 @@ export class LensStore {
     return this.list();
   }
 
-  /** Refresh cached sources (git clones, HTTP indexes) from their origins, then reload. */
+  /** Refresh cached sources (git clones) from their origins, then reload. */
   async update(): Promise<CatalogUpdate[]> {
     for (const source of this.sources) await source.update?.();
     await this.load();

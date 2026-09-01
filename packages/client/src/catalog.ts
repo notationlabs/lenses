@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -22,11 +22,9 @@ export interface CatalogSource {
  * Dispatch a catalog reference to a source by scheme:
  *   file:./examples (or a bare path)  — local directory, read live
  *   git:host/owner/repo#ref/subdir    — shallow clone cached under ~/.cache/lenses
- *   https://…/catalog.json            — HTTP index of lens documents, ETag-cached
  */
 export function parseCatalogSource(ref: string): CatalogSource {
   if (ref.startsWith("git:")) return new GitCatalogSource(ref);
-  if (ref.startsWith("http://") || ref.startsWith("https://")) return new HttpCatalogSource(ref);
   if (ref.startsWith("file:")) return new FileCatalogSource(fileRefToPath(ref));
   return new FileCatalogSource(ref);
 }
@@ -47,8 +45,7 @@ function refHash(ref: string): string {
 
 /**
  * Catalogue-level helpers and shared parameters, held in a `catalog.json`
- * beside the documents (or in the index document, for an HTTP catalogue). It
- * is not itself a lens.
+ * beside the documents. It is not itself a lens.
  */
 export const CATALOG_DOCUMENT = "catalog.json";
 
@@ -265,86 +262,5 @@ class GitCatalogSource implements CatalogSource {
     await this.ensureClone();
     await this.git(["fetch", "--depth", "1", "origin", this.ref ?? "HEAD"]);
     await this.git(["reset", "--hard", "FETCH_HEAD"]);
-  }
-}
-
-interface HttpCatalogCache {
-  etag?: string;
-  specs: unknown[];
-}
-
-/**
- * An HTTP catalog is an index document — { "lenses": ["hn.top.json", …] } — whose
- * entries are URLs resolved against the index. The index is revalidated with
- * If-None-Match on every load; the cached copy also serves network failures.
- */
-class HttpCatalogSource implements CatalogSource {
-  readonly id: string;
-  private readonly cacheFile: string;
-
-  constructor(url: string) {
-    this.id = url;
-    this.cacheFile = join(cacheRoot(), "http", `${refHash(url)}.json`);
-  }
-
-  private async readCache(): Promise<HttpCatalogCache | undefined> {
-    try {
-      return JSON.parse(await readFile(this.cacheFile, "utf8")) as HttpCatalogCache;
-    } catch {
-      return undefined;
-    }
-  }
-
-  async load(): Promise<LensSpec[]> {
-    const cached = await this.readCache();
-    let response: Response;
-    try {
-      response = await fetch(this.id, {
-        headers: cached?.etag ? { "if-none-match": cached.etag } : {},
-      });
-    } catch (error) {
-      if (cached) return cached.specs.map((spec) => validateSpec(spec));
-      throw new Error(`http catalog ${this.id}: ${(error as Error).message}`);
-    }
-    if (response.status === 304 && cached) {
-      return cached.specs.map((spec) => validateSpec(spec));
-    }
-    if (!response.ok) throw new Error(`http catalog ${this.id}: HTTP ${response.status}`);
-
-    const index = (await response.json()) as {
-      lenses?: unknown;
-      helpers?: Record<string, string>;
-      params?: LensSpec["params"];
-    };
-    if (!Array.isArray(index.lenses)) {
-      throw new Error(`http catalog ${this.id}: index must declare a "lenses" array`);
-    }
-    // Settings are folded in before caching, so the 304 and offline paths below
-    // serve documents that already carry them.
-    const catalog = { helpers: index.helpers, params: index.params };
-    const specs = await Promise.all(
-      index.lenses.map(async (entry) => {
-        if (typeof entry === "string") {
-          const documentUrl = new URL(entry, this.id).href;
-          const documentResponse = await fetch(documentUrl);
-          if (!documentResponse.ok) {
-            throw new Error(`http catalog ${this.id}: ${documentUrl} HTTP ${documentResponse.status}`);
-          }
-          return applyCatalogSettings(await documentResponse.json(), catalog);
-        }
-        return applyCatalogSettings(entry, catalog); // an index may inline documents
-      })
-    );
-    await mkdir(join(cacheRoot(), "http"), { recursive: true });
-    await writeFile(
-      this.cacheFile,
-      JSON.stringify({ etag: response.headers.get("etag") ?? undefined, specs }),
-      "utf8"
-    );
-    return specs;
-  }
-
-  async update(): Promise<void> {
-    await rm(this.cacheFile, { force: true });
   }
 }

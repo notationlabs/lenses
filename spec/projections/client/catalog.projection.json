@@ -34,19 +34,9 @@
         "note": "Shallow clone, fetch, and hard-reset side effects are process behaviour outside the grammar"
       },
       {
-        "item": "client/catalog.md#http-index-shape",
-        "severity": "info",
-        "note": "Index parsing with URL resolution and inlined documents is document processing outside the grammar"
-      },
-      {
-        "item": "client/catalog.md#etag-revalidation",
-        "severity": "info",
-        "note": "If-None-Match revalidation, 304 and offline cache serving, and cache deletion on update are protocol behaviour outside the grammar"
-      },
-      {
         "item": "client/catalog.md#catalogue-helpers",
         "severity": "info",
-        "note": "Helper merging with document-entry precedence and pre-cache folding is record merging outside the grammar"
+        "note": "Helper merging with document-entry precedence is record merging outside the grammar"
       },
       {
         "item": "client/catalog.md#ordered-load",
