@@ -209,9 +209,10 @@ parameter set.
 
 Each command connects to the persistent broker and disconnects when it finishes. The
 broker stays connected to Chrome between commands and shares successful cached results
-for each lens's declared TTL. A call that needs a page fails immediately when no browser
-backend is reachable; a call served entirely by credential-free `http` tiers needs no
-browser. Use `lens status --wait-ms <number>` when a script should wait for a backend.
+for each lens's declared TTL. Browser acquisition is lazy: `call` and `observe` launch
+Chrome with the configured profile or reconnect a running browser when they need one. A
+call served entirely by credential-free `http` tiers needs no browser. `lens status` is
+available for operator diagnostics and has no browser-startup side effects.
 
 For repository development, Bun resolves the workspace packages directly to their
 TypeScript source, so the CLI does not need a build first:
@@ -236,8 +237,10 @@ the package globally, configure it with the lens catalog:
 }
 ```
 
-It exposes `lens_list`, `lens_call`, `lens_observe`, and `broker_status`. The adapter
-only validates tool inputs and formats tool results; all behavior lives in the client.
+It exposes `lens_list`, `lens_call`, and `lens_observe`. Browser startup and reconnection
+happen lazily inside calls. Operator diagnostics remain available through the CLI's
+`lens status` command rather than as an agent tool. The adapter otherwise only validates
+tool inputs and formats tool results; all behavior lives in the client.
 
 ## Resolution
 
@@ -267,7 +270,7 @@ lens MCP ────┘                           │             └─ CDP fa
 
 The broker hosts the resolver engine, caching, retry policy, and page-retention policy once. Credential-free `http` tiers run in the broker process itself. Bound-page work pins the call to one session backend, while chained HTTP requests select a backend per source. Playwright Extension and CDP both execute same-origin requests in an existing matching page; Playwright Extension is preferred when connected, with CDP as fallback. Pages are bound lazily.
 
-Browser calls use one explicit **serial queue** across clients; there is never concurrent mutation of the shared browser session. Queue time counts against each request deadline, and an expired queued request is rejected before browser work begins. If backend work outlives its caller timeout, subsequent calls receive `code: "broker_busy"` until that work settles rather than overlapping it. `lens status` / `broker_status` reports the policy, active call, queue depth, each backend's version and capabilities, last backend error, CDP reconnect attempts, and separate Chrome/Playwright Extension reachability (unknown Chrome reachability is omitted until probed).
+Browser calls use one explicit **serial queue** across clients; there is never concurrent mutation of the shared browser session. Queue time counts against each request deadline, and an expired queued request is rejected before browser work begins. If backend work outlives its caller timeout, subsequent calls receive `code: "broker_busy"` until that work settles rather than overlapping it. `lens status` reports the policy, active call, queue depth, each backend's version and capabilities, last backend error, CDP reconnect attempts, and separate Chrome/Playwright Extension reachability (unknown Chrome reachability is omitted until probed).
 
 ### Broker lifecycle
 
