@@ -16,12 +16,11 @@ Pass a catalog directory with `--catalog <path>` (or ask the user where their le
 ## Calling a lens
 
 ```sh
-lens status --wait-ms 5000        # check the browser is reachable
 lens list --catalog ./examples    # discover lenses, their params and outcomes
 lens call hn/item --params '{"id":"42"}' --catalog ./examples
 ```
 
-`status` only reports browser availability; it deliberately does not launch Chrome. Proceed with `call` or `observe`: browser-backed work automatically starts Chrome with the configured profile and establishes a window when needed. If automatic launch fails, check that `LENS_BROKER_AUTO_LAUNCH` is not `0` and that Chrome is installed. Pass `--profile` / `LENS_BROWSER_PROFILE` and `--playwright-extension-token` / `PLAYWRIGHT_MCP_EXTENSION_TOKEN` (or `browser.profile` and `browser.playwrightExtensionToken` in `~/.config/lenses/config.json`) so the broker uses the Chrome profile that holds Playwright Extension and can skip repeated connect approval. If Playwright Extension is not installed, ask the user to install it from the Chrome Web Store or enable the CDP fallback at `chrome://inspect/#remote-debugging`; the first fallback call may show a permission dialog in Chrome and the user must click Allow. Playwright Extension shows a debugger infobar on attached tabs and only sees tabs in its client tab group.
+`call` and `observe` automatically start or reconnect the configured browser when needed. Treat the operation's result as authoritative; ask the user to take browser or sign-in action only when its error or structured outcome requires it.
 
 A call result is one of:
 
