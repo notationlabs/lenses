@@ -6,7 +6,9 @@ import { createLensMcpServer } from "../dist/server.js";
 async function connect(server) {
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const pending = new Map();
+  const notifications = [];
   clientTransport.onmessage = (message) => {
+    if (message.method === "notifications/progress") notifications.push(message);
     const resolve = pending.get(message.id);
     if (!resolve) return;
     pending.delete(message.id);
@@ -16,7 +18,7 @@ async function connect(server) {
   await clientTransport.start();
 
   let nextId = 1;
-  const request = (method, params) => {
+  const request = (method, params, meta) => {
     const id = nextId++;
     return new Promise((resolve) => {
       pending.set(id, resolve);
@@ -24,12 +26,32 @@ async function connect(server) {
         jsonrpc: "2.0",
         id,
         method,
-        ...(params === undefined ? {} : { params }),
+        ...(params === undefined ? {} : { params: { ...params, ...(meta ? { _meta: meta } : {}) } }),
       });
     });
   };
-  return { clientTransport, request };
+  return { clientTransport, request, notifications };
 }
+
+test("a pending login call reports MCP progress when the caller supplies a token", async (t) => {
+  let complete;
+  const server = createLensMcpServer({
+    call: () => new Promise((resolve) => { complete = resolve; }),
+  });
+  t.after(() => server.close());
+  const { clientTransport, request, notifications } = await connect(server);
+  await request("initialize", {
+    protocolVersion: "2025-06-18", capabilities: {},
+    clientInfo: { name: "test", version: "1.0.0" },
+  });
+  await clientTransport.send({ jsonrpc: "2.0", method: "notifications/initialized" });
+  const pending = request("tools/call", { name: "lens_call", arguments: { lens: "example" } }, { progressToken: "login" });
+  await new Promise((resolve) => setTimeout(resolve, 10_100));
+  assert.equal(notifications.at(-1)?.params.progressToken, "login");
+  complete({ kind: "value", value: 1 });
+  const response = await pending;
+  assert.equal(response.result.content[0].text.includes('"value": 1'), true);
+});
 
 test("exposes actions without inviting a connectivity preflight", async (t) => {
   const server = createLensMcpServer({ list: async () => [] });
