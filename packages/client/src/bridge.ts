@@ -60,7 +60,8 @@ export interface LensTransport {
     timeoutMs?: number,
     /** consent for a spec with `perform` steps; the broker denies without it */
     allowWrites?: boolean,
-    recording?: RecordingTarget
+    recording?: RecordingTarget,
+    authLeaseMs?: number
   ): Promise<LensTransportResult>;
   observe(
     target: string,
@@ -209,7 +210,8 @@ export class BrowserBridge implements LensTransport {
     params: Record<string, unknown>,
     timeoutMs = 90_000,
     allowWrites?: boolean,
-    recording?: RecordingTarget
+    recording?: RecordingTarget,
+    authLeaseMs = 0
   ): Promise<LensTransportResult> {
     return this.request(
       (id) => ({
@@ -218,11 +220,14 @@ export class BrowserBridge implements LensTransport {
         spec,
         params,
         timeoutMs,
+        authLeaseMs,
         deadline: Date.now() + timeoutMs,
         ...(allowWrites !== undefined ? { allowWrites } : {}),
         ...(recording ? { recording } : {}),
       }),
-      timeoutMs
+      // Leave a small delivery margin so the broker's needs_auth result on
+      // lease expiry wins the race against the client-side safety timer.
+      timeoutMs + authLeaseMs + (authLeaseMs > 0 ? 2_000 : 0)
     );
   }
 

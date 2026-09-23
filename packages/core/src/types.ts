@@ -375,7 +375,9 @@ export type LensBridgeRequest =
       spec: LensSpec;
       params: Record<string, unknown>;
       timeoutMs: number;
-      /** Absolute client-side deadline, so time spent queued at the broker counts. */
+      /** Maximum additional time to wait for interactive authentication; 0 disables it. */
+      authLeaseMs?: number;
+      /** Absolute deadline for the initial execution attempt (before auth waiting). */
       deadline?: number;
       /** consent for a spec with `perform` steps; default false at every layer */
       allowWrites?: boolean;

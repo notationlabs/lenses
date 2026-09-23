@@ -63,6 +63,8 @@ export interface LensCall {
   lens: string;
   params?: Record<string, unknown>;
   timeoutMs?: number;
+  /** Time allowed for a human to sign in after a needs_auth outcome. Zero disables waiting. */
+  authLeaseMs?: number;
   /**
    * Consent for a lens with `perform` steps or mutating HTTP methods. Default false: the
    * broker denies with code "writes_not_allowed". Never inherited by nested
@@ -346,7 +348,8 @@ export class LensClient {
             callId: `recording-call-${String(++this.recordingCallSequence).padStart(6, "0")}`,
             lens: spec.name,
           }
-        : undefined
+        : undefined,
+      input.authLeaseMs
     );
     if (result.kind === "value" && !result.partial && !result.cached && ttl > 0) {
       this.cache.set(key, { result, expiresAt: Date.now() + ttl });

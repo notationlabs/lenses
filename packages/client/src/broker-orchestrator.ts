@@ -37,7 +37,7 @@ function writesAllowed(
 }
 
 export type BrokerFrame =
-  | { type: "result"; id: string; result: LensResult }
+  | { type: "result"; id: string; result: LensResult; authReplaySafe?: boolean }
   | { type: "progress"; id: string; message: string };
 
 export interface BrokerOrchestrator {
@@ -47,6 +47,11 @@ export interface BrokerOrchestrator {
   ): Promise<void>;
   /** Browser work that outlived its caller deadline; new calls must not overlap it. */
   busy(): { id: string; type: "call" | "observe"; lens?: string; startedAt: number } | undefined;
+  watchAuthGate(
+    origin: string,
+    target: string,
+    onExit: (reason: "moved" | "closed" | "cancelled") => void
+  ): Promise<{ update(expiresAt: number, count: number): void; dispose(): void } | undefined>;
 }
 
 export function createBrokerOrchestrator(
@@ -347,6 +352,21 @@ export function createBrokerOrchestrator(
 
   return {
     busy: () => backgroundCall,
+    async watchAuthGate(origin, target, onExit) {
+      let backend: BrowserBackend | undefined;
+      for (const candidate of backends) {
+        if (candidate.available() && await candidate.findAuthGate(origin)) {
+          backend = candidate;
+          break;
+        }
+      }
+      if (!backend) {
+        backend = await selectBackend(Date.now() + 15_000);
+        // The first outcome may come from an HTTP tier without binding any page.
+        if (!await backend.openAuthGate?.(origin, target)) return undefined;
+      }
+      return backend.watchAuthGate?.(origin, onExit);
+    },
     async handle(message, emit) {
       if (backgroundCall) {
         emit({
@@ -367,8 +387,7 @@ export function createBrokerOrchestrator(
       try {
         const mutation =
           message.type === "call" &&
-          (message.spec.perform?.length ?? 0) > 0 &&
-          message.spec.effects.idempotent !== true
+          (message.spec.perform?.length ?? 0) > 0
             ? createMutationTracker()
             : undefined;
         const work =
@@ -395,7 +414,13 @@ export function createBrokerOrchestrator(
               })
             : await work;
         completed = true;
-        emit({ type: "result", id: message.id, result });
+        emit({
+          type: "result", id: message.id, result,
+          ...(message.type === "call" ? {
+            authReplaySafe: !specWrites(message.spec) ||
+              ((message.spec.perform?.length ?? 0) > 0 && !mutation?.snapshot().performStarted),
+          } : {}),
+        });
       } catch (error) {
         completed = true;
         emit({

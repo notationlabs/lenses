@@ -45,6 +45,16 @@ export function openUrlInChrome(url: string, profile = "Default"): Promise<boole
   return runChrome([profileArgument(profile), url]);
 }
 
+/** Raise Chrome when an interactive sign-in actually requires the user's attention. */
+export async function raiseChrome(): Promise<void> {
+  if (process.platform !== "darwin") return;
+  try {
+    await run("/usr/bin/open", ["-b", "com.google.Chrome"]);
+  } catch {
+    // Chrome may have closed during the call.
+  }
+}
+
 /** Capture/restore focus because the stock extension explicitly focuses its selected tab. */
 export async function foregroundApplication(): Promise<string | undefined> {
   if (process.platform !== "darwin") return undefined;

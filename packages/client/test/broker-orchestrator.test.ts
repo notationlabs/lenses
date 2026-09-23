@@ -279,6 +279,43 @@ describe("broker orchestration", () => {
     expect(backend.finishes).toEqual(["keep"]);
   });
 
+  it("marks a login detected before perform as safe to rerun", async () => {
+    const session = new FakeSession();
+    session.domResult = { url: "https://example.com/login", title: "Login", value: null };
+    const backend = new FakeBackend("cdp", true, session);
+    const frames: BrokerFrame[] = [];
+    await createBrokerOrchestrator([backend]).handle({
+      type: "call", id: "write-auth", params: {}, timeoutMs: 1000, allowWrites: true,
+      spec: domSpec({
+        effects: { reads: [], writes: ["example.com"] },
+        detect: { needs_auth: "title = 'Login'" },
+        outcomes: { needs_auth: null },
+        perform: [{ click: "button" }],
+      }),
+    }, (frame) => frames.push(frame));
+    expect(frames.find((frame) => frame.type === "result")).toMatchObject({
+      result: { kind: "outcome", name: "needs_auth" }, authReplaySafe: true,
+    });
+  });
+
+  it("does not mark a needs_auth after a perform step as replay-safe", async () => {
+    const session = new FakeSession();
+    session.performResult = { url: "https://example.com/login", title: "Login", failedStep: 0 };
+    const frames: BrokerFrame[] = [];
+    await createBrokerOrchestrator([new FakeBackend("cdp", true, session)]).handle({
+      type: "call", id: "write-auth-late", params: {}, timeoutMs: 1000, allowWrites: true,
+      spec: domSpec({
+        effects: { reads: [], writes: ["example.com"] },
+        detect: { needs_auth: "title = 'Login'" },
+        outcomes: { needs_auth: null },
+        perform: [{ wait: { appears: "button", timeoutMs: 1 } }],
+      }),
+    }, (frame) => frames.push(frame));
+    expect(frames.find((frame) => frame.type === "result")).toMatchObject({
+      result: { kind: "outcome", name: "needs_auth" }, authReplaySafe: false,
+    });
+  });
+
   it("short-circuits calls to a gated site while its sign-in tab stays open", async () => {
     const loginUrl = "https://example.com/login?next=/orders";
     const session = new FakeSession();

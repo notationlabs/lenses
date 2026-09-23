@@ -6,6 +6,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import puppeteer, { type Browser, type Page } from "puppeteer-core";
 import { defaultChromeUserDataDir } from "./chrome-paths.js";
+import { showAuthBanner } from "./auth-banner.js";
+import { raiseChrome } from "./launch-browser.js";
 import {
   createCaptureBuffer,
   pageDomExtract,
@@ -138,6 +140,7 @@ export function createCdpBackend(
    * with the process: neither CDP transport has durable tab leases.
    */
   const keptGates = new Map<Page, { target: string; keptUrl: string }>();
+  const watchedGateOrigins = new Set<string>();
 
   const endpointAvailable = () => transport.looksReady();
   const endpointLive = () => transport.probeLive();
@@ -452,6 +455,55 @@ export function createCdpBackend(
       statusListeners.add(listener);
       return () => statusListeners.delete(listener);
     },
+    async openAuthGate(origin: string, target: string): Promise<boolean> {
+      if (!browser?.connected || urlOrigin(target) !== origin) return false;
+      const existing = await this.findAuthGate(origin);
+      if (existing) return true;
+      let page: Page | undefined;
+      try {
+        page = await browser.newPage({ background: true });
+        await settle(page.goto(target, { waitUntil: "load", timeout: 15_000 }));
+        keptGates.set(page, { target, keptUrl: page.url() });
+        await page.bringToFront();
+        await raiseChrome();
+        return true;
+      } catch {
+        if (page) await page.close().catch(() => {});
+        return false;
+      }
+    },
+    async watchAuthGate(origin, onExit) {
+      if (!browser?.connected) return undefined;
+      const entry = [...keptGates].find(([page, kept]) =>
+        !page.isClosed() && urlOrigin(kept.target) === origin && sameGatePlace(page.url(), kept.keptUrl)
+      );
+      if (!entry) return undefined;
+      const [page, kept] = entry;
+      const currentBrowser = browser;
+      watchedGateOrigins.add(origin);
+      let disposed = false;
+      const moved = () => {
+        // An OAuth hop is not a completed login: leave its tab and prompt alone.
+        if (!disposed && urlOrigin(page.url()) === origin &&
+            !sameGatePlace(page.url(), kept.keptUrl)) onExit("moved");
+      };
+      const closed = () => { if (!disposed) onExit("closed"); };
+      page.on("framenavigated", moved);
+      page.on("close", closed);
+      currentBrowser.on("disconnected", closed);
+      const prompt = await showAuthBanner(page, new URL(origin).hostname, () => onExit("cancelled"));
+      return {
+        update: prompt.update,
+        dispose() {
+          disposed = true;
+          watchedGateOrigins.delete(origin);
+          page.off("framenavigated", moved);
+          page.off("close", closed);
+          currentBrowser.off("disconnected", closed);
+          prompt.dispose();
+        },
+      };
+    },
     async findAuthGate(origin: string): Promise<AuthGate | undefined> {
       if (!browser?.connected) return undefined;
       for (const [page, kept] of keptGates) {
@@ -460,7 +512,7 @@ export function createCdpBackend(
           continue;
         }
         if (urlOrigin(kept.target) !== origin) continue;
-        if (sameGatePlace(page.url(), kept.keptUrl)) {
+        if (sameGatePlace(page.url(), kept.keptUrl) || watchedGateOrigins.has(origin)) {
           return { url: page.url(), target: kept.target };
         }
       }
@@ -624,6 +676,7 @@ export function createCdpBackend(
           // The page was opened in the background, so without this the
           // sign-in page sits unseen behind whatever the user is doing.
           await cdpSession.page.bringToFront();
+          await raiseChrome();
         } catch {
           // The user may close the page while its call is still running.
         }

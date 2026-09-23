@@ -112,6 +112,13 @@ export interface BrowserBackend {
    * an unreachable browser reports none.
    */
   findAuthGate(origin: string): Promise<AuthGate | undefined>;
+  /** Show a sign-in tab for a needs_auth result, including HTTP-only calls. */
+  openAuthGate?(origin: string, target: string): Promise<boolean>;
+  /** Subscribe to the kept tab without navigating it. Dispose removes the prompt. */
+  watchAuthGate?(
+    origin: string,
+    onExit: (reason: "moved" | "closed" | "cancelled") => void
+  ): Promise<{ update(expiresAt: number, count: number): void; dispose(): void } | undefined>;
   bind(request: BindRequest): Promise<BrowserSession>;
   finish(session: BrowserSession, disposition: FinishDisposition): Promise<void>;
   /**

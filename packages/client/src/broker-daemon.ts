@@ -5,7 +5,8 @@
  * relay first, direct Chrome remote debugging as fallback.
  */
 import { WebSocket, WebSocketServer } from "ws";
-import type { LensBridgeRequest } from "@djgrant/lenses-core";
+import { expandUrl, urlOrigin, type LensBridgeRequest } from "@djgrant/lenses-core";
+import { createAuthLeases } from "./auth-leases.js";
 import { createBrokerOrchestrator } from "./broker-orchestrator.js";
 import { createCdpBackend } from "./cdp-host.js";
 import { createPlaywrightExtensionBackend } from "./playwright-extension-backend.js";
@@ -77,6 +78,9 @@ const orchestrator = createBrokerOrchestrator([extension, cdp], {
 let ensureBrowserInFlight: Promise<void> | undefined;
 let browserPresent: boolean | undefined;
 const requestQueue = new SerialTaskQueue();
+const authLeases = createAuthLeases((origin, target, onExit) =>
+  orchestrator.watchAuthGate(origin, target, onExit)
+);
 const buildStamp = brokerBuildStamp();
 const DRAIN_TIMEOUT_MS = 10_000;
 const DEFAULT_IDLE_EXIT_MS = 15 * 60_000;
@@ -88,6 +92,7 @@ const idleExitMs = Number(process.env.LENS_BROKER_IDLE_EXIT_MS ?? DEFAULT_IDLE_E
 const noBrowserExitMs =
   Number(process.env.LENS_BROKER_NO_BROWSER_EXIT_MS ?? DEFAULT_NO_BROWSER_EXIT_MS) || 0;
 let inFlight = 0;
+let queuedCalls = 0;
 let activeCall: { id: string; type: "call" | "observe"; lens?: string; startedAt: number } | undefined;
 let lastBackendError: string | undefined;
 let idleTimer: ReturnType<typeof setTimeout> | undefined;
@@ -333,7 +338,7 @@ function onClientMessage(client: WebSocket, raw: string): void {
     return;
   }
   beginWork();
-  const queuedAhead = inFlight - (activeCall ? 1 : 0) - 1;
+  const queuedAhead = queuedCalls;
   if (activeCall || queuedAhead > 0) {
     send(client, {
       type: "progress",
@@ -342,49 +347,94 @@ function onClientMessage(client: WebSocket, raw: string): void {
     });
   }
   broadcastStatus();
-  void requestQueue
-    .run(async () => {
-      if (message.deadline !== undefined && message.deadline <= Date.now()) {
-        send(client, {
-          type: "result",
+  const cancelled = new AbortController();
+  const onClose = () => cancelled.abort();
+  client.on("close", onClose);
+  void (async () => {
+    const authExpiresAt = message.type === "call" && message.authLeaseMs
+      ? (message.deadline ?? Date.now() + message.timeoutMs) + message.authLeaseMs
+      : 0;
+    let attempt = 0;
+    let authOutcome: Extract<import("./broker-orchestrator.js").BrokerFrame, { type: "result" }> | undefined;
+    for (;;) {
+      queuedCalls++;
+      broadcastStatus();
+      const result = await requestQueue.run(async () => {
+        queuedCalls--;
+        const deadline = attempt === 0 ? message.deadline : message.type === "call"
+          ? Math.min(authExpiresAt, Date.now() + message.timeoutMs)
+          : message.deadline;
+        if (deadline !== undefined && deadline <= Date.now()) {
+          if (attempt > 0 && authOutcome) {
+            send(client, authOutcome);
+            return;
+          }
+          send(client, {
+            type: "result",
+            id: message.id,
+            result: {
+              kind: "error",
+              message: `call ${message.id} expired while queued; no browser work began`,
+              ...(message.type === "call" &&
+              (message.spec.perform?.length ?? 0) > 0 &&
+              message.spec.effects.idempotent !== true
+                ? {
+                    mutation: {
+                      performStarted: false,
+                      submissionMayHaveHappened: false,
+                      performed: "no" as const,
+                    },
+                  }
+                : {}),
+            },
+          });
+          return;
+        }
+        activeCall = {
           id: message.id,
-          result: {
-            kind: "error",
-            message: `call ${message.id} expired while queued; no browser work began`,
-            ...(message.type === "call" &&
-            (message.spec.perform?.length ?? 0) > 0 &&
-            message.spec.effects.idempotent !== true
-              ? {
-                  mutation: {
-                    performStarted: false,
-                    submissionMayHaveHappened: false,
-                    performed: "no" as const,
-                  },
-                }
-              : {}),
-          },
-        });
+          type: message.type,
+          ...(message.type === "call" ? { lens: message.spec.name } : {}),
+          startedAt: Date.now(),
+        };
+        broadcastStatus();
+        try {
+          let intercepted: Extract<import("./broker-orchestrator.js").BrokerFrame, { type: "result" }> | undefined;
+          await orchestrator.handle(
+            message.type === "call" && attempt > 0 ? { ...message, deadline } : message,
+            (frame) => {
+              if (frame.type === "result" && message.type === "call" && authExpiresAt > Date.now() &&
+                  frame.result.kind === "outcome" && frame.result.name === "needs_auth" && frame.authReplaySafe) {
+                intercepted = frame;
+              } else send(client, frame);
+            }
+          );
+          return intercepted;
+        } finally {
+          activeCall = undefined;
+          // handleClientMessage has already sent the authoritative result and
+          // backend finish has completed all transient-tab cleanup.
+          if (leaseReleaseRequested) await requestLeaseRelease();
+          broadcastStatus();
+        }
+      });
+      if (!result || message.type !== "call") return;
+      authOutcome = result;
+      let target: string;
+      try { target = expandUrl(message.spec.url, message.params); }
+      catch { send(client, result); return; }
+      const origin = urlOrigin(target);
+      send(client, { type: "progress", id: message.id, message: `waiting for sign-in at ${origin}` });
+      const reason = await authLeases.wait(origin, target, authExpiresAt, cancelled.signal);
+      if (reason !== "moved" || client.readyState !== WebSocket.OPEN || Date.now() >= authExpiresAt) {
+        if (client.readyState === WebSocket.OPEN) send(client, result);
         return;
       }
-      activeCall = {
-        id: message.id,
-        type: message.type,
-        ...(message.type === "call" ? { lens: message.spec.name } : {}),
-        startedAt: Date.now(),
-      };
-      broadcastStatus();
-      try {
-        await handleClientMessage(client, message);
-      } finally {
-        activeCall = undefined;
-        // handleClientMessage has already sent the authoritative result and
-        // backend finish has completed all transient-tab cleanup.
-        if (leaseReleaseRequested) await requestLeaseRelease();
-        broadcastStatus();
-      }
-    })
-    .catch((error) => console.error("broker request failed:", error))
-    .finally(endWork);
+      attempt++;
+    }
+  })().catch((error) => console.error("broker request failed:", error)).finally(() => {
+    client.off("close", onClose);
+    endWork();
+  });
 }
 
 async function handleControl(
@@ -479,7 +529,7 @@ function sendStatus(socket: WebSocket): void {
     diagnostics: {
       concurrency: "serial_queue",
       activeCall: reportedActiveCall,
-      queuedCalls: Math.max(0, inFlight - (activeCall ? 1 : 0)),
+      queuedCalls,
       lastBackendError:
         lastBackendError ?? backends.find((backend) => backend.diagnostic)?.diagnostic,
       reconnectAttempts: cdp.info().reconnectAttempts ?? 0,

@@ -8,7 +8,7 @@ import { skillMarkdown } from "./skill.js";
 
 const globalHelp = `Usage:
   lens list [--catalog <source>] [--port <number>]
-  lens call <lens> [--params <json>] [--timeout-ms <number>] [--lax] [--allow-writes]
+  lens call <lens> [--params <json>] [--timeout-ms <number>] [--auth-lease-ms <number>] [--lax] [--allow-writes]
   lens schema <lens>
   lens gen ts-sdk [<catalog> ...] [--out <file>]
   lens eval <expression> [--input <file>] [--params <json>]
@@ -56,7 +56,8 @@ Arguments:
 Options:
   --params <json>         Declared lens parameters as a JSON object. Parameters
                           are available to URL templates and resolver expressions.
-  --timeout-ms <number>   Whole browser-call timeout (default: 90000)
+  --timeout-ms <number>   Execution timeout (default: 90000)
+  --auth-lease-ms <number>  Sign-in wait after needs_auth (default: 120000 in TTY, 0 otherwise)
   --allow-writes          Permit page actions and mutating HTTP requests.
                           Without it a write lens is refused with
                           code "writes_not_allowed"; read lenses never need it.
@@ -306,6 +307,7 @@ async function main(): Promise<void> {
       listen: { type: "string" },
       "max-calls": { type: "string" },
       "timeout-ms": { type: "string" },
+      "auth-lease-ms": { type: "string" },
       verbose: { type: "boolean", short: "v" },
       "wait-ms": { type: "string" },
     },
@@ -402,6 +404,7 @@ async function main(): Promise<void> {
           lens,
           params,
           timeoutMs,
+          authLeaseMs: numberOption(values["auth-lease-ms"], "auth-lease-ms") ?? (process.stdin.isTTY ? 120_000 : 0),
           strict: !values.lax,
           allowWrites: values["allow-writes"],
         });

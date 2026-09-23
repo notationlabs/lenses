@@ -45,6 +45,8 @@ export function createLensMcpServer(client: LensClient): McpServer {
       inputSchema: z.object({
         lens: z.string().describe("Lens name, file path, or URL"),
         params: z.record(z.string(), z.unknown()).optional(),
+        authLeaseMs: z.number().int().min(0).max(600_000).optional()
+          .describe("Milliseconds to wait for sign-in after needs_auth (default 120000 with MCP progress, 0 without)"),
         allowWrites: z
           .boolean()
           .optional()
@@ -53,9 +55,22 @@ export function createLensMcpServer(client: LensClient): McpServer {
           ),
       }),
     },
-    async (input) => {
-      const result = await client.call(input);
-      return result.kind === "error" ? failure(result.message) : ok(result);
+    async (input, ctx) => {
+      const token = ctx.mcpReq._meta?.progressToken;
+      const authLeaseMs = input.authLeaseMs ?? (token === undefined ? 0 : 120_000);
+      const started = Date.now();
+      const timer = token === undefined ? undefined : setInterval(() => {
+        void ctx.mcpReq.notify({
+          method: "notifications/progress",
+          params: { progressToken: token, progress: Date.now() - started, message: "Waiting for sign-in or request completion" },
+        }).catch(() => {});
+      }, 10_000);
+      try {
+        const result = await client.call({ ...input, authLeaseMs });
+        return result.kind === "error" ? failure(result.message) : ok(result);
+      } finally {
+        if (timer) clearInterval(timer);
+      }
     }
   );
 
