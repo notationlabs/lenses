@@ -13,6 +13,8 @@ export type { InterceptDelta };
 
 export interface BackendHttpRequest {
   method: string;
+  /** A sign-in recheck must never open a temporary browser tab. */
+  existingOnly?: boolean;
   url: string;
   headers?: Record<string, string>;
   body?: HttpFetchBody;
@@ -43,8 +45,12 @@ export interface BackendInfo {
   sameOriginPageRequests: boolean;
 }
 
+export class AuthPageUnavailable extends Error {}
+
 export interface BindRequest {
   target: string;
+  /** Refuse to create or navigate a tab while checking sign-in. */
+  existingOnly?: boolean;
   loadTimeoutMs: number;
   navigation: "reuse" | "fresh";
 }
@@ -112,6 +118,8 @@ export interface BrowserBackend {
    * an unreachable browser reports none.
    */
   findAuthGate(origin: string): Promise<AuthGate | undefined>;
+  /** Read-only presence check. An auth retry must not open a browser tab. */
+  hasOpenTarget?(target: string): Promise<boolean>;
   /** Show a sign-in tab for a needs_auth result, including HTTP-only calls. */
   openAuthGate?(origin: string, target: string): Promise<boolean>;
   /** Subscribe to the kept tab without navigating it. Dispose removes the prompt. */

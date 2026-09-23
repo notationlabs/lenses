@@ -22,6 +22,7 @@ import type {
   FinishDisposition,
   InterceptDelta,
 } from "./browser-backend.js";
+import { AuthPageUnavailable } from "./browser-backend.js";
 
 const MAX_HTTP_BODY_CHARS = 512 * 1024;
 
@@ -200,6 +201,14 @@ export function createBrokerOrchestrator(
       }
     }
 
+    // During sign-in, read only an already-open target tab. In particular,
+    // never visit the lens URL every second: that creates new login tabs and
+    // can disrupt the form the user is filling out.
+    if (authRetry) {
+      sessionBackend ??= await selectBackend(callDeadline, requiredCapabilities);
+      if (!await sessionBackend.hasOpenTarget?.(target)) return gateOutcome(message.spec, target);
+    }
+
     // The page is bound on first use, so a call an http tier satisfies never
     // touches the browser at all.
     let session: BrowserSession | undefined;
@@ -211,6 +220,7 @@ export function createBrokerOrchestrator(
       session = await sessionBackend.bind({
         target,
         loadTimeoutMs,
+        existingOnly: authRetry,
         // A document with perform steps binds with "reuse": a reload only
         // ever comes from an explicit `navigate` step, so a send cannot
         // reload the chat it is about to type into. Intercept-implies-fresh
@@ -262,6 +272,7 @@ export function createBrokerOrchestrator(
       );
       // Strip engine-only policy fields: backend wire protocols reject unknown keys.
       const response = await requestBackend.httpFetch?.({
+        existingOnly: authRetry,
         method: request.method,
         url: request.url,
         headers: request.headers,
@@ -290,6 +301,11 @@ export function createBrokerOrchestrator(
         cache.set(cacheKey, { result, expiresAt: Date.now() + cacheTtlMs });
       }
       return result;
+    } catch (error) {
+      if (authRetry && error instanceof AuthPageUnavailable) {
+        return gateOutcome(message.spec, target);
+      }
+      throw error;
     } finally {
       if (sessionBackend && session) {
         try {
