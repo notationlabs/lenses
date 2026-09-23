@@ -110,8 +110,11 @@ describe.skipIf(!existsSync(chrome))("broker WebSocket auth lease", () => {
       } else {
         await form.click("a");
       }
-      await vi.waitFor(() => expect(frames.filter((frame) => frame.type === "progress" &&
-        frame.message?.includes("waiting for sign-in"))).toHaveLength(2), { timeout: 15_000 });
+      let createdDuringPoll = 0;
+      const created = () => { createdDuringPoll++; };
+      browser.on("targetcreated", created);
+      await new Promise((resolve) => setTimeout(resolve, 2_300));
+      expect(createdDuringPoll).toBe(0);
       expect(frames.filter((frame) => frame.type === "result" && frame.id === "multi-page")).toHaveLength(0);
       expect(form.url()).toBe(`${origin}/login/password`);
       await form.click("a");
@@ -119,6 +122,8 @@ describe.skipIf(!existsSync(chrome))("broker WebSocket auth lease", () => {
         frame.id === "multi-page")).toHaveLength(1), { timeout: 12_000 });
       expect(frames.find((frame) => frame.type === "result" && frame.id === "multi-page")?.result)
         .toMatchObject({ kind: "value" });
+      expect(createdDuringPoll).toBe(0);
+      browser.off("targetcreated", created);
       current.send(JSON.stringify({ type: "control", id: "shutdown", action: "shutdown" }));
       await vi.waitFor(() => expect(exit).toHaveBeenCalled(), { timeout: 12_000 });
     } finally {

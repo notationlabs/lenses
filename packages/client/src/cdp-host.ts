@@ -40,6 +40,7 @@ import type {
   SnapshotOptions,
   BackendInfo,
 } from "./browser-backend.js";
+import { AuthPageUnavailable } from "./browser-backend.js";
 
 const MAX_BODY_BYTES = 512 * 1024;
 const LOAD_GRACE_MS = 500;
@@ -523,6 +524,9 @@ export function createCdpBackend(
         },
       };
     },
+    async hasOpenTarget(target: string): Promise<boolean> {
+      return !!browser?.connected && !!await findPage(browser, target);
+    },
     async findAuthGate(origin: string): Promise<AuthGate | undefined> {
       if (!browser?.connected) return undefined;
       for (const [page, kept] of keptGates) {
@@ -552,6 +556,7 @@ export function createCdpBackend(
       );
       let created = false;
       if (!page) {
+        if (request.existingOnly) return undefined;
         try {
           page = await browser.newPage({ background: true });
           created = true;
@@ -654,6 +659,7 @@ export function createCdpBackend(
         session.captures = state;
         return session;
       }
+      if (request.existingOnly) throw new AuthPageUnavailable("auth retry has no open target tab");
       const page = await current.newPage({ background: true });
       transport.recordEvent?.("Call tab opened");
       resetCaptures(page);

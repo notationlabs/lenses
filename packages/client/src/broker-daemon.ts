@@ -419,20 +419,20 @@ function onClientMessage(client: WebSocket, raw: string): void {
         }
       });
       if (!result || message.type !== "call") return;
-      authOutcome = result;
+      authOutcome ??= result;
       let target: string;
       try { target = expandUrl(message.spec.url, message.params); }
       catch { send(client, result); return; }
       const origin = urlOrigin(target);
       authOrigin = origin;
-      send(client, { type: "progress", id: message.id, message: `waiting for sign-in at ${origin}` });
+      if (attempt === 0) send(client, { type: "progress", id: message.id, message: `waiting for sign-in at ${origin}` });
       const reason = await authLeases.wait(origin, target, authExpiresAt, cancelled.signal, attempt > 0);
-      if (client.readyState === WebSocket.OPEN) {
+      if (client.readyState === WebSocket.OPEN && reason !== "poll") {
         send(client, { type: "progress", id: message.id, message: `sign-in wait ended: ${reason}` });
       }
       if (reason === "cancelled" || reason === "expired" ||
           client.readyState !== WebSocket.OPEN || Date.now() >= authExpiresAt) {
-        if (client.readyState === WebSocket.OPEN) send(client, result);
+        if (client.readyState === WebSocket.OPEN) send(client, authOutcome);
         return;
       }
       // A detached or replaced browser page is not a cancelled sign-in. Wait
@@ -442,7 +442,7 @@ function onClientMessage(client: WebSocket, raw: string): void {
         await sleep(Math.min(1_000, Math.max(0, authExpiresAt - Date.now())), undefined,
           { signal: cancelled.signal }).catch(() => {});
         if (cancelled.signal.aborted || Date.now() >= authExpiresAt) {
-          if (client.readyState === WebSocket.OPEN) send(client, result);
+          if (client.readyState === WebSocket.OPEN) send(client, authOutcome);
           return;
         }
       }
