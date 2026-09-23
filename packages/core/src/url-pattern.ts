@@ -73,14 +73,16 @@ export function sameGatePlace(left: string, right: string): boolean {
   }
 }
 
+/** Match a *-only URL glob against a URL or an unexpanded URL template. */
+export function matchUrlGlob(glob: string, url: string): boolean {
+  return new RegExp("^" + glob.split("*").map(escapeRegex).join(".*") + "$").test(url);
+}
+
 /** Match "METHOD urlglob" request patterns against a captured response. */
 export function matchRequestPattern(pattern: string, method: string, url: string): boolean {
   const space = pattern.indexOf(" ");
   const pMethod = space === -1 ? "GET" : pattern.slice(0, space).toUpperCase();
   const pUrl = space === -1 ? pattern : pattern.slice(space + 1);
   if (pMethod !== method.toUpperCase()) return false;
-  const re = new RegExp(
-    "^" + pUrl.split("*").map(escapeRegex).join(".*") + "$"
-  );
-  return re.test(url);
+  return matchUrlGlob(pUrl, url);
 }

@@ -12,7 +12,10 @@
         "items": {
           "name": "string",
           "percent": "string",
-          "resets_at": { "type": "string", "nullable": true }
+          "resets_at": {
+            "type": "string",
+            "nullable": true
+          }
         }
       },
       "usage_credits": {
@@ -30,11 +33,10 @@
       }
     }
   },
-  "outcomes": {
-    "needs_auth": { "$lens": "@djgrant/claude/login", "hint": "Ask the user to sign in to claude.ai in the open tab, then retry this call." }
-  },
   "effects": {
-    "reads": ["claude.ai/settings/usage"],
+    "reads": [
+      "claude.ai/settings/usage"
+    ],
     "writes": [],
     "idempotent": true,
     "cache": 60
@@ -60,13 +62,15 @@
           "request": "GET https://claude.ai/api/organizations/{orgs.0.uuid}/prepaid/bundles"
         }
       },
-      "detect": {
-        "needs_auth": "$orgs.status = 401 or $orgs.status = 403 or $usage.status = 401 or $usage.status = 403"
-      },
       "map": {
         "plan": "$orgs[0].rate_limit_tier",
         "limits": "[$usage.limits.{ 'name': kind = 'session' ? 'Current session' : kind = 'weekly_all' ? 'Weekly limit' : kind = 'weekly_scoped' ? ((scope.model.display_name ? scope.model.display_name & ' ' : '') & 'weekly limit') : kind, 'percent': $string(percent) & '%', 'resets_at': resets_at }]",
         "usage_credits": "{ 'enabled': $credits.is_enabled = true, 'spent_minor': $credits.used_credits, 'monthly_limit_minor': $credits.monthly_credit_limit, 'balance_minor': $balance.amount, 'currency': $credits.currency, 'percent': $credits.monthly_credit_limit > 0 ? $string($round($credits.used_credits * 100 / $credits.monthly_credit_limit)) & '%' : '', 'resets_at': $bundles.purchases_reset_at, 'auto_reload': $balance.auto_reload_settings ? true : false }"
+      },
+      "exceptions": {
+        "needs_auth": {
+          "matches": "$orgs.status = 401 or $orgs.status = 403 or $usage.status = 401 or $usage.status = 403"
+        }
       }
     },
     {
@@ -87,27 +91,39 @@
       },
       "reloadOnMiss": true,
       "waitMs": 8000,
-      "detect": {
-        "needs_auth": "$usage.status = 401 or $usage.status = 403 or $credits.status = 401 or $credits.status = 403"
-      },
       "map": {
         "limits": "[$usage.limits.{ 'name': kind = 'session' ? 'Current session' : kind = 'weekly_all' ? 'Weekly limit' : kind = 'weekly_scoped' ? ((scope.model.display_name ? scope.model.display_name & ' ' : '') & 'weekly limit') : kind, 'percent': $string(percent) & '%', 'resets_at': resets_at }]",
         "usage_credits": "{ 'enabled': $credits.is_enabled = true, 'spent_minor': $credits.used_credits, 'monthly_limit_minor': $credits.monthly_credit_limit, 'balance_minor': $balance.amount, 'currency': $credits.currency, 'percent': $credits.monthly_credit_limit > 0 ? $string($round($credits.used_credits * 100 / $credits.monthly_credit_limit)) & '%' : '', 'resets_at': $bundles.purchases_reset_at, 'auto_reload': $balance.auto_reload_settings ? true : false }"
+      },
+      "exceptions": {
+        "needs_auth": {
+          "matches": "$usage.status = 401 or $usage.status = 403 or $credits.status = 401 or $credits.status = 403"
+        }
       }
     },
     {
       "kind": "dom",
-      "detect": {
-        "needs_auth": "$contains(url, '/login') or $contains(url, '/logout') or $contains(title, 'Log in')"
-      },
       "fields": {
-        "dialog": { "selector": "[role='dialog']" }
+        "dialog": {
+          "selector": "[role='dialog']"
+        }
       },
-      "post": "(dialog and $contains(dialog, 'Plan usage limits')) ? ($a := $substringAfter(dialog, 'Plan usage limits'); $contains($a, 'Current session') ? { 'plan': $trim($substringBefore($a, 'Current session')) } : {}) : {}"
+      "post": "(dialog and $contains(dialog, 'Plan usage limits')) ? ($a := $substringAfter(dialog, 'Plan usage limits'); $contains($a, 'Current session') ? { 'plan': $trim($substringBefore($a, 'Current session')) } : {}) : {}",
+      "exceptions": {
+        "needs_auth": {
+          "matches": "$contains(url, '/login') or $contains(url, '/logout') or $contains(title, 'Log in')"
+        }
+      }
     },
     {
       "kind": "llm",
       "prompt": "This is the Claude.ai usage settings page. Return a single object {plan, limits, usage_credits}. plan is the current subscription plan name shown under the 'Plan usage limits' heading. limits is an array of {name, percent, resets_at}. usage_credits is {enabled, spent_minor, monthly_limit_minor, balance_minor, currency, percent, resets_at, auto_reload}; monetary values are integer minor currency units, so 4000 GBP means £40.00. If the page is a login/sign-in page, return the JSON string \"needs_auth\"."
     }
-  ]
+  ],
+  "exceptions": {
+    "needs_auth": {
+      "$lens": "@djgrant/claude/login",
+      "hint": "Ask the user to sign in to claude.ai in the open tab, then retry this call."
+    }
+  }
 }

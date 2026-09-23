@@ -19,14 +19,14 @@ A $LensDocument may declare a top-level `perform` block — an ordered list of w
 - **Navigate fresh:** `navigate: "fresh"` reloads the bound target — the same reload a fresh bind performs; a tab that has drifted off-origin navigates back to the expanded lens `url` and settles. `"fresh"` is the only navigation.
 - **Browser is forced:** A document with `perform` always binds a browser; the http-only short-circuit does not apply.
 - **Bind reuses the tab:** `perform` present binds with `reuse` navigation — a reload only ever comes from an explicit `navigate` step, so a send cannot reload the chat it is about to type into. One session spans `perform` and `resolve`.
-- **Pre-perform detect:** The document-level `detect` runs once against `{url, title}` after bind, before step 0; a hit returns that outcome and no step runs.
+- **Pre-perform detect:** The document-level exception `matches` runs once against `{url, title}` after bind, before step 0; a hit returns that outcome and no step runs.
 - **Consent is per call:** The host runs `perform` only when the caller passed `allowWrites` (CLI `--allow-writes`, MCP `lens_call` `allowWrites`); the default is deny at every layer, and nested calls and `$lens` param defaults never inherit it.
 
 ## Outcomes
 
 - **Performed flag:** Any result — value, outcome, or error — from a call whose `perform` ran every step carries `performed: true`; absence means the write did not happen.
 - **Readback result:** After a successful perform the resolver pipeline runs as usual and its result is the call's result, with `performed: true` attached.
-- **Detect over timeout:** A `wait` timeout re-runs the document `detect` against `{url, title}`; a hit (e.g. `needs_auth`) returns that outcome instead of `perform_failed`.
+- **Detect over timeout:** A `wait` timeout re-runs the document exception `matches` against `{url, title}`; a hit (e.g. `needs_auth`) returns that outcome instead of `perform_failed`.
 
 ## Failures
 

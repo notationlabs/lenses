@@ -1,20 +1,24 @@
 ---
-title: Detect named outcomes
+title: Match exceptions
 ---
 
-# Detect named outcomes
+# Match exceptions
 
-## Context
+A lens declares named non-happy paths in `exceptions`. Each entry is `null` or an object with `matches` (JSONata), `hint`, `$lens`, and optional expression-valued `params`. Put `matches` first when authoring:
 
-A document-level `detect` block is shared by every tier; each resolver may declare its own. Evidence: `packages/core/src/resolvers/outcome.ts`, `packages/core/test/engine.test.ts`.
+```json
+"exceptions": {
+  "needs_auth": {
+    "matches": "$contains(url, '/login') or status = 401",
+    "hint": "Sign in, then retry."
+  }
+}
+```
 
-## Rules
+A catalog can supply `scopes: [{"url": "https://*.example.com/*", "exceptions": {...}}]`. The *-only glob matches the **URL template** at load time; matching scopes merge in order, then the document merges by name and by field. `null` on a document key suppresses the entire inherited exception; `matches: null` only turns off its inherited predicate. These settings apply only to documents in the same catalog directory.
 
-- **Resolver detect wins:** The merged detection map lists the resolver's entries first, then the document entries whose names the resolver did not use; a resolver entry of the same name replaces the document's expression outright.
-- **First truthy fires:** Entries are evaluated in merged order and the first truthy expression ends the tier with that outcome.
-- **Per-tier context:** Each tier evaluates detection against its own context — `{url, title}` for dom, `{status, url, body}` for a single-request intercept or http response, and named `$name` response contexts when a tier declares `sources`.
+A resolver may declare `exceptions` too. Its matching entries are tried first against that tier's context (including `$name` metadata from named sources); they do not replace the document's page/response predicates. Those are checked separately on every `{url, title}` page and `{status, url, body}` response, including each response of a chained HTTP request **before** the next request. A resolver's `null` key suppresses its inherited matcher. The first matching entry ends the tier.
 
-## Outcomes
+The firing entry inherits missing `hint`, `$lens`, and `params` fields from the document entry. A `$lens` entry binds params against the firing context and yields a reference; otherwise the result carries that context. The result's `hint` carries resolver-local advice to clients, while the result kind remains `outcome` for consumers.
 
-- **Lens-typed outcome value:** When the declared outcome carries `$lens`, the outcome value is a reference `{$lens, params?, ...rest}` whose params are the declaration's string-valued expressions evaluated against the detection context; a declaration without parameter expressions yields a reference with no `params` key.
-- **Context outcome value:** Any other detected outcome carries the detection context itself as its value.
+Legacy `detect` and `outcomes` keys are invalid.

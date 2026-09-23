@@ -16,7 +16,7 @@ Here is `@djgrant/claude/usage`, trimmed:
     "type": "object",
     "fields": { "plan": "string", "limits": { "type": "array", "items": { "name": "string", "percent": "string" } } }
   },
-  "outcomes": { "needs_auth": { "$lens": "@djgrant/claude/login" } },
+  "exceptions": { "needs_auth": { "matches": "status = 401 or status = 403", "$lens": "@djgrant/claude/login" } },
   "resolve": [
     { "kind": "http",
       "credentials": true,
@@ -24,11 +24,11 @@ Here is `@djgrant/claude/usage`, trimmed:
         "orgs": { "request": "GET https://claude.ai/api/organizations" },
         "usage": { "request": "GET https://claude.ai/api/organizations/{orgs.0.uuid}/usage" }
       },
-      "detect": { "needs_auth": "$orgs.status = 401 or $orgs.status = 403" },
+      "exceptions": { "needs_auth": { "matches": "$orgs.status = 401 or $orgs.status = 403" } },
       "map": { "plan": "$orgs[0].rate_limit_tier", "limits": "[$usage.limits.{ 'name': kind, 'percent': $string(percent) & '%' }]" } },
     { "kind": "intercept",
       "request": "GET https://claude.ai/api/organizations/*/usage*",
-      "detect": { "needs_auth": "status = 401 or status = 403" },
+      "exceptions": { "needs_auth": { "matches": "status = 401 or status = 403" } },
       "map": { "limits": "[limits.{ 'name': kind, 'percent': $string(percent) & '%' }]" } },
     { "kind": "dom", "post": "…" },
     { "kind": "llm", "prompt": "Return {plan, limits} from this usage settings page…" }
@@ -193,7 +193,7 @@ if (result.kind === "outcome") result.name; // e.g. "needs_auth"
 ```
 
 `value()` throws `LensOutcomeError` (`{outcome, value, hint}` — `hint` carries the
-remediation text declared in the lens document's `outcomes`) for outcome results, and
+remediation text declared in the lens document's `exceptions`) for outcome results, and
 `LensResultError` (`{message, issues, lens, callId}`) for error results. Broker timeout messages also include the recording call ID (when recording) and last reported progress. A non-idempotent perform timeout additionally carries `mutation`: `performStarted`, `lastAcknowledgedStep`, `submissionMayHaveHappened`, and `performed` (`"no"`, `"yes"`, or `"unknown"`). Treat `performed: "unknown"` as unsafe to retry without checking the target application. Both classes are exported
 from `@djgrant/lenses` and from the generated SDK, so callers can catch and
 branch on `error.outcome`.
@@ -255,7 +255,7 @@ fields, detects a named outcome, or misses and falls through.
 When `returns` is an object, fields accumulate across tiers. The engine stops when all
 declared fields are present, so each tier only needs to supply its part of the result.
 
-Lens `map` and `detect` bodies are JSONata expressions. They cannot reach the network or DOM. Beyond an `http` tier's declared requests, lenses observe what a page already does; page actions and mutating HTTP methods run only when the caller opts in with `--allow-writes` (CLI) or `allowWrites` (client and MCP).
+Lens `map` and `matches` bodies are JSONata expressions. They cannot reach the network or DOM. Beyond an `http` tier's declared requests, lenses observe what a page already does; page actions and mutating HTTP methods run only when the caller opts in with `--allow-writes` (CLI) or `allowWrites` (client and MCP).
 `lens eval` runs the same sandboxed evaluator against a JSON file or stdin, so an
 expression can be iterated on offline before it goes into a lens document.
 
@@ -323,12 +323,8 @@ repository — or at a direct HTTP URL.
   no resolver needs to emit the key. A row whose parameters do not bind gets
   `null`, and an explicit `null` from a resolver suppresses the reference.
 
-- `outcomes` — named non-happy paths, optionally carrying the lens that resolves them.
-  `hint` is the only key read from a declaration; it is the remediation text the
-  caller is shown.
-- `detect` — outcome detection shared by every tier, each evaluating it against
-  its own context (`{url, title}` for DOM, `{status, url, body}` for intercept).
-  A resolver's own `detect` overrides it for that outcome.
+- `exceptions` — named non-happy paths with `matches` (JSONata), optional `hint`, `$lens`, and `params`. A `null` entry disables an inherited exception. A catalog `scopes` array shares entries by *-only URL glob matched against lens URL templates at load time.
+- `exceptions` on a resolver — tier-local matchers run first; inherited page/response matchers still run, including on each named response.
 - `helpers` — named JSONata lambdas bound as `$name` in every expression the
   document evaluates:
 
@@ -368,7 +364,7 @@ responses. An LLM resolver declares the extraction prompt and optional snapshot 
 
 An HTTP resolver fires its own requests instead of reading a page's. `request` is
 `"METHOD url-template"` (omitted, the tier GETs the lens `url`); `items` and `map`
-shape the parsed body exactly as in an intercept tier, and `detect` sees
+shape the parsed body exactly as in an intercept tier, and `matches` sees
 `{status, url, body}`. `headers` adds request headers, with the same `{param}` holes
 as URLs. `body` supports JSON, plain text, multipart form data, and URL-encoded
 search parameters; its values are JSONata expressions over the declared params
@@ -400,7 +396,7 @@ repeated fields.
     "orgs":  { "request": "GET https://claude.ai/api/organizations" },
     "usage": { "request": "GET https://claude.ai/api/organizations/{orgs.0.uuid}/usage" }
   },
-  "detect": { "needs_auth": "$orgs.status = 401 or $orgs.status = 403" },
+  "exceptions": { "needs_auth": { "matches": "$orgs.status = 401 or $orgs.status = 403" } },
   "map": { "plan": "$orgs[0].rate_limit_tier", "limits": "[$usage.limits]" }
 }
 ```
@@ -420,7 +416,7 @@ repeated fields.
   `{ "X-CSRF-Token": "$confirmation.token" }`). Resolver-level headers remain
   URL-style templates shared by every source.
 - `sources` chains requests in declaration order. Each binds its body as `$name`
-  for `map` and `detect`, and later request templates address earlier bodies with
+  for `map` and `matches`, and later request templates address earlier bodies with
   dotted holes — `{orgs.0.uuid}` — which is how an id only another response knows
   reaches a URL. A detected outcome or non-2xx status stops the chain.
 - Read-only and explicitly idempotent request failures may miss into later tiers.
@@ -465,7 +461,7 @@ Each field spec supports:
 expand `{name}` holes from declared params.
 
 A field that matches nothing is `null`. A tier that extracts nothing (or an empty
-item list) misses and falls through to the next tier. `detect` sees `{url, title}`,
+item list) misses and falls through to the next tier. `matches` sees `{url, title}`,
 and `post` is a JSONata expression applied to the extracted value.
 
 Run `pok lens validate` to validate every document under `examples/`.

@@ -57,8 +57,7 @@ describe("SKILL.md authoring examples", () => {
       name: "@scope/site/thing",
       url: "https://site.com/thing",
       effects: { reads: ["site.com"], writes: [] },
-      outcomes: { needs_auth: { hint: "Sign in at https://site.com, then retry." } },
-      detect: { needs_auth: "$contains(url, '/sign-in') or status = 401" },
+      exceptions: { needs_auth: { matches: "$contains(url, '/sign-in') or status = 401", hint: "Sign in at https://site.com, then retry." } },
       resolve: [{ kind: "dom", fields: { total: { selector: ".total" } } }],
     });
 

@@ -5,7 +5,7 @@ import { homedir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
-import { validateSpec, type LensSpec } from "@djgrant/lenses-core";
+import { matchUrlGlob, validateExceptions, validateSpec, type ExceptionMap, type LensSpec } from "@djgrant/lenses-core";
 
 const run = promisify(execFile);
 
@@ -53,6 +53,8 @@ export interface CatalogDocument {
   helpers?: Record<string, string>;
   /** Parameters inherited by every lens, with each document winning by name. */
   params?: LensSpec["params"];
+  /** Applied in order to URL templates matching each *-only glob. */
+  scopes?: { url: string; exceptions: ExceptionMap }[];
 }
 
 /**
@@ -65,8 +67,20 @@ export interface CatalogDocument {
 export function applyCatalogSettings(spec: unknown, catalog: CatalogDocument): LensSpec {
   if (typeof spec !== "object" || spec === null || Array.isArray(spec)) return validateSpec(spec);
   const document = spec as Partial<LensSpec>;
+  const inherited: ExceptionMap = {};
+  for (const scope of catalog.scopes ?? []) {
+    if (typeof document.url !== "string" || !matchUrlGlob(scope.url, document.url)) continue;
+    for (const [name, entry] of Object.entries(scope.exceptions)) {
+      inherited[name] = entry === null ? null : { ...(inherited[name] ?? {}), ...entry };
+    }
+  }
+  const exceptions: ExceptionMap = { ...inherited };
+  for (const [name, entry] of Object.entries(document.exceptions ?? {})) {
+    exceptions[name] = entry === null ? null : { ...(exceptions[name] ?? {}), ...entry };
+  }
   return validateSpec({
     ...document,
+    ...(Object.keys(exceptions).length ? { exceptions } : {}),
     ...(catalog.params || document.params
       ? { params: { ...catalog.params, ...document.params } }
       : {}),
@@ -104,7 +118,13 @@ async function readCatalogDocument(directory: string): Promise<CatalogDocument> 
   }
   try {
     const parsed = JSON.parse(text) as CatalogDocument;
-    return { helpers: parsed.helpers, params: parsed.params };
+    if (parsed.scopes !== undefined && (!Array.isArray(parsed.scopes) || parsed.scopes.some(
+      (scope) => typeof scope?.url !== "string" || !scope.exceptions || typeof scope.exceptions !== "object" || Array.isArray(scope.exceptions)
+    ))) throw new Error('"scopes" must be an array of {url, exceptions}');
+    return { helpers: parsed.helpers, params: parsed.params, scopes: parsed.scopes?.map((scope) => ({
+      url: scope.url,
+      exceptions: validateExceptions(scope.exceptions)!,
+    })) };
   } catch (error) {
     throw new Error(
       `invalid catalog document ${join(directory, CATALOG_DOCUMENT)}: ${(error as Error).message}`

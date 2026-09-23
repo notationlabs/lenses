@@ -138,7 +138,7 @@ export function buildLensSchema(specs: LensSpec[]): GraphQLSchema {
     specs.find((candidate) => candidate.name === lens);
 
   const hintFor = (lens: string, outcome: string): string | undefined => {
-    const declared = specFor(lens)?.outcomes?.[outcome];
+    const declared = specFor(lens)?.exceptions?.[outcome];
     return isRecord(declared) && typeof declared.hint === "string" ? declared.hint : undefined;
   };
 
@@ -171,7 +171,7 @@ export function buildLensSchema(specs: LensSpec[]): GraphQLSchema {
     });
     if (result.kind === "outcome") {
       throw new GraphQLError(`${lens} returned outcome: ${result.name}`, {
-        extensions: { lens, outcome: result.name, hint: hintFor(lens, result.name) },
+        extensions: { lens, outcome: result.name, hint: result.hint ?? hintFor(lens, result.name) },
       });
     }
     if (result.kind === "error") {

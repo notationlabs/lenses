@@ -10,7 +10,7 @@ import type {
 } from "../types.js";
 import { evaluate } from "../expr.js";
 import { matchRequestPattern } from "../url-pattern.js";
-import { detectOutcome, mergeDetect } from "./outcome.js";
+import { matchPageException, matchTierException } from "./outcome.js";
 
 // Normalise a single request as one source; named sources become JSONata variables.
 export async function runIntercept(
@@ -23,6 +23,8 @@ export async function runIntercept(
   const names = Object.keys(sources);
 
   let found = await findMatches(sources, io);
+  let detected = await matchCaptured(found, r, spec, params);
+  if (detected) return detected;
   if (found.size < names.length && r.reloadOnMiss && io.reload) {
     await io.reload();
   }
@@ -35,21 +37,14 @@ export async function runIntercept(
     while (found.size < names.length && Date.now() < deadline) {
       await io.sleep(Math.min(250, Math.max(0, deadline - Date.now())));
       found = await findMatches(sources, io);
+      detected = await matchCaptured(found, r, spec, params);
+      if (detected) return detected;
     }
   }
   if (found.size < names.length) {
     const unmatched = names.filter((n) => !found.has(n)).map((n) => sources[n].request);
     return { kind: "miss", observed: `no response matched ${unmatched.join(", ")}` };
   }
-
-  // Detection sees one response directly or named responses as `$name`.
-  const metas: Record<string, unknown> = {};
-  for (const n of names) metas[n] = responseContext(found.get(n)!);
-  const detect = mergeDetect(spec.detect, r.detect);
-  const outcome = r.sources
-    ? await detectOutcome(detect, { ...params, ...metas }, { ...params, ...metas }, spec.outcomes, "intercept", spec.helpers)
-    : await detectOutcome(detect, metas[names[0]], params, spec.outcomes, "intercept", spec.helpers);
-  if (outcome) return outcome;
 
   // A 401/302 here is the intercept-tier equivalent of a signed-out redirect.
   for (const n of names) {
@@ -91,6 +86,26 @@ export async function runIntercept(
     value = working;
   }
   return { kind: "value", value, resolver: "intercept", observed: sourceUrls };
+}
+
+/** Detect against captured evidence even when other sources have not arrived yet. */
+async function matchCaptured(
+  found: Map<string, InterceptedResponse>,
+  r: InterceptResolver,
+  spec: LensSpec,
+  params: Record<string, unknown>
+): Promise<LensResult | null> {
+  if (!found.size) return null;
+  const metas = Object.fromEntries([...found].map(([name, response]) => [name, responseContext(response)]));
+  const tier = await matchTierException(spec, r.exceptions,
+    r.sources ? { ...params, ...metas } : metas.body,
+    r.sources ? { ...params, ...metas } : params, "intercept");
+  if (tier) return tier;
+  for (const meta of Object.values(metas)) {
+    const page = await matchPageException(spec, meta, params, "intercept", r.exceptions);
+    if (page) return page;
+  }
+  return null;
 }
 
 /** Evaluate a whole-value or per-field projection. */

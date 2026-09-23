@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -5,7 +6,7 @@ import { executeLens } from "../src/engine.js";
 import type { EngineIO, InterceptedResponse } from "../src/types.js";
 import { validateSpec } from "../src/validate.js";
 
-const lensCatalog = resolve(import.meta.dirname, "../../../examples");
+const lensCatalog = resolve(realpathSync(import.meta.dirname), "../../../examples");
 
 async function loadLens(file: string) {
   return validateSpec(JSON.parse(await readFile(resolve(lensCatalog, file), "utf8")));

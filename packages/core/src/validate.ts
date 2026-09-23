@@ -3,7 +3,20 @@ import { httpRequestMethod, httpResolverWrites } from "./http-request.js";
 import type { LensSpec } from "./types.js";
 
 const expression = z.string();
-const detect = z.record(z.string(), expression);
+export const exceptionEntrySchema = z.strictObject({
+  matches: expression.nullable().optional(),
+  hint: z.string().optional(),
+  $lens: z.string().optional(),
+  params: z.record(z.string(), expression).optional(),
+});
+export const exceptionsSchema = z.record(z.string(), exceptionEntrySchema.nullable());
+
+/** Validate catalog scope entries even when no lens in this directory matches. */
+export function validateExceptions(raw: unknown): LensSpec["exceptions"] {
+  const result = exceptionsSchema.safeParse(raw);
+  if (!result.success) throw new Error(`invalid scope exceptions: ${result.error.message}`);
+  return result.data;
+}
 const bodyFields = z.record(z.string(), expression);
 const httpBodySchema = z.union([
   z.strictObject({ json: expression }),
@@ -30,7 +43,7 @@ const httpSchema = z
     credentials: credentials.optional(),
     items: expression.optional(),
     map: z.union([expression, z.record(z.string(), expression)]).optional(),
-    detect: detect.optional(),
+    exceptions: exceptionsSchema.optional(),
   })
   .refine((resolver) => !(resolver.request && resolver.sources), {
     message: 'http resolver takes either "request" or "sources", not both',
@@ -54,7 +67,7 @@ const interceptSchema = z
     sources: z.record(z.string(), sourceSchema).optional(),
     items: expression.optional(),
     map: z.union([expression, z.record(z.string(), expression)]).optional(),
-    detect: detect.optional(),
+    exceptions: exceptionsSchema.optional(),
     reloadOnMiss: z.boolean().optional(),
     waitMs: z.number().int().nonnegative().optional(),
   })
@@ -74,7 +87,7 @@ const domFieldSchema = z.strictObject({
 
 const domSchema = z.strictObject({
   kind: z.literal("dom"),
-  detect: detect.optional(),
+  exceptions: exceptionsSchema.optional(),
   item: z.string().optional(),
   fields: z.record(z.string(), domFieldSchema).optional(),
   post: expression.optional(),
@@ -203,8 +216,7 @@ const lensSpecSchema = z.strictObject({
   loadTimeoutMs: z.number().int().positive().optional(),
   returns: returnSchema.optional(),
   $defs: z.record(z.string(), defSchema).optional(),
-  outcomes: z.record(z.string(), z.unknown()).optional(),
-  detect: detect.optional(),
+  exceptions: exceptionsSchema.optional(),
   helpers: z.record(z.string(), expression).optional(),
   effects: z.strictObject({
     reads: z.array(z.string()),
@@ -218,45 +230,16 @@ const lensSpecSchema = z.strictObject({
     .min(1),
 });
 
-/**
- * Non-fatal problems with an otherwise valid document.
- *
- * A `detect` naming an outcome the document does not declare still fires, so
- * the call returns that outcome and the caller is handed nothing to do about
- * it. The remediation has to name `hint` explicitly: it is the only key read
- * from a declaration, an author who writes `description` instead ships dead
- * strings, and the result looks correct in `lens list` either way.
- */
+/** Non-fatal authoring warnings. */
 export function specWarnings(spec: LensSpec): string[] {
   const warnings: string[] = [];
   for (const resolver of spec.resolve) {
     if (resolver.kind !== "dom") continue;
     for (const [name, field] of Object.entries(resolver.fields ?? {})) {
-      if (field.sibling && !field.scope) {
-        warnings.push(
-          `field "${name}" uses "sibling": true, which is the older spelling of ` +
-            `"scope": "+". Prefer "scope", which also reaches ancestors — ` +
-            `"scope": ".tab-panel" runs the selector from the enclosing panel.`
-        );
-      }
+      if (field.sibling && !field.scope) warnings.push(
+        `field "${name}" uses "sibling": true; prefer "scope": "+", which also reaches ancestors.`
+      );
     }
-  }
-
-  const declared = new Set(Object.keys(spec.outcomes ?? {}));
-  const detected = new Set(Object.keys(spec.detect ?? {}));
-  for (const resolver of spec.resolve) {
-    if ("detect" in resolver && resolver.detect) {
-      for (const name of Object.keys(resolver.detect)) detected.add(name);
-    }
-  }
-  for (const name of detected) {
-    if (declared.has(name)) continue;
-    warnings.push(
-      `detect names the outcome "${name}", which "outcomes" does not declare, ` +
-        `so a caller that hits it is given no way to recover. Declare it as ` +
-        `"outcomes": { "${name}": { "hint": "<how to recover>" } } — "hint" is the ` +
-        `only key read from the declaration, so "description" and the like reach nobody.`
-    );
   }
   return warnings;
 }
@@ -297,6 +280,18 @@ function flattenIssues(issues: readonly z.core.$ZodIssue[]): SpecIssue[] {
 }
 
 export function validateSpec(raw: unknown): LensSpec {
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    const record = raw as Record<string, unknown>;
+    const legacyResolver = Array.isArray(record.resolve)
+      ? record.resolve.find((r) => r && typeof r === "object" && "detect" in r) as Record<string, unknown> | undefined
+      : undefined;
+    if ("detect" in record || legacyResolver) {
+      const legacy = "detect" in record ? record.detect : legacyResolver?.detect;
+      const name = typeof legacy === "object" && legacy !== null ? Object.keys(legacy)[0] : "<name>";
+      throw new Error(`invalid lens spec: "detect" is removed; use exceptions.${name}.matches`);
+    }
+    if ("outcomes" in record) throw new Error('invalid lens spec: "outcomes" is removed; use "exceptions"');
+  }
   const result = lensSpecSchema.safeParse(raw);
   if (!result.success) {
     const lines = flattenIssues(result.error.issues).map(

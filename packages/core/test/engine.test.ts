@@ -38,7 +38,7 @@ const spec = validateSpec({
       request: "GET https://api.example.com/things*",
       items: "things",
       map: "{ 'title': name, 'count': n }",
-      detect: { needs_auth: "status = 401" },
+      exceptions: { needs_auth: { matches: "status = 401" } },
     },
     {
       kind: "dom",
@@ -206,8 +206,7 @@ describe("executeLens", () => {
       name: "@example/web/things",
       url: "https://example.com/things",
       effects: { reads: ["example.com"], writes: [] },
-      outcomes: { needs_auth: { hint: "Sign in and retry." } },
-      detect: { needs_auth: "$contains(url, '/sign-in') or status = 401" },
+      exceptions: { needs_auth: { matches: "$contains(url, '/sign-in') or status = 401", hint: "Sign in and retry." } },
     };
 
     it("fires from a dom tier's {url, title} context", async () => {
@@ -232,14 +231,14 @@ describe("executeLens", () => {
       expect(r).toMatchObject({ kind: "outcome", name: "needs_auth", resolver: "intercept" });
     });
 
-    it("lets a resolver's own detect override the spec's for the same outcome", async () => {
+    it("keeps the document matcher when a resolver adds a matcher of the same name", async () => {
       const s = validateSpec({
         ...shared,
         resolve: [
           {
             kind: "dom",
             // narrower than the spec's: this page's sign-in lives elsewhere
-            detect: { needs_auth: "$contains(url, '/login')" },
+            exceptions: { needs_auth: { matches: "$contains(url, '/login')" } },
             item: ".thing",
             fields: { title: { selector: ".t" } },
           },
@@ -248,7 +247,7 @@ describe("executeLens", () => {
       const r = await executeLens(s, {}, io({
         domExtract: async () => ({ url: "https://example.com/sign-in", title: "Sign in", value: null }),
       }));
-      expect(r).toMatchObject({ kind: "error" });
+      expect(r).toMatchObject({ kind: "outcome", name: "needs_auth" });
     });
   });
 
@@ -365,8 +364,7 @@ describe("perform", () => {
     url: "https://example.com/chat",
     params: { message: "string" },
     effects: { reads: ["example.com"], writes: ["example.com"] },
-    outcomes: { needs_auth: { hint: "Sign in and retry." } },
-    detect: { needs_auth: "$contains(url, '/sign-in')" },
+    exceptions: { needs_auth: { matches: "$contains(url, '/sign-in')", hint: "Sign in and retry." } },
     perform: [
       { fill: "#composer", value: "$message" },
       { click: "[data-testid='send']" },
@@ -590,14 +588,14 @@ describe("results are lenses too", () => {
       name: "@example/claude/usage",
       url: "https://claude.ai/settings/usage",
       effects: { reads: [], writes: [] },
-      outcomes: {
+      exceptions: {
         needs_auth: { $lens: "@example/claude/login", hint: "Sign in, then retry." },
       },
       resolve: [
         {
           kind: "intercept",
           request: "GET https://claude.ai/api/*/usage*",
-          detect: { needs_auth: "status = 401 or status = 403" },
+          exceptions: { needs_auth: { matches: "status = 401 or status = 403" } },
         },
       ],
     });
@@ -608,6 +606,7 @@ describe("results are lenses too", () => {
       kind: "outcome",
       name: "needs_auth",
       resolver: "intercept",
+      hint: "Sign in, then retry.",
       value: {
         $lens: "@example/claude/login",
         hint: "Sign in, then retry.",
@@ -620,12 +619,12 @@ describe("results are lenses too", () => {
       name: "@example/web/maybe",
       url: "https://example.com/maybe",
       effects: { reads: [], writes: [] },
-      outcomes: { not_found: null },
+      exceptions: { not_found: null },
       resolve: [
         {
           kind: "intercept",
           request: "GET https://api.example.com/things*",
-          detect: { not_found: "status = 404" },
+          exceptions: { not_found: { matches: "status = 404" } },
         },
       ],
     });
@@ -691,7 +690,7 @@ describe("intercept sources composition", () => {
           usage: { request: "GET https://api.example.com/usage*" },
           sub: { request: "GET https://api.example.com/subscription*" },
         },
-        detect: { needs_auth: "$usage.status = 401 or $sub.status = 401" },
+        exceptions: { needs_auth: { matches: "$usage.status = 401 or $sub.status = 401" } },
         map: {
           plan: "$sub.plan_label",
           limits: "$usage.limits.{ 'name': kind, 'percent': $string(percent) & '%' }",
@@ -967,9 +966,8 @@ describe("shared JSONata helpers", () => {
       name: "@example/web/things",
       url: "https://example.com/things",
       effects: { reads: ["example.com"], writes: [] },
-      outcomes: { needs_auth: { hint: "Sign in." } },
+      exceptions: { needs_auth: { matches: "$isLogin(url)", hint: "Sign in." } },
       helpers: { isLogin: "function($u) { $contains($u, '/sign-in') }" },
-      detect: { needs_auth: "$isLogin(url)" },
       resolve: [{ kind: "dom", fields: { raw: { selector: ".raw" } } }],
     });
     const r = await executeLens(spec, {}, io({
@@ -992,7 +990,7 @@ describe("http tier", () => {
         request: "GET https://api.example.com/things/{id}",
         items: "things",
         map: "{ 'title': name }",
-        detect: { needs_auth: "status = 401" },
+        exceptions: { needs_auth: { matches: "status = 401" } },
       },
     ],
   });
@@ -1146,7 +1144,7 @@ describe("http tier chained sources", () => {
           orgs: { request: "GET https://api.example.com/organizations" },
           usage: { request: "GET https://api.example.com/organizations/{orgs.0.uuid}/usage" },
         },
-        detect: { needs_auth: "$orgs.status = 401" },
+        exceptions: { needs_auth: { matches: "$orgs.status = 401" } },
         map: { plan: "$orgs[0].plan", used: "$usage.used" },
       },
     ],

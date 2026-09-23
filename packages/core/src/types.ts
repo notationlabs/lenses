@@ -1,5 +1,5 @@
 /**
- * Canonical JSON lens spec. Every executable field (`map`, `detect`, `items`,
+ * Canonical JSON lens spec. Every executable field (`map`, `matches`, `items`,
  * `post`) is a JSONata expression string, never JavaScript — the host can
  * therefore trust the `effects` declaration without parsing per-site code.
  */
@@ -23,16 +23,8 @@ export interface LensSpec {
    *  a def may reference itself, which is how a recursive shape (a comment
    *  tree) is declared without infinite nesting. */
   $defs?: Record<string, unknown>;
-  /** Named failure modes. Value is either null, a plain schema, or a $lens ref. */
-  outcomes?: Record<string, unknown>;
-  /**
-   * Detection that applies to every tier, so a lens does not paste the same
-   * expired-session check into each one. Each tier evaluates it against its own
-   * context — `{url, title}` for dom, `{status, url, body}` for intercept — so
-   * write one expression per outcome only if it makes sense in both; otherwise
-   * keep the tier-specific form on the resolver, which takes precedence here.
-   */
-  detect?: Record<string, ExprString>;
+  /** Named exceptions, including their matching expression and recovery advice. */
+  exceptions?: ExceptionMap;
   /**
    * Named JSONata lambdas bound as `$name` in every expression this document
    * evaluates — `"norm": "function($s) { ... }"` is called as `$norm(x)`.
@@ -50,6 +42,16 @@ export interface LensSpec {
    */
   perform?: PerformStep[];
   resolve: Resolver[];
+}
+
+/** A null entry disables an inherited exception. */
+export type ExceptionMap = Record<string, ExceptionEntry | null>;
+export interface ExceptionEntry {
+  /** JSONata predicate evaluated against a page, response, or tier context. */
+  matches?: ExprString | null;
+  hint?: string;
+  $lens?: string;
+  params?: Record<string, ExprString>;
 }
 
 /**
@@ -80,7 +82,7 @@ export interface PerformResult {
   /** 0-based index of the step that failed; absent when every step succeeded */
   failedStep?: number;
   message?: string;
-  /** the page's location after the last executed step, used for detect on failure */
+  /** the page's location after the last executed step, used for exception matching on failure */
   url?: string;
   title?: string;
 }
@@ -136,7 +138,7 @@ export interface HttpResolver {
   /**
    * Chain several requests, fired in declaration order. Each source binds its
    * body (through its `items` expression) as a JSONata variable `$name` for
-   * `map` and `detect`; a source whose bound value is a scalar also fills
+   * `map` and `matches`; a source whose bound value is a scalar also fills
    * `{name}` holes in the request templates of the sources after it — which is
    * how an id only another response knows (an organisation UUID) reaches a URL.
    */
@@ -149,8 +151,8 @@ export interface HttpResolver {
   items?: ExprString;
   /** JSONata (or per-field object) over the working value */
   map?: MapSpec;
-  /** outcome name -> JSONata over {status, url, body}; truthy triggers the outcome */
-  detect?: Record<string, ExprString>;
+  /** Tier-specific exceptions, evaluated before document exceptions. */
+  exceptions?: ExceptionMap;
 }
 
 /** A declarative request body. `form` is multipart FormData; `search` is URL-encoded. */
@@ -204,8 +206,8 @@ export interface InterceptResolver {
   items?: ExprString;
   /** JSONata (or per-field object) over the working value / source bindings */
   map?: MapSpec;
-  /** outcome name -> JSONata over {status, url, body}; truthy triggers the outcome */
-  detect?: Record<string, ExprString>;
+  /** Tier-specific exceptions, evaluated before document exceptions. */
+  exceptions?: ExceptionMap;
   /** if no captured response matches, reload the tab and wait for one */
   reloadOnMiss?: boolean;
   /** how long to wait for a matching response after (re)load, ms */
@@ -229,8 +231,8 @@ export interface DomFieldSpec {
 
 export interface DomResolver {
   kind: "dom";
-  /** outcome name -> JSONata over {url, title}; truthy triggers the outcome */
-  detect?: Record<string, ExprString>;
+  /** Tier-specific exceptions, evaluated before document exceptions. */
+  exceptions?: ExceptionMap;
   /** if set, extract one object per matching element */
   item?: string;
   fields?: Record<string, DomFieldSpec>;
@@ -302,6 +304,8 @@ export type LensResult =
       kind: "outcome";
       name: string;
       value: unknown;
+      /** Recovery advice from the matched exception (including inherited fields). */
+      hint?: string;
       resolver: Resolver["kind"];
       performed?: true;
     }
