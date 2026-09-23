@@ -4,13 +4,17 @@
   "url": "https://github.com/notifications",
   "returns": {
     "type": "array",
-    "items": { "repo": "string", "title": "string", "reason": "string", "url": "string" }
-  },
-  "outcomes": {
-    "needs_auth": { "$lens": "@djgrant/github/login", "hint": "Ask the user to sign in to github.com in the open tab, then retry this call." }
+    "items": {
+      "repo": "string",
+      "title": "string",
+      "reason": "string",
+      "url": "string"
+    }
   },
   "effects": {
-    "reads": ["github.com/notifications"],
+    "reads": [
+      "github.com/notifications"
+    ],
     "writes": [],
     "idempotent": true,
     "cache": 30
@@ -18,25 +22,40 @@
   "resolve": [
     {
       "kind": "dom",
-      "detect": {
-        "needs_auth": "$contains(url, '/login') or $contains(title, 'Sign in')"
-      },
       "fields": {
-        "page": { "selector": "body" }
+        "page": {
+          "selector": "body"
+        }
       },
-      "post": "$contains(page, 'All caught up!') ? [] : $lookup({}, 'missing')"
+      "post": "$contains(page, 'All caught up!') ? [] : $lookup({}, 'missing')",
+      "exceptions": {
+        "needs_auth": {
+          "matches": "$contains(url, '/login') or $contains(title, 'Sign in')"
+        }
+      }
     },
     {
       "kind": "dom",
       "item": ".notifications-list-item",
       "fields": {
-        "title": { "selector": ".markdown-title" },
-        "url": { "selector": "a.notification-list-item-link", "attr": "href" }
+        "title": {
+          "selector": ".markdown-title"
+        },
+        "url": {
+          "selector": "a.notification-list-item-link",
+          "attr": "href"
+        }
       }
     },
     {
       "kind": "llm",
       "prompt": "Extract the list of GitHub notifications on this page as [{repo, title, reason, url}]. If the page is a login page, return the JSON string \"needs_auth\"."
     }
-  ]
+  ],
+  "exceptions": {
+    "needs_auth": {
+      "$lens": "@djgrant/github/login",
+      "hint": "Ask the user to sign in to github.com in the open tab, then retry this call."
+    }
+  }
 }

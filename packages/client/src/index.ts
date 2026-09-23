@@ -22,6 +22,7 @@ import {
 } from "./bridge.js";
 import { LensStore, type CatalogUpdate } from "./lens-store.js";
 import { parseCatalogSource, scanLensFiles, type CatalogSource, type LensFile } from "./catalog.js";
+export { applyCatalogSettings } from "./catalog.js";
 import {
   createRecordingRun,
   type RecordingHandle,
@@ -106,7 +107,7 @@ export interface LensSummary {
   description?: string;
   params: LensSpec["params"];
   effects: LensSpec["effects"];
-  outcomes: string[];
+  exceptions: string[];
   /** non-fatal problems with the document; absent when there are none */
   warnings?: string[];
 }
@@ -244,7 +245,7 @@ export class LensClient {
     const specs = await this.store.load();
     this.log(`loaded ${specs.length} lenses`);
     return specs.map((spec) => {
-      // The listing is where an undeclared outcome hides: it shows the outcomes
+      // The listing shows every enabled exception in the effective spec.
       // the document declares, which is precisely the set that is wrong.
       const warnings = specWarnings(spec);
       return {
@@ -254,7 +255,7 @@ export class LensClient {
         description: spec.description,
         params: spec.params,
         effects: spec.effects,
-        outcomes: spec.outcomes ? Object.keys(spec.outcomes) : [],
+        exceptions: spec.exceptions ? Object.keys(spec.exceptions).filter((name) => spec.exceptions![name] !== null) : [],
         ...(warnings.length > 0 ? { warnings } : {}),
       };
     });
@@ -416,7 +417,7 @@ export class LensClient {
     const result = await this.call(input);
     if (result.kind === "value") return result.value;
     if (result.kind === "outcome") {
-      const declared = (await this.store.resolve(input.lens)).outcomes?.[result.name];
+      const declared = (await this.store.resolve(input.lens)).exceptions?.[result.name];
       const hint =
         typeof declared === "object" && declared !== null && "hint" in declared
           ? (declared as { hint?: unknown }).hint
@@ -424,7 +425,7 @@ export class LensClient {
       throw new LensOutcomeError(
         result.name,
         result.value,
-        typeof hint === "string" ? hint : undefined
+        result.hint ?? (typeof hint === "string" ? hint : undefined)
       );
     }
     throw new LensResultError(result.message, result.issues, result.lens ?? input.lens, result.callId);

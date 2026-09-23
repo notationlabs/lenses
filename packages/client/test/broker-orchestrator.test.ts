@@ -257,11 +257,11 @@ describe("broker orchestration", () => {
     const backend = new FakeBackend("cdp", true, session);
     const orchestrator = createBrokerOrchestrator([backend]);
     const spec = domSpec({
-      outcomes: { needs_auth: null },
+      exceptions: { needs_auth: null },
       resolve: [
         {
           kind: "dom",
-          detect: { needs_auth: "title = 'Login'" },
+          exceptions: { needs_auth: { matches: "title = 'Login'" } },
           fields: { title: { selector: "h1" } },
         },
       ],
@@ -288,8 +288,7 @@ describe("broker orchestration", () => {
       type: "call", id: "write-auth", params: {}, timeoutMs: 1000, allowWrites: true,
       spec: domSpec({
         effects: { reads: [], writes: ["example.com"] },
-        detect: { needs_auth: "title = 'Login'" },
-        outcomes: { needs_auth: null },
+        exceptions: { needs_auth: { matches: "title = 'Login'" } },
         perform: [{ click: "button" }],
       }),
     }, (frame) => frames.push(frame));
@@ -306,8 +305,7 @@ describe("broker orchestration", () => {
       type: "call", id: "write-auth-late", params: {}, timeoutMs: 1000, allowWrites: true,
       spec: domSpec({
         effects: { reads: [], writes: ["example.com"] },
-        detect: { needs_auth: "title = 'Login'" },
-        outcomes: { needs_auth: null },
+        exceptions: { needs_auth: { matches: "title = 'Login'" } },
         perform: [{ wait: { appears: "button", timeoutMs: 1 } }],
       }),
     }, (frame) => frames.push(frame));
@@ -326,11 +324,11 @@ describe("broker orchestration", () => {
     const gatedSpec = (url: string) =>
       domSpec({
         url,
-        outcomes: { needs_auth: null },
+        exceptions: { needs_auth: null },
         resolve: [
           {
             kind: "dom",
-            detect: { needs_auth: "title = 'Login'" },
+            exceptions: { needs_auth: { matches: "title = 'Login'" } },
             fields: { title: { selector: "h1" } },
           },
         ],
@@ -399,11 +397,11 @@ describe("broker orchestration", () => {
       type: "call",
       id: "gated",
       spec: domSpec({
-        outcomes: { needs_auth: null },
+        exceptions: { needs_auth: null },
         resolve: [
           {
             kind: "dom",
-            detect: { needs_auth: "title = 'Login'" },
+            exceptions: { needs_auth: { matches: "title = 'Login'" } },
             fields: { title: { selector: "h1" } },
           },
         ],

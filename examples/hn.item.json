@@ -23,7 +23,9 @@
         "text": "string",
         "replies": {
           "type": "array",
-          "items": { "$ref": "comments" }
+          "items": {
+            "$ref": "comments"
+          }
         }
       }
     }
@@ -41,7 +43,9 @@
       },
       "comments": {
         "type": "array",
-        "items": { "$ref": "comments" }
+        "items": {
+          "$ref": "comments"
+        }
       },
       "next_page": {
         "$lens": "@djgrant/hn/item",
@@ -52,9 +56,6 @@
         }
       }
     }
-  },
-  "outcomes": {
-    "not_found": null
   },
   "effects": {
     "reads": [
@@ -69,10 +70,12 @@
     {
       "kind": "http",
       "request": "GET https://hn.algolia.com/api/v1/items/{id}",
-      "detect": {
-        "not_found": "status = 404"
-      },
-      "items": "($size := $number($limit ? $limit : 30); $pg := $number($page ? $page : 1); $start := ($pg - 1) * $size; $mapc := function($c) { { 'id': $string($c.id), 'author': $c.author, 'age': $c.created_at, 'text': $c.text, 'replies': [$map([$c.children[text != null]], $mapc)] } }; $top := [$map([children[text != null]], $mapc)]; { 'story': { 'title': title, 'url': url ? url : 'https://news.ycombinator.com/item?id=' & $string(id), 'score': $string(points) & ' points' }, 'comments': [$top#$i[$i >= $start and $i < $start + $size]], 'next_page': $count($top) > $start + $size ? 'https://news.ycombinator.com/item?id=' & $string(id) & '&p=' & ($pg + 1) : null })"
+      "items": "($size := $number($limit ? $limit : 30); $pg := $number($page ? $page : 1); $start := ($pg - 1) * $size; $mapc := function($c) { { 'id': $string($c.id), 'author': $c.author, 'age': $c.created_at, 'text': $c.text, 'replies': [$map([$c.children[text != null]], $mapc)] } }; $top := [$map([children[text != null]], $mapc)]; { 'story': { 'title': title, 'url': url ? url : 'https://news.ycombinator.com/item?id=' & $string(id), 'score': $string(points) & ' points' }, 'comments': [$top#$i[$i >= $start and $i < $start + $size]], 'next_page': $count($top) > $start + $size ? 'https://news.ycombinator.com/item?id=' & $string(id) & '&p=' & ($pg + 1) : null })",
+      "exceptions": {
+        "not_found": {
+          "matches": "status = 404"
+        }
+      }
     },
     {
       "kind": "dom",
@@ -118,5 +121,8 @@
       "kind": "llm",
       "prompt": "This is a Hacker News story page. Return {story: {title, url, score}, comments: [{id, author, age, text, replies}], next_page}. id is the comment's numeric HN id when visible (from its permalink). Comments nest: each comment's replies is an array of the same {id, author, age, text, replies} shape (use [] when a comment has no replies); use the indentation of each comment row to decide nesting. Return at most 30 top-level comments in reading order. If you can see more than 30 top-level comments on the page, set next_page to the URL of this page with the query param &p=2 appended (page 2 of the client-side window); otherwise set next_page to null. Include only fields you can actually see."
     }
-  ]
+  ],
+  "exceptions": {
+    "not_found": null
+  }
 }

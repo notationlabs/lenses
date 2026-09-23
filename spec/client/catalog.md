@@ -14,7 +14,7 @@ The @caller configures ordered catalog sources; the store resolves names, files,
 - **Directory read:** A directory source reads every `*.json` (sorted, `catalog.json` excluded) as a validated lens document; a file that fails validation fails the load naming the file.
 - **Cache root:** Git clones live under `LENS_CACHE_DIR`, defaulting to `~/.cache/lenses`, keyed by a hash of the normalised reference.
 - **Git materialisation:** A git source clones once with `--depth 1` (and `--branch <ref>` when a ref is given); !update re-fetches the ref with depth 1 and hard-resets to `FETCH_HEAD`.
-- **Catalogue settings:** A `catalog.json` beside the documents may supply `helpers` and `params` to every document, with a document's own entry of the same name winning. Shared parameters let tenant catalogs declare one required input used by every URL.
+- **Catalogue settings:** A `catalog.json` beside the documents may supply `helpers`, `params`, and `scopes`. A scope is `{ "url": "https://*.example.com/*", "exceptions": { ... } }`: its *-only URL glob matches lens URL templates at load time, only in the same directory. Matching scopes merge in order; document exceptions merge by name and field, with document fields winning. `null` on a key removes its inherited exception. Shared parameters let tenant catalogs declare one required input used by every URL.
 - **Ordered load:** Sources load in configuration order; a shortname declared by several sources resolves to the earliest one.
 - **Reference resolution:** A lens reference resolves as an `http(s)` URL fetched and validated directly, a path ending `.json` read from disk with the settings of its own directory's `catalog.json`, or otherwise a scoped name or shortname looked up across the loaded sources.
 

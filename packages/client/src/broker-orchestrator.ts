@@ -802,10 +802,10 @@ async function findGateQuietly(
 function gateOutcome(spec: LensSpec, signInUrl: string): LensResult {
   const declared = [
     ...spec.resolve.flatMap((resolver) =>
-      "detect" in resolver ? Object.keys(resolver.detect ?? {}) : []
+      "exceptions" in resolver ? Object.keys(resolver.exceptions ?? {}) : []
     ),
-    ...Object.keys(spec.detect ?? {}),
-    ...Object.keys(spec.outcomes ?? {}),
+    ...Object.keys({}),
+    ...Object.keys(spec.exceptions ?? {}),
   ].find((name) => name.startsWith("needs_"));
   return {
     kind: "outcome",

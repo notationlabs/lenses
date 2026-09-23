@@ -51,7 +51,7 @@ class FakeTransport implements LensTransport {
 async function fixtureDirectory(
   parameterised = false,
   returns?: unknown,
-  outcomes?: Record<string, unknown>
+  exceptions?: Record<string, unknown>
 ): Promise<string> {
   const directory = await mkdtemp(join(tmpdir(), "lens-client-"));
   await writeFile(
@@ -61,7 +61,7 @@ async function fixtureDirectory(
       url: parameterised ? "https://example.com/{page}" : "https://example.com/home",
       ...(parameterised ? { params: { page: "string" } } : {}),
       ...(returns !== undefined ? { returns } : {}),
-      ...(outcomes !== undefined ? { outcomes } : {}),
+      ...(exceptions !== undefined ? { exceptions } : {}),
       effects: { reads: ["example.com"], writes: [], cache: 60 },
       resolve: [{ kind: "dom", fields: { title: { selector: "title" } } }],
     })
@@ -103,9 +103,7 @@ describe("LensClient", () => {
     ]);
   });
 
-  // Undeclared outcomes are invisible in a listing whose whole outcome column
-  // is derived from the declarations that are missing.
-  it("warns in the listing when a detect names an undeclared outcome", async () => {
+  it("lists a self-contained exception without an undeclared-outcome warning", async () => {
     const directory = await mkdtemp(join(tmpdir(), "lens-client-"));
     await writeFile(
       join(directory, "example.json"),
@@ -113,17 +111,15 @@ describe("LensClient", () => {
         name: "@example/web/page",
         url: "https://example.com/home",
         effects: { reads: ["example.com"], writes: [] },
-        detect: { needs_auth: "$contains(url, '/sign-in')" },
+        exceptions: { needs_auth: { matches: "$contains(url, '/sign-in')" } },
         resolve: [{ kind: "dom", fields: { title: { selector: "title" } } }],
       })
     );
     const client = new LensClient(new LensStore(directory), new FakeTransport());
 
     const [summary] = await client.list();
-    expect(summary.outcomes).toEqual([]);
-    expect(summary.warnings?.[0]).toContain(
-      '"outcomes": { "needs_auth": { "hint": "<how to recover>" } }'
-    );
+    expect(summary.exceptions).toEqual(["needs_auth"]);
+    expect(summary.warnings).toBeUndefined();
   });
 
   it("leaves warnings off a listing with nothing to report", async () => {

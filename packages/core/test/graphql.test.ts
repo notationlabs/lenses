@@ -36,7 +36,7 @@ const itemSpec: LensSpec = {
   ...base,
   name: "@example/hn/item",
   effects: { reads: ["example.com"], writes: [], cache: 300 },
-  outcomes: { needs_auth: { hint: "sign in first" } },
+  exceptions: { needs_auth: { hint: "sign in first" } },
   returns: { type: "object", fields: { text: "string" } },
 };
 

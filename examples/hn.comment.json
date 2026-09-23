@@ -15,14 +15,15 @@
         "text": "string",
         "replies": {
           "type": "array",
-          "items": { "$ref": "comments" }
+          "items": {
+            "$ref": "comments"
+          }
         }
       }
     }
   },
-  "returns": { "$ref": "comments" },
-  "outcomes": {
-    "not_found": null
+  "returns": {
+    "$ref": "comments"
   },
   "effects": {
     "reads": [
@@ -76,5 +77,8 @@
       "kind": "llm",
       "prompt": "This is a Hacker News comment permalink page. The page's root comment sits at the top (author, age, text); below it is its reply thread. Return the root comment as {id, author, age, text, replies} where replies is an array of the same shape nested by the indentation of each reply row (use [] for a comment with no replies). id is the numeric comment id from the page URL's id= parameter."
     }
-  ]
+  ],
+  "exceptions": {
+    "not_found": null
+  }
 }

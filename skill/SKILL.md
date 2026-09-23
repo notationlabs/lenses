@@ -16,7 +16,7 @@ Pass a catalog directory with `--catalog <path>` (or ask the user where their le
 ## Calling a lens
 
 ```sh
-lens list --catalog ./examples    # discover lenses, their params and outcomes
+lens list --catalog ./examples    # discover lenses, their params and exceptions
 lens call hn/item --params '{"id":"42"}' --catalog ./examples
 ```
 
@@ -66,7 +66,7 @@ Authoring one: every write requires non-empty `effects.writes` and `cache` 0 or 
    ```
 
 3. Write a JSON lens document into the catalog. Every field below is required
-   except `params` and `outcomes`; `effects` in particular is mandatory.
+   except `params` and `exceptions`; `effects` in particular is mandatory.
    Resolver tiers run in order and accumulate fields until `returns` is
    satisfied:
    - `http` — direct requests to a JSON API, no page bound (preferred when a
@@ -76,7 +76,7 @@ Authoring one: every write requires non-empty `effects.writes` and `cache` 0 or 
      capable backend, while `credentials: "same-origin-page"` requires execution
      in an already-open page matching the request origin. Sources may override
      credentials and define JSONata headers using earlier bindings. `sources`
-     chains requests: each binds `$name` for `map`/`detect`, and later templates address
+     chains requests: each binds `$name` for `map`/`matches`, and later templates address
      earlier bodies with dotted holes — `{orgs.0.uuid}` — which is how an id
      only another response knows reaches a URL.
    - `intercept` — map a JSON response the page already fetched.
@@ -89,12 +89,11 @@ Authoring one: every write requires non-empty `effects.writes` and `cache` 0 or 
      "url": "https://site.com/{id}",
      "params": { "id": "string" },
      "returns": { "type": "object", "fields": { "title": "string" } },
-     "outcomes": { "needs_auth": { "$lens": "@scope/site/login" } },
+     "exceptions": { "needs_auth": { "matches": "status = 401", "$lens": "@scope/site/login" } },
      "effects": { "reads": ["site.com"], "writes": [], "idempotent": true },
      "resolve": [
        { "kind": "intercept",
          "request": "GET https://site.com/api/thing/*",
-         "detect": { "needs_auth": "status = 401" },
          "map": { "title": "data.title" } }
      ]
    }
@@ -184,35 +183,26 @@ Authoring one: every write requires non-empty `effects.writes` and `cache` 0 or 
    ]
    ```
 
-   Declare every outcome your resolvers `detect`, or `lens list` will advertise
-   none while calls return one. An outcome's `hint` is the remediation text the
-   caller is shown — it is the only key read from the declaration, so
-   `description` and the like reach nobody:
+   Declare exceptions in one place, with the predicate first and the recovery
+   advice beside it. A scope in `catalog.json` shares an exception across all
+   lens URL templates matching its `*`-only glob:
 
    ```jsonc
-   "outcomes": { "needs_auth": { "hint": "Ask the user to sign in at https://site.com, then retry." } },
+   { "scopes": [{ "url": "https://*.site.com/*", "exceptions": {
+     "needs_auth": {
+       "matches": "$contains(url, '/sign-in') or status = 401",
+       "hint": "Sign in, then retry."
+     }
+   } }] }
    ```
 
-   For a signed-in page, an expired session is the likeliest runtime failure:
-   the page redirects to a login form and every selector misses. The error names
-   the URL it landed on, so you can see the redirect — but only a `detect` turns
-   that into an outcome the caller can act on. A `dom` tier's context is
-   `{url, title}`:
-
-   ```jsonc
-   "detect": { "needs_auth": "$contains(url, '/sign-in') or $contains(title, 'Sign in')" }
-   ```
-
-   Put `detect` beside `resolve` rather than inside a resolver and every tier
-   runs it against its own context — `{url, title}` for `dom`, `{status, url,
-   body}` for `intercept` — so one expression covers a lens whose tiers would
-   otherwise repeat it. Write it to suit both, or leave a tier's own `detect` to
-   override the shared one for that outcome:
-
-   ```jsonc
-   "detect": { "needs_auth": "$contains(url, '/sign-in') or status = 401" },
-   "resolve": [ /* ... */ ]
-   ```
+   The shared matcher checks each page (`{url, title}`) and each response
+   (`{status, url, body}`), even each named source before the next request.
+   A lens can merge additional fields into the inherited entry or set the
+   entire key to `null` to disable it. Resolver `exceptions` add tier-local
+   matching over named `$source` contexts and run before inherited matchers;
+   they do not replace them. `matches: null` disables only an inherited
+   predicate. Legacy `detect` and `outcomes` fields are rejected.
 
    A `returns` field may itself declare a `$lens` reference, so a row carries a
    ready-made follow-up call. Declaring it is enough — no resolver needs to emit
@@ -285,7 +275,7 @@ Authoring one: every write requires non-empty `effects.writes` and `cache` 0 or 
 
 4. Call it by file path to test: `lens call ./my-lens.json --catalog .`
 
-`map`, `post`, and `detect` are sandboxed JSONata: no network or DOM
+`map`, `post`, and `matches` are sandboxed JSONata: no network or DOM
 access. Declared params are available as variables (`$id`) in every
 expression, and as `{name}` holes in `url` and in selectors.
 

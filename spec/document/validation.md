@@ -33,7 +33,7 @@ The @author writes a lens as one JSON file. !validate accepts the raw JSON and r
 - **Intercept request exclusivity:** An intercept resolver needs exactly one of `request` or `sources`; `sources`, when present, must be non-empty.
 - **Llm prompt required:** An llm resolver must declare `prompt`; `maxSnapshotChars`, when present, must be a positive integer.
 - **Sibling spelling warning:** A dom field using `sibling: true` without `scope` produces a non-fatal warning steering the @author to `"scope": "+"` (`specWarnings`).
-- **Undeclared outcome warning:** A `detect` entry (document-level or resolver-level) naming an outcome that `outcomes` does not declare produces a non-fatal warning, because the outcome still fires and the caller gets no `hint` to recover with.
+- **Exceptions:** Named `exceptions` entries accept `matches`, `hint`, `$lens`, and expression-valued `params`, or `null` to disable inheritance. Legacy `detect` and `outcomes` are rejected; detection and declaration are no longer paired across fields.
 
 ## Failures
 

@@ -10,7 +10,7 @@ import type {
 } from "./types.js";
 import { evaluate } from "./expr.js";
 import { materialiseLenses } from "./materialise.js";
-import { detectOutcome } from "./resolvers/outcome.js";
+import { matchPageException } from "./resolvers/outcome.js";
 import { runHttp } from "./resolvers/http.js";
 import { runIntercept } from "./resolvers/intercept.js";
 import { runDom } from "./resolvers/dom.js";
@@ -49,7 +49,7 @@ export async function executeLens(
 
 /**
  * Run the document's perform steps. Returns the result that ends the call (a
- * detect hit or a step failure), or null when every step succeeded.
+ * exception match or a step failure), or null when every step succeeded.
  */
 async function runPerform(
   spec: LensSpec,
@@ -58,12 +58,12 @@ async function runPerform(
   io: EngineIO
 ): Promise<LensResult | null> {
   if (!io.perform) return { kind: "error", message: "host cannot perform actions" };
-  // Before step 0, run the document's detect on {url, title}: the page may be
+  // Before step 0, match document exceptions on {url, title}: the page may be
   // a login wall no step should touch. An empty dom extraction is the
   // cheapest way to read url/title.
-  if (spec.detect) {
+  if (Object.values(spec.exceptions ?? {}).some((entry) => typeof entry?.matches === "string")) {
     const { url, title } = await io.domExtract({ kind: "dom" });
-    const outcome = await detectOutcome(spec.detect, { url, title }, params, spec.outcomes, "dom", spec.helpers);
+    const outcome = await matchPageException(spec, { url, title }, params, "dom");
     if (outcome) return outcome;
   }
   // Expressions are the document's trust boundary: they resolve here, so a
@@ -129,14 +129,12 @@ async function runPerform(
     return null;
   }
   // A wait that times out on a login wall is not a broken selector: the
-  // document's detect gets to name the landed page before perform_failed does.
-  const detected = await detectOutcome(
-    spec.detect,
+  // document's exceptions name the landed page before perform_failed does.
+  const detected = await matchPageException(
+    spec,
     { url: result.url, title: result.title },
     params,
-    spec.outcomes,
-    "dom",
-    spec.helpers
+    "dom"
   );
   if (detected) return detected;
   io.log?.(`perform failed at step ${result.failedStep}`);

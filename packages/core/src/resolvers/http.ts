@@ -9,7 +9,7 @@ import type {
 } from "../types.js";
 import { evaluate } from "../expr.js";
 import { expandTemplate, expandUrl } from "../url-pattern.js";
-import { detectOutcome, mergeDetect } from "./outcome.js";
+import { matchPageException, matchTierException } from "./outcome.js";
 import { project, tryParse } from "./intercept.js";
 
 /**
@@ -25,7 +25,6 @@ export async function runHttp(
   if (!io.httpFetch) {
     return { kind: "miss", observed: "host cannot perform http requests" };
   }
-  const detect = mergeDetect(spec.detect, r.detect);
   const fetchOne = async (
     pattern: string,
     holes: Record<string, unknown>,
@@ -97,16 +96,11 @@ export async function runHttp(
       }
       if (!response) return unsupported(r);
       metas[name] = { status: response.status, url: response.url, body: tryParse(response.body) };
-      // Detection sees the responses so far; an unfetched $name is just absent.
-      const outcome = await detectOutcome(
-        detect,
-        { ...params, ...metas },
-        { ...params, ...metas },
-        spec.outcomes,
-        "http",
-        spec.helpers
-      );
-      if (outcome) return outcome;
+      // Check the arriving response before requesting the next source.
+      const tier = await matchTierException(spec, r.exceptions, { ...params, ...metas }, { ...params, ...metas }, "http");
+      if (tier) return tier;
+      const page = await matchPageException(spec, metas[name], params, "http", r.exceptions);
+      if (page) return page;
       if (response.status < 200 || response.status >= 300) {
         return { kind: "miss", observed: `HTTP ${response.status} from ${response.url}` };
       }
@@ -143,7 +137,8 @@ export async function runHttp(
   if (!response) return unsupported(r);
 
   const context = { status: response.status, url: response.url, body: tryParse(response.body) };
-  const outcome = await detectOutcome(detect, context, params, spec.outcomes, "http", spec.helpers);
+  const outcome = await matchTierException(spec, r.exceptions, context, params, "http")
+    ?? await matchPageException(spec, context, params, "http", r.exceptions);
   if (outcome) return outcome;
   if (response.status < 200 || response.status >= 300) {
     return { kind: "miss", observed: `HTTP ${response.status} from ${response.url}` };
