@@ -117,7 +117,9 @@ export interface BrowserBackend {
   /** Subscribe to the kept tab without navigating it. Dispose removes the prompt. */
   watchAuthGate?(
     origin: string,
-    onExit: (reason: "moved" | "closed" | "cancelled") => void
+    onExit: (reason: "moved" | "closed" | "cancelled") => void,
+    /** Reattach a gate whose URL moved during an earlier authentication attempt. */
+    resume?: boolean
   ): Promise<{ update(expiresAt: number, count: number): void; dispose(): void } | undefined>;
   bind(request: BindRequest): Promise<BrowserSession>;
   finish(session: BrowserSession, disposition: FinishDisposition): Promise<void>;

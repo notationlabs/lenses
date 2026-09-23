@@ -6,7 +6,7 @@
  */
 import { WebSocket, WebSocketServer } from "ws";
 import { expandUrl, urlOrigin, type LensBridgeRequest } from "@djgrant/lenses-core";
-import { createAuthLeases } from "./auth-leases.js";
+import { createBrokerAuthLeases } from "./auth-leases.js";
 import { createBrokerOrchestrator } from "./broker-orchestrator.js";
 import { createCdpBackend } from "./cdp-host.js";
 import { createPlaywrightExtensionBackend } from "./playwright-extension-backend.js";
@@ -27,6 +27,7 @@ import {
   proofMatches,
 } from "./broker-auth.js";
 import { randomBytes } from "node:crypto";
+import { setTimeout as sleep } from "node:timers/promises";
 import { browserAdvice } from "./broker-advice.js";
 
 const port = Number(process.argv[2]);
@@ -78,9 +79,7 @@ const orchestrator = createBrokerOrchestrator([extension, cdp], {
 let ensureBrowserInFlight: Promise<void> | undefined;
 let browserPresent: boolean | undefined;
 const requestQueue = new SerialTaskQueue();
-const authLeases = createAuthLeases((origin, target, onExit) =>
-  orchestrator.watchAuthGate(origin, target, onExit)
-);
+const authLeases = createBrokerAuthLeases(orchestrator);
 const buildStamp = brokerBuildStamp();
 const DRAIN_TIMEOUT_MS = 10_000;
 const DEFAULT_IDLE_EXIT_MS = 15 * 60_000;
@@ -348,6 +347,7 @@ function onClientMessage(client: WebSocket, raw: string): void {
   }
   broadcastStatus();
   const cancelled = new AbortController();
+  let authOrigin: string | undefined;
   const onClose = () => cancelled.abort();
   client.on("close", onClose);
   void (async () => {
@@ -406,7 +406,8 @@ function onClientMessage(client: WebSocket, raw: string): void {
                   frame.result.kind === "outcome" && frame.result.name === "needs_auth" && frame.authReplaySafe) {
                 intercepted = frame;
               } else send(client, frame);
-            }
+            },
+            { authRetry: attempt > 0 }
           );
           return intercepted;
         } finally {
@@ -423,15 +424,32 @@ function onClientMessage(client: WebSocket, raw: string): void {
       try { target = expandUrl(message.spec.url, message.params); }
       catch { send(client, result); return; }
       const origin = urlOrigin(target);
+      authOrigin = origin;
       send(client, { type: "progress", id: message.id, message: `waiting for sign-in at ${origin}` });
-      const reason = await authLeases.wait(origin, target, authExpiresAt, cancelled.signal);
-      if (reason !== "moved" || client.readyState !== WebSocket.OPEN || Date.now() >= authExpiresAt) {
+      const reason = await authLeases.wait(origin, target, authExpiresAt, cancelled.signal, attempt > 0);
+      if (client.readyState === WebSocket.OPEN) {
+        send(client, { type: "progress", id: message.id, message: `sign-in wait ended: ${reason}` });
+      }
+      if (reason === "cancelled" || reason === "expired" ||
+          client.readyState !== WebSocket.OPEN || Date.now() >= authExpiresAt) {
         if (client.readyState === WebSocket.OPEN) send(client, result);
         return;
+      }
+      // A detached or replaced browser page is not a cancelled sign-in. Wait
+      // outside the serial queue, then check the site again using the browser's
+      // cookies. A missing tab must not cause an immediate retry loop.
+      if (reason === "closed") {
+        await sleep(Math.min(1_000, Math.max(0, authExpiresAt - Date.now())), undefined,
+          { signal: cancelled.signal }).catch(() => {});
+        if (cancelled.signal.aborted || Date.now() >= authExpiresAt) {
+          if (client.readyState === WebSocket.OPEN) send(client, result);
+          return;
+        }
       }
       attempt++;
     }
   })().catch((error) => console.error("broker request failed:", error)).finally(() => {
+    if (authOrigin) authLeases.close(authOrigin);
     client.off("close", onClose);
     endWork();
   });
