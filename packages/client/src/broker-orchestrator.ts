@@ -43,14 +43,16 @@ export type BrokerFrame =
 export interface BrokerOrchestrator {
   handle(
     message: Exclude<LensBridgeRequest, { type: "control" }>,
-    emit: (frame: BrokerFrame) => void
+    emit: (frame: BrokerFrame) => void,
+    options?: { authRetry?: boolean }
   ): Promise<void>;
   /** Browser work that outlived its caller deadline; new calls must not overlap it. */
   busy(): { id: string; type: "call" | "observe"; lens?: string; startedAt: number } | undefined;
   watchAuthGate(
     origin: string,
     target: string,
-    onExit: (reason: "moved" | "closed" | "cancelled") => void
+    onExit: (reason: "moved" | "closed" | "cancelled") => void,
+    resume?: boolean
   ): Promise<{ update(expiresAt: number, count: number): void; dispose(): void } | undefined>;
 }
 
@@ -150,7 +152,8 @@ export function createBrokerOrchestrator(
   async function call(
     message: Extract<LensBridgeRequest, { type: "call" }>,
     progress: (text: string) => void,
-    mutation?: MutationTracker
+    mutation?: MutationTracker,
+    authRetry = false
   ): Promise<LensResult> {
     // The client timeout covers the complete call, including recorder setup
     // and final capture; screenshot RPCs must use its remaining budget rather
@@ -188,7 +191,7 @@ export function createBrokerOrchestrator(
       // The gate is derived from the browser, not remembered here: a kept tab
       // still sitting where a needs_* outcome left it blocks its whole site,
       // and it keeps doing so across broker restarts.
-      const gate = await findGateQuietly(sessionBackend, gateKey(target));
+      const gate = authRetry ? undefined : await findGateQuietly(sessionBackend, gateKey(target));
       if (gate) {
         progress(
           `a sign-in tab is already open at ${gate.url}; complete it there to unblock this site`
@@ -292,7 +295,7 @@ export function createBrokerOrchestrator(
         try {
           if (recording) await recording.finish();
         } finally {
-          await finishQuietly(sessionBackend, session, dispositionFor(result));
+          await finishQuietly(sessionBackend, session, authRetry ? "close-if-created" : dispositionFor(result));
         }
       }
     }
@@ -352,22 +355,21 @@ export function createBrokerOrchestrator(
 
   return {
     busy: () => backgroundCall,
-    async watchAuthGate(origin, target, onExit) {
-      let backend: BrowserBackend | undefined;
+    async watchAuthGate(origin, target, onExit, resume = false) {
       for (const candidate of backends) {
-        if (candidate.available() && await candidate.findAuthGate(origin)) {
-          backend = candidate;
-          break;
-        }
+        if (!candidate.available() || (!resume && !await candidate.findAuthGate(origin))) continue;
+        // A multi-page login can move the kept tab before the retry finishes.
+        // Reattach only for that retry, not for a later unrelated auth wait.
+        const prompt = await candidate.watchAuthGate?.(origin, onExit, resume);
+        if (prompt) return prompt;
       }
-      if (!backend) {
-        backend = await selectBackend(Date.now() + 15_000);
-        // The first outcome may come from an HTTP tier without binding any page.
-        if (!await backend.openAuthGate?.(origin, target)) return undefined;
-      }
-      return backend.watchAuthGate?.(origin, onExit);
+      if (resume) return undefined; // Never open a replacement tab mid-login.
+      const backend = await selectBackend(Date.now() + 15_000);
+      // The first outcome may come from an HTTP tier without binding any page.
+      if (!await backend.openAuthGate?.(origin, target)) return undefined;
+      return backend.watchAuthGate?.(origin, onExit, resume);
     },
-    async handle(message, emit) {
+    async handle(message, emit, options = {}) {
       if (backgroundCall) {
         emit({
           type: "result",
@@ -392,7 +394,7 @@ export function createBrokerOrchestrator(
             : undefined;
         const work =
           message.type === "call"
-            ? call(message, progress, mutation)
+            ? call(message, progress, mutation, options.authRetry)
             : observe(message, progress);
         const result =
           message.type === "call"

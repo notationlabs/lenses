@@ -139,7 +139,7 @@ export function createCdpBackend(
    * Pages kept by a needs_* outcome, and where they were kept. The map dies
    * with the process: neither CDP transport has durable tab leases.
    */
-  const keptGates = new Map<Page, { target: string; keptUrl: string }>();
+  const keptGates = new Map<Page, { target: string; keptUrl: string; lastMoveUrl?: string }>();
   const watchedGateOrigins = new Set<string>();
 
   const endpointAvailable = () => transport.looksReady();
@@ -472,30 +472,49 @@ export function createCdpBackend(
         return false;
       }
     },
-    async watchAuthGate(origin, onExit) {
+    async watchAuthGate(origin, onExit, resume = false) {
       if (!browser?.connected) return undefined;
       const entry = [...keptGates].find(([page, kept]) =>
-        !page.isClosed() && urlOrigin(kept.target) === origin && sameGatePlace(page.url(), kept.keptUrl)
+        !page.isClosed() && urlOrigin(kept.target) === origin &&
+        (resume || sameGatePlace(page.url(), kept.keptUrl))
       );
       if (!entry) return undefined;
       const [page, kept] = entry;
       const currentBrowser = browser;
       watchedGateOrigins.add(origin);
       let disposed = false;
-      const moved = () => {
-        // An OAuth hop is not a completed login: leave its tab and prompt alone.
-        if (!disposed && urlOrigin(page.url()) === origin &&
-            !sameGatePlace(page.url(), kept.keptUrl)) onExit("moved");
+      let moveTimer: ReturnType<typeof setTimeout> | undefined;
+      // A move only asks for another lens attempt; an intermediate sign-in
+      // step may still return needs_auth and must keep using this same tab.
+      const moved = (frame: { url(): string }) => {
+        if (frame !== page.mainFrame() || disposed) return;
+        clearTimeout(moveTimer);
+        if (urlOrigin(page.url()) !== origin || sameGatePlace(page.url(), kept.keptUrl)) return;
+        moveTimer = setTimeout(() => {
+          if (disposed || urlOrigin(page.url()) !== origin ||
+              sameGatePlace(page.url(), kept.keptUrl)) return;
+          kept.lastMoveUrl = page.url();
+          onExit("moved");
+        }, 750);
       };
       const closed = () => { if (!disposed) onExit("closed"); };
       page.on("framenavigated", moved);
       page.on("close", closed);
       currentBrowser.on("disconnected", closed);
-      const prompt = await showAuthBanner(page, new URL(origin).hostname, () => onExit("cancelled"));
+      const prompt = await showAuthBanner(page, new URL(origin).hostname);
+      // Navigation may have continued while a previous attempt was running.
+      // Retry that new location rather than waiting for a second navigation.
+      const movedWhileRetrying = kept.lastMoveUrl !== undefined &&
+        urlOrigin(page.url()) === origin && !sameGatePlace(page.url(), kept.lastMoveUrl);
+      if (!movedWhileRetrying) kept.keptUrl = page.url();
+      if (movedWhileRetrying) queueMicrotask(() => {
+        if (!disposed) { kept.lastMoveUrl = page.url(); onExit("moved"); }
+      });
       return {
         update: prompt.update,
         dispose() {
           disposed = true;
+          clearTimeout(moveTimer);
           watchedGateOrigins.delete(origin);
           page.off("framenavigated", moved);
           page.off("close", closed);
@@ -654,6 +673,12 @@ export function createCdpBackend(
       cdpSession.closed = true;
       cdpSession.stopRecordingState();
       wakeCaptureWaiters(cdpSession.captures);
+      // A retry can still land on another login step. Keep the user's original
+      // sign-in tab, not an extra tab created just to check authentication.
+      if (disposition === "keep" && cdpSession.created && [...keptGates].some(
+        ([page, kept]) => page !== cdpSession.page && !page.isClosed() &&
+          urlOrigin(kept.target) === urlOrigin(cdpSession.target)
+      )) disposition = "close-if-created";
       if (browser?.connected) {
         try {
           await transport.preparePageRelease?.(
