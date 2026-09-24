@@ -65,6 +65,47 @@ test("periodic checks do not extend the original auth deadline", async () => {
   expect(dispose).toHaveBeenCalledTimes(1);
 });
 
+test("a finishing caller cannot dispose another caller's gate in its poll gap", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(1_000);
+  const dispose = vi.fn();
+  let moved!: (reason: "moved") => void;
+  const watch = vi.fn(async (_origin, _target, exit) => {
+    moved = exit;
+    return { update() {}, dispose };
+  });
+  const leases = createAuthLeases(watch);
+  const origin = "https://example.com";
+  leases.retain(origin);
+  leases.retain(origin);
+  const first = leases.wait(origin, "/login", 8_000);
+  const second = leases.wait(origin, "/login", 8_000);
+  await vi.advanceTimersByTimeAsync(1_000);
+  expect(await Promise.all([first, second])).toEqual(["poll", "poll"]);
+  leases.close(origin);
+  expect(dispose).not.toHaveBeenCalled();
+  moved("moved");
+  expect(dispose).toHaveBeenCalledTimes(1);
+  leases.close(origin);
+  expect(watch).toHaveBeenCalledTimes(1);
+});
+
+test("an unavailable initial gate may be opened on the next wait", async () => {
+  const watch = vi.fn().mockResolvedValueOnce(undefined).mockResolvedValueOnce({ update() {}, dispose() {} });
+  const leases = createAuthLeases(watch);
+  const origin = "https://example.com";
+  leases.retain(origin);
+  expect(await leases.wait(origin, "/login", Date.now() + 5_000)).toBe("unavailable");
+  const controller = new AbortController();
+  const waiting = leases.wait(origin, "/login", Date.now() + 5_000, controller.signal);
+  await Promise.resolve();
+  expect(watch).toHaveBeenCalledTimes(2);
+  expect(watch.mock.calls[1][3]).toBe(false);
+  controller.abort();
+  expect(await waiting).toBe("cancelled");
+  leases.close(origin);
+});
+
 test("cancel ends every waiter", async () => {
   let exit!: (reason: "moved" | "closed" | "cancelled" | "expired") => void;
   const leases = createAuthLeases(async (_origin, _target, callback) => {

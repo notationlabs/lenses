@@ -9,9 +9,13 @@ export async function showAuthBanner(
   let script: string | undefined;
   let disposed = false;
   let generation = 0;
+  let last: string | undefined;
   let pending = Promise.resolve();
   const update = (expiresAt: number, count: number) => {
     if (disposed) return;
+    const state = `${expiresAt}:${count}`;
+    if (state === last) return;
+    last = state;
     const current = ++generation;
     pending = pending.then(async () => {
       if (disposed || current !== generation) return;
@@ -41,9 +45,15 @@ export async function showAuthBanner(
 function paintAuthBanner({ key, site, expiresAt, count }: {
   key: string; site: string; expiresAt: number; count: number;
 }): void {
+  type BannerHost = HTMLDivElement & { updateAuth?: (deadline: number, waiting: number) => void };
   const mount = () => {
-    document.getElementById(key)?.remove();
-    const host = document.createElement("div");
+    const existing = document.getElementById(key) as BannerHost | null;
+    if (existing?.updateAuth) {
+      existing.updateAuth(expiresAt, count);
+      return;
+    }
+    existing?.remove();
+    const host: BannerHost = document.createElement("div");
     host.id = key;
     host.setAttribute("data-lenses-auth", "");
     document.body.prepend(host);
@@ -59,14 +69,29 @@ function paintAuthBanner({ key, site, expiresAt, count }: {
     const timer = document.createElement("time");
     box.append(brand, label, timer);
     shadow.replaceChildren(box);
+    let deadline = expiresAt;
+    let waiting = count;
+    let ticking = false;
     const tick = () => {
-      if (!host?.isConnected) return;
-      const seconds = Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000));
-      label.textContent = `Sign in to ${site} to continue${count > 1 ? ` (${count} requests waiting)` : ""}`;
+      if (!host.isConnected) { ticking = false; return; }
+      const seconds = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+      label.textContent = `Sign in to ${site} to continue${waiting > 1 ? ` (${waiting} requests waiting)` : ""}`;
       timer.textContent = `(${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")})`;
       if (seconds > 0) setTimeout(tick, 1000);
+      else ticking = false;
     };
-    tick();
+    host.updateAuth = (nextDeadline, nextCount) => {
+      deadline = nextDeadline;
+      waiting = nextCount;
+      if (!ticking) ticking = true;
+      else {
+        // Refresh the label now; the existing timer continues the countdown.
+        label.textContent = `Sign in to ${site} to continue${waiting > 1 ? ` (${waiting} requests waiting)` : ""}`;
+        return;
+      }
+      tick();
+    };
+    host.updateAuth(expiresAt, count);
   };
   if (document.body) mount();
   else document.addEventListener("DOMContentLoaded", mount, { once: true });

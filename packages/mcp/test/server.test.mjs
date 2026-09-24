@@ -37,7 +37,7 @@ test("a pending login call reports MCP progress when the caller supplies a token
   let complete;
   const server = createLensMcpServer({
     call: () => new Promise((resolve) => { complete = resolve; }),
-  });
+  }, 20);
   t.after(() => server.close());
   const { clientTransport, request, notifications } = await connect(server);
   await request("initialize", {
@@ -46,7 +46,15 @@ test("a pending login call reports MCP progress when the caller supplies a token
   });
   await clientTransport.send({ jsonrpc: "2.0", method: "notifications/initialized" });
   const pending = request("tools/call", { name: "lens_call", arguments: { lens: "example" } }, { progressToken: "login" });
-  await new Promise((resolve) => setTimeout(resolve, 10_100));
+  await new Promise((resolve, reject) => {
+    const deadline = setTimeout(() => reject(new Error("no progress notification")), 1_000);
+    const check = setInterval(() => {
+      if (notifications.length === 0) return;
+      clearInterval(check);
+      clearTimeout(deadline);
+      resolve();
+    }, 5);
+  });
   assert.equal(notifications.at(-1)?.params.progressToken, "login");
   complete({ kind: "value", value: 1 });
   const response = await pending;

@@ -142,6 +142,8 @@ class FakeBackend implements BrowserBackend {
     for (const listener of this.statusListeners) listener();
   }
 
+  hasOpenTarget?: BrowserBackend["hasOpenTarget"];
+
   async findAuthGate(origin: string) {
     if (!this.authGate) return undefined;
     return new URL(this.authGate.target).origin === origin
@@ -191,6 +193,20 @@ async function request(
 }
 
 describe("broker orchestration", () => {
+  it("does not navigate or reload an intercept lens during an auth retry", async () => {
+    const backend = new FakeBackend("cdp");
+    backend.hasOpenTarget = async () => true;
+    const orchestrator = createBrokerOrchestrator([backend]);
+    const spec = domSpec({
+      resolve: [{ kind: "intercept", request: "GET https://example.com/api/*", waitMs: 0 }],
+    });
+    const frames: BrokerFrame[] = [];
+    await orchestrator.handle({ type: "call", id: "retry", spec, params: {}, timeoutMs: 500 },
+      (frame) => frames.push(frame), { authRetry: true });
+    expect(backend.binds[0]).toMatchObject({ navigation: "reuse", existingOnly: true });
+    expect(backend.session.reloads).toBe(0);
+  });
+
   it("bounds a stuck call and identifies it in the timeout", async () => {
     const backend = new FakeBackend("playwright-extension");
     backend.bind = async () => new Promise<BrowserSession>(() => {});
@@ -1065,6 +1081,18 @@ describe("write consent and execution", () => {
         performed: "unknown",
       },
     });
+  });
+
+  it("omits mutation diagnostics for an idempotent perform timeout", async () => {
+    const backend = new FakeBackend("cdp");
+    backend.session.perform = async () => new Promise<PerformResult>(() => {});
+    const result = await request(createBrokerOrchestrator([backend]), {
+      type: "call", id: "idempotent", params: {}, timeoutMs: 20,
+      deadline: Date.now() + 20, allowWrites: true,
+      spec: performSpec({ effects: { reads: [], writes: ["example.com"], idempotent: true } }),
+    });
+    expect(result).toMatchObject({ kind: "error" });
+    expect(result).not.toHaveProperty("mutation");
   });
 
   it("bypasses the result cache for perform specs, whatever effects.cache claims", async () => {
