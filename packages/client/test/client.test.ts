@@ -20,6 +20,7 @@ class FakeTransport implements LensTransport {
   calls = 0;
   lastParams: Record<string, unknown> | undefined;
   lastAllowWrites: boolean | undefined;
+  lastNoCache: boolean | undefined;
   lastRecording: RecordingTarget | undefined;
   result: LensTransportResult = { kind: "value", value: { ok: true }, resolver: "dom" };
 
@@ -28,11 +29,14 @@ class FakeTransport implements LensTransport {
     params: Record<string, unknown>,
     _timeoutMs?: number,
     allowWrites?: boolean,
-    recording?: RecordingTarget
+    recording?: RecordingTarget,
+    _authLeaseMs?: number,
+    noCache?: boolean
   ): Promise<LensResult> {
     this.calls++;
     this.lastParams = params;
     this.lastAllowWrites = allowWrites;
+    this.lastNoCache = noCache;
     this.lastRecording = recording;
     return this.result;
   }
@@ -135,6 +139,27 @@ describe("LensClient", () => {
     expect(await client.call(input)).toMatchObject({ kind: "value" });
     expect(await client.call(input)).toMatchObject({ kind: "value", cached: true });
     expect(transport.calls).toBe(1);
+  });
+
+  it("bypasses the client cache without replacing it and forwards noCache", async () => {
+    const transport = new FakeTransport();
+    const client = new LensClient(new LensStore(await fixtureDirectory()), transport);
+    const input = { lens: "web/page" };
+
+    await client.call(input);
+    transport.result = { kind: "value", value: { ok: false }, resolver: "dom" };
+    expect(await client.call({ ...input, noCache: true })).toMatchObject({
+      kind: "value",
+      value: { ok: false },
+    });
+
+    expect(transport.calls).toBe(2);
+    expect(transport.lastNoCache).toBe(true);
+    expect(await client.call(input)).toMatchObject({
+      kind: "value",
+      value: { ok: true },
+      cached: true,
+    });
   });
 
   it("passes allowWrites through to the broker call, defaulting absent", async () => {

@@ -480,6 +480,41 @@ describe("broker orchestration", () => {
     vi.useRealTimers();
   });
 
+  it("bypasses the broker cache without caching the result", async () => {
+    const backend = new FakeBackend("cdp", true);
+    const orchestrator = createBrokerOrchestrator([backend]);
+    const spec = domSpec({ effects: { reads: ["example.com"], writes: [], cache: 60 } });
+    const call = (id: string, noCache = false) =>
+      request(orchestrator, { type: "call", id, spec, params: {}, timeoutMs: 1000, noCache });
+
+    await call("first");
+    const fresh = await call("uncached", true);
+    const cached = await call("cached");
+
+    expect(backend.binds).toHaveLength(2);
+    expect(fresh).not.toHaveProperty("cached");
+    expect(cached).toMatchObject({ kind: "value", cached: true });
+
+    const emptyBackend = new FakeBackend("cdp", true);
+    const emptyOrchestrator = createBrokerOrchestrator([emptyBackend]);
+    await request(emptyOrchestrator, {
+      type: "call",
+      id: "uncached-first",
+      spec,
+      params: {},
+      timeoutMs: 1000,
+      noCache: true,
+    });
+    await request(emptyOrchestrator, {
+      type: "call",
+      id: "cache-fill",
+      spec,
+      params: {},
+      timeoutMs: 1000,
+    });
+    expect(emptyBackend.binds).toHaveLength(2);
+  });
+
   it("fails on backend loss without switching backend mid-call", async () => {
     const session = new FakeSession();
     session.failDom = new Error("Playwright Extension disconnected");

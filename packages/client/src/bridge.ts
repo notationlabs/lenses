@@ -61,7 +61,9 @@ export interface LensTransport {
     /** consent for a spec with `perform` steps; the broker denies without it */
     allowWrites?: boolean,
     recording?: RecordingTarget,
-    authLeaseMs?: number
+    authLeaseMs?: number,
+    /** bypass the broker cache without storing the result */
+    noCache?: boolean
   ): Promise<LensTransportResult>;
   observe(
     target: string,
@@ -211,7 +213,8 @@ export class BrowserBridge implements LensTransport {
     timeoutMs = 90_000,
     allowWrites?: boolean,
     recording?: RecordingTarget,
-    authLeaseMs = 0
+    authLeaseMs = 0,
+    noCache?: boolean
   ): Promise<LensTransportResult> {
     return this.request(
       (id) => ({
@@ -223,6 +226,7 @@ export class BrowserBridge implements LensTransport {
         authLeaseMs,
         deadline: Date.now() + timeoutMs,
         ...(allowWrites !== undefined ? { allowWrites } : {}),
+        ...(noCache !== undefined ? { noCache } : {}),
         ...(recording ? { recording } : {}),
       }),
       // Leave a small delivery margin so the broker's needs_auth result on

@@ -95,11 +95,11 @@ export type LensCallResult<Result> =
 /** The client from \`@djgrant/lenses\` with \`call\` and \`value\` typed against the generated lens map. */
 export interface LensClient extends Omit<BaseLensClient, "call" | "value"> {
   call<Name extends LensName>(
-    input: { lens: Name; timeoutMs?: number; strict?: boolean } & ParamsArg<Lenses[Name]["params"]>
+    input: { lens: Name; timeoutMs?: number; strict?: boolean; noCache?: boolean } & ParamsArg<Lenses[Name]["params"]>
   ): Promise<LensCallResult<Lenses[Name]["result"]>>;
   /** \`call()\` unwrapped: the value, or a thrown LensOutcomeError / LensResultError. */
   value<Name extends LensName>(
-    input: { lens: Name; timeoutMs?: number; strict?: boolean } & ParamsArg<Lenses[Name]["params"]>
+    input: { lens: Name; timeoutMs?: number; strict?: boolean; noCache?: boolean } & ParamsArg<Lenses[Name]["params"]>
   ): Promise<Lenses[Name]["result"]>;
 }
 
