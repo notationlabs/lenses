@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const state = vi.hoisted(() => ({
@@ -15,6 +16,11 @@ vi.mock("puppeteer-core", () => ({
     connect: () => state.connect?.(),
   },
 }));
+
+vi.mock("../src/auth-banner.js", () => ({
+  showAuthBanner: async () => ({ update: () => {}, dispose: () => {} }),
+}));
+vi.mock("../src/launch-browser.js", () => ({ raiseChrome: async () => {} }));
 
 import { createCdpBackend } from "../src/cdp-host.js";
 
@@ -60,6 +66,135 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.useRealTimers();
+});
+
+describe("CDP sign-in gate", () => {
+  it("discards pre-login captures when a retry binds the departed kept tab", async () => {
+    const origin = "https://example.com";
+    const target = `${origin}/settings`;
+    class GatePage extends EventEmitter {
+      currentUrl = "about:blank";
+      url() { return this.currentUrl; }
+      isClosed() { return false; }
+      mainFrame() { return this; }
+      async goto() { this.currentUrl = `${origin}/login`; }
+      async bringToFront() {}
+      async title() { return "test"; }
+      async reload() { this.emit("response", response(200)); }
+      navigate(url: string) { this.currentUrl = url; }
+    }
+    const response = (status: number) => ({
+      headers: () => ({ "content-type": "application/json" }),
+      text: async () => JSON.stringify({ signedIn: status === 200 }),
+      url: () => `${origin}/api/usage`,
+      request: () => ({ method: () => "GET" }),
+      status: () => status,
+    });
+    const page = new GatePage();
+    const browser = Object.assign(new EventEmitter(), {
+      connected: true,
+      version: async () => "Chrome/144.0.0.0",
+      newPage: vi.fn(async () => page),
+      pages: async () => [page],
+    });
+    const host = createCdpBackend(() => {}, {
+      name: "test", pollForConnection: false, retryConnect: false,
+      looksReady: () => true, probeLive: async () => true,
+      connect: async () => browser as never,
+      connectHint: () => "test", staleHint: () => "test",
+    });
+    await host.acquire();
+    expect(await host.openAuthGate(origin, target)).toBe(true);
+    // Install the capture listener while the original login form is open.
+    const form = await host.bind({ target: `${origin}/login`, existingOnly: true, navigation: "reuse", loadTimeoutMs: 100 });
+    expect(form.atAuthGate).toBe(true);
+    page.emit("response", response(401));
+    await Promise.resolve();
+    expect((await form.readIntercepts(0, 0)).captures).toMatchObject([{ status: 401 }]);
+    await host.finish(form, "close-if-created");
+
+    page.navigate(target);
+    expect(await host.hasOpenTarget?.(target)).toBe(true);
+    const retry = await host.bind({ target, existingOnly: true, navigation: "reuse", loadTimeoutMs: 100 });
+    expect(retry.atAuthGate).toBe(false);
+    expect((await retry.readIntercepts(0, 0)).captures).toEqual([]);
+    expect(browser.newPage).toHaveBeenCalledTimes(1);
+    await host.finish(retry, "close-if-created");
+  });
+
+  it("keeps the original gate place across retries, but watches each new login step", async () => {
+    const origin = "https://example.com";
+    const target = `${origin}/login`;
+    class GatePage extends EventEmitter {
+      currentUrl = "about:blank";
+      closed = false;
+      url() { return this.currentUrl; }
+      isClosed() { return this.closed; }
+      mainFrame() { return this; }
+      async goto(url: string) { this.currentUrl = url; }
+      async bringToFront() {}
+      async close() { this.closed = true; this.emit("close"); }
+      navigate(url: string) { this.currentUrl = url; this.emit("framenavigated", this); }
+    }
+    const page = new GatePage();
+    const browser = Object.assign(new EventEmitter(), {
+      connected: true,
+      version: async () => "Chrome/144.0.0.0",
+      newPage: vi.fn(async () => page),
+      pages: async () => [page],
+      disconnect() { this.connected = false; this.emit("disconnected"); },
+    });
+    const host = createCdpBackend(() => {}, {
+      name: "test", pollForConnection: false, retryConnect: false,
+      looksReady: () => true, probeLive: async () => true,
+      connect: async () => browser as never,
+      connectHint: () => "test", staleHint: () => "test",
+    });
+    await host.acquire();
+    expect(await host.openAuthGate(origin, target)).toBe(true);
+    expect(browser.newPage).toHaveBeenCalledTimes(1);
+    const exits: string[] = [];
+    vi.useFakeTimers();
+    try {
+      let watch = await host.watchAuthGate(origin, (reason) => exits.push(reason));
+      expect(watch).toBeDefined();
+      page.navigate(`${origin}/login/password?step=1`);
+      await vi.advanceTimersByTimeAsync(750);
+      expect(exits).toEqual(["moved"]);
+      watch!.dispose();
+      expect(await host.findAuthGate(origin)).toBeUndefined();
+
+      // A retry still needs auth on an intermediate page. Resume the same tab,
+      // without treating its already-observed movement as a new move.
+      expect(await host.watchAuthGate(origin, () => {})).toBeUndefined();
+      watch = await host.watchAuthGate(origin, (reason) => exits.push(reason), true);
+      expect(watch).toBeDefined();
+      expect(browser.newPage).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(750);
+      expect(exits).toEqual(["moved"]);
+      expect(await host.findAuthGate(origin)).toEqual({ url: page.url(), target });
+      page.navigate(`${origin}/login/password?step=2#fragment`);
+      await vi.advanceTimersByTimeAsync(750);
+      expect(exits).toEqual(["moved"]);
+      page.navigate(`${origin}/protected`);
+      await vi.advanceTimersByTimeAsync(750);
+      expect(exits).toEqual(["moved", "moved"]);
+      watch!.dispose();
+      // Even if the retry on /protected still says needs_auth, attaching a
+      // fresh watcher must not make /protected the original gate place.
+      watch = await host.watchAuthGate(origin, (reason) => exits.push(reason), true);
+      expect(watch).toBeDefined();
+      await vi.advanceTimersByTimeAsync(750);
+      expect(exits).toEqual(["moved", "moved"]);
+      watch!.dispose();
+      expect(await host.findAuthGate(origin)).toBeUndefined();
+      vi.useRealTimers();
+      expect(await host.openAuthGate(origin, target)).toBe(true);
+      expect(browser.newPage).toHaveBeenCalledTimes(2);
+    } finally {
+      await host.release();
+    }
+  });
 });
 
 describe("CDP host connection lifecycle", () => {

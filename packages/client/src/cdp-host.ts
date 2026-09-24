@@ -312,7 +312,8 @@ export function createCdpBackend(
     created: boolean,
     navigated: boolean,
     target: string,
-    loadTimeoutMs: number
+    loadTimeoutMs: number,
+    atAuthGate?: boolean
   ): CdpSession {
     let documentRevision = 0;
     let loading = false;
@@ -330,6 +331,7 @@ export function createCdpBackend(
       id: `cdp_${++sessionSequence}`,
       created,
       navigated,
+      atAuthGate,
       page,
       target,
       captures: captures(page),
@@ -482,6 +484,9 @@ export function createCdpBackend(
       if (!entry) return undefined;
       const [page, kept] = entry;
       const currentBrowser = browser;
+      // Track movement from this watch's starting page, not the original gate.
+      // The latter must remain fixed so a completed login stops matching.
+      const watchUrl = page.url();
       watchedGateOrigins.add(origin);
       let disposed = false;
       let moveTimer: ReturnType<typeof setTimeout> | undefined;
@@ -490,10 +495,10 @@ export function createCdpBackend(
       const moved = (frame: { url(): string }) => {
         if (frame !== page.mainFrame() || disposed) return;
         clearTimeout(moveTimer);
-        if (urlOrigin(page.url()) !== origin || sameGatePlace(page.url(), kept.keptUrl)) return;
+        if (urlOrigin(page.url()) !== origin || sameGatePlace(page.url(), watchUrl)) return;
         moveTimer = setTimeout(() => {
           if (disposed || urlOrigin(page.url()) !== origin ||
-              sameGatePlace(page.url(), kept.keptUrl)) return;
+              sameGatePlace(page.url(), watchUrl)) return;
           kept.lastMoveUrl = page.url();
           onExit("moved");
         }, 750);
@@ -505,9 +510,10 @@ export function createCdpBackend(
       const prompt = await showAuthBanner(page, new URL(origin).hostname);
       // Navigation may have continued while a previous attempt was running.
       // Retry that new location rather than waiting for a second navigation.
-      const movedWhileRetrying = kept.lastMoveUrl !== undefined &&
-        urlOrigin(page.url()) === origin && !sameGatePlace(page.url(), kept.lastMoveUrl);
-      if (!movedWhileRetrying) kept.keptUrl = page.url();
+      const movedWhileRetrying = urlOrigin(page.url()) === origin && (
+        !sameGatePlace(page.url(), watchUrl) ||
+        (kept.lastMoveUrl !== undefined && !sameGatePlace(page.url(), kept.lastMoveUrl))
+      );
       if (movedWhileRetrying) queueMicrotask(() => {
         if (!disposed) { kept.lastMoveUrl = page.url(); onExit("moved"); }
       });
@@ -644,6 +650,13 @@ export function createCdpBackend(
       const current = await ensureBrowser(() => {});
       const existing = await findPage(current, request.target);
       if (existing) {
+        const kept = keptGates.get(existing);
+        // A retry that has left the original sign-in place must not resolve
+        // against responses captured before login (even if they match first).
+        const atAuthGate = request.existingOnly
+          ? !kept || sameGatePlace(existing.url(), kept.keptUrl)
+          : undefined;
+        if (atAuthGate === false) resetCaptures(existing);
         const state =
           request.navigation === "fresh"
             ? (await reloadPage(existing, request.loadTimeoutMs),
@@ -654,7 +667,8 @@ export function createCdpBackend(
           false,
           request.navigation === "fresh",
           request.target,
-          request.loadTimeoutMs
+          request.loadTimeoutMs,
+          atAuthGate
         );
         session.captures = state;
         return session;
