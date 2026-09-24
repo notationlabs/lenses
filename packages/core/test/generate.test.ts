@@ -74,6 +74,7 @@ describe("generateTsSdk", () => {
   it("emits a narrowed value() beside call() and re-exports the error classes", () => {
     const source = generateTsSdk([spec({ name: "@example/web/page", returns: "string" })]);
     expect(source).toContain('Promise<Lenses[Name]["result"]>;');
+    expect(source.match(/authLeaseMs\?: number/g)).toHaveLength(2);
     expect(source).toContain(
       'export { LensOutcomeError, LensResultError } from "@djgrant/lenses";'
     );

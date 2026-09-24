@@ -154,7 +154,8 @@ export function createBrokerOrchestrator(
     message: Extract<LensBridgeRequest, { type: "call" }>,
     progress: (text: string) => void,
     mutation?: MutationTracker,
-    authRetry = false
+    authRetry = false,
+    onPerformStarted: () => void = () => {}
   ): Promise<LensResult> {
     // The client timeout covers the complete call, including recorder setup
     // and final capture; screenshot RPCs must use its remaining budget rather
@@ -293,7 +294,8 @@ export function createBrokerOrchestrator(
       progress,
       httpFetch,
       mutation,
-      authRetry
+      authRetry,
+      onPerformStarted
     );
     let result: LensResult | undefined;
     try {
@@ -404,6 +406,7 @@ export function createBrokerOrchestrator(
         if (!completed) emit({ type: "progress", id: message.id, message: text });
       };
       try {
+        let performStarted = false;
         const mutation =
           message.type === "call" &&
           (message.spec.perform?.length ?? 0) > 0 && message.spec.effects.idempotent !== true
@@ -411,7 +414,7 @@ export function createBrokerOrchestrator(
             : undefined;
         const work =
           message.type === "call"
-            ? call(message, progress, mutation, options.authRetry)
+            ? call(message, progress, mutation, options.authRetry, () => { performStarted = true; })
             : observe(message, progress);
         const result =
           message.type === "call"
@@ -437,7 +440,7 @@ export function createBrokerOrchestrator(
           type: "result", id: message.id, result,
           ...(message.type === "call" ? {
             authReplaySafe: !specWrites(message.spec) ||
-              ((message.spec.perform?.length ?? 0) > 0 && !mutation?.snapshot().performStarted),
+              ((message.spec.perform?.length ?? 0) > 0 && !performStarted),
           } : {}),
         });
       } catch (error) {
@@ -652,7 +655,8 @@ export function createSessionEngineIO(
   progress: (message: string) => void = () => {},
   httpFetch?: EngineIO["httpFetch"],
   mutation?: MutationTracker,
-  authRetry = false
+  authRetry = false,
+  onPerformStarted: () => void = () => {}
 ): EngineIO {
   let cursor = 0;
   let captures: InterceptedResponse[] = [];
@@ -682,9 +686,9 @@ export function createSessionEngineIO(
     },
     async reload() {
       const session = await acquire();
-      // An auth retry observes the existing login form and its captures;
-      // never reload it just to generate fresh intercept traffic.
-      if (authRetry) return;
+      // Never disturb the original login form. Once the kept tab has left
+      // that place, reloadOnMiss may generate fresh authenticated traffic.
+      if (authRetry && session.atAuthGate !== false) return;
       if (navigationIsFresh) {
         navigationIsFresh = false;
         progress("using the page's fresh navigation for intercept capture");
@@ -701,6 +705,7 @@ export function createSessionEngineIO(
       const session = await acquire();
       for (let index = 0; index < steps.length; index += 1) {
         const step = steps[index];
+        onPerformStarted();
         mutation?.started(step);
         progress(`perform step ${index + 1}/${steps.length} started: ${describePerformStep(step)}`);
         const result = await session.perform([step]);
@@ -823,12 +828,15 @@ async function findGateQuietly(
  * place of the detection context the lens would have seen.
  */
 function gateOutcome(spec: LensSpec, signInUrl: string): LensResult {
-  const declared = [
+  const names = [
     ...spec.resolve.flatMap((resolver) =>
       "exceptions" in resolver ? Object.keys(resolver.exceptions ?? {}) : []
     ),
     ...Object.keys(spec.exceptions ?? {}),
-  ].find((name) => name.startsWith("needs_"));
+  ];
+  const declared = names.includes("needs_auth")
+    ? "needs_auth"
+    : names.find((name) => name.startsWith("needs_"));
   return {
     kind: "outcome",
     name: declared ?? "needs_auth",

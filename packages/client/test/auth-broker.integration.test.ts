@@ -6,7 +6,26 @@ import { WebSocket } from "ws";
 import { describe, expect, it, vi } from "vitest";
 import { authProof } from "../src/broker-auth.js";
 
-const state = vi.hoisted(() => ({ browser: undefined as unknown }));
+const state = vi.hoisted(() => ({
+  browser: undefined as unknown,
+  leaseDeadlines: [] as Array<{ expiresAt: number; observedAt: number }>,
+}));
+vi.mock("../src/auth-leases.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/auth-leases.js")>();
+  return {
+    ...actual,
+    createBrokerAuthLeases: (...args: Parameters<typeof actual.createBrokerAuthLeases>) => {
+      const leases = actual.createBrokerAuthLeases(...args);
+      return {
+        ...leases,
+        wait: (...waitArgs: Parameters<typeof leases.wait>) => {
+          state.leaseDeadlines.push({ expiresAt: waitArgs[2], observedAt: Date.now() });
+          return leases.wait(...waitArgs);
+        },
+      };
+    },
+  };
+});
 vi.mock("../src/cdp-host.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/cdp-host.js")>();
   return {
@@ -69,6 +88,7 @@ describe.skipIf(!existsSync(chrome))("broker WebSocket auth lease", () => {
     const exit = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
     let browser: Awaited<ReturnType<typeof puppeteer.launch>> | undefined;
     let socket: WebSocket | undefined;
+    state.leaseDeadlines.length = 0;
     try {
       browser = await puppeteer.launch({ executablePath: chrome, headless: true, args: ["--no-sandbox"] });
       state.browser = browser;
@@ -98,6 +118,11 @@ describe.skipIf(!existsSync(chrome))("broker WebSocket auth lease", () => {
       }));
       await vi.waitFor(() => expect(frames.filter((frame) => frame.type === "progress" &&
         frame.message?.includes("waiting for sign-in"))).toHaveLength(1), { timeout: 12_000 });
+      expect(state.leaseDeadlines).not.toHaveLength(0);
+      expect(state.leaseDeadlines[0].expiresAt - state.leaseDeadlines[0].observedAt)
+        .toBeGreaterThan(11_000);
+      expect(state.leaseDeadlines[0].expiresAt - state.leaseDeadlines[0].observedAt)
+        .toBeLessThanOrEqual(12_000);
       const login = (await browser.pages()).find((page) => page.url().endsWith("/login"));
       expect(login).toBeDefined();
       let form = login!;
@@ -114,6 +139,8 @@ describe.skipIf(!existsSync(chrome))("broker WebSocket auth lease", () => {
       const created = () => { createdDuringPoll++; };
       browser.on("targetcreated", created);
       await new Promise((resolve) => setTimeout(resolve, 2_300));
+      expect(state.leaseDeadlines.length).toBeGreaterThan(1);
+      expect(state.leaseDeadlines.every(({ expiresAt }) => expiresAt === state.leaseDeadlines[0].expiresAt)).toBe(true);
       expect(createdDuringPoll).toBe(0);
       expect(frames.filter((frame) => frame.type === "result" && frame.id === "multi-page")).toHaveLength(0);
       expect(form.url()).toBe(`${origin}/login/password`);

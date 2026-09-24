@@ -351,9 +351,10 @@ function onClientMessage(client: WebSocket, raw: string): void {
   const onClose = () => cancelled.abort();
   client.on("close", onClose);
   void (async () => {
-    const authExpiresAt = message.type === "call" && message.authLeaseMs
-      ? (message.deadline ?? Date.now() + message.timeoutMs) + message.authLeaseMs
-      : 0;
+    // The execution deadline covers the first attempt; the sign-in lease
+    // begins only when that attempt actually returns needs_auth.
+    let authExpiresAt = 0;
+    const authLeaseMs = message.type === "call" ? message.authLeaseMs ?? 0 : 0;
     let attempt = 0;
     let resumeGate = false;
     let authOutcome: Extract<import("./broker-orchestrator.js").BrokerFrame, { type: "result" }> | undefined;
@@ -414,8 +415,10 @@ function onClientMessage(client: WebSocket, raw: string): void {
           await orchestrator.handle(
             message.type === "call" && attempt > 0 ? { ...message, deadline } : message,
             (frame) => {
-              if (frame.type === "result" && message.type === "call" && authExpiresAt > Date.now() &&
+              if (frame.type === "result" && message.type === "call" && authLeaseMs > 0 &&
+                  (authExpiresAt === 0 || authExpiresAt > Date.now()) &&
                   frame.result.kind === "outcome" && frame.result.name === "needs_auth" && frame.authReplaySafe) {
+                authExpiresAt ||= Date.now() + authLeaseMs;
                 intercepted = frame;
               } else send(client, frame);
             },

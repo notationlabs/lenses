@@ -89,6 +89,8 @@ export interface BrowserSession {
   readonly id: string;
   readonly created: boolean;
   readonly navigated: boolean;
+  /** Auth retry bound the original kept sign-in place (or cannot prove it left). */
+  readonly atAuthGate?: boolean;
   reload(loadTimeoutMs: number): Promise<void>;
   readIntercepts(cursor: number, deadline: number): Promise<InterceptDelta>;
   domExtract(resolver: DomResolver): Promise<DomExtractResult>;

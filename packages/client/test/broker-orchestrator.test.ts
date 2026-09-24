@@ -35,7 +35,8 @@ const capture = (body: string): InterceptedResponse => ({
 class FakeSession implements BrowserSession {
   readonly id = "fake_session";
   readonly created = true;
-  readonly navigated = true;
+  navigated = true;
+  atAuthGate?: boolean;
   reads: InterceptDelta[] = [];
   deadlines: number[] = [];
   reloads = 0;
@@ -196,15 +197,82 @@ describe("broker orchestration", () => {
   it("does not navigate or reload an intercept lens during an auth retry", async () => {
     const backend = new FakeBackend("cdp");
     backend.hasOpenTarget = async () => true;
+    backend.session.navigated = false;
+    backend.session.atAuthGate = true;
     const orchestrator = createBrokerOrchestrator([backend]);
     const spec = domSpec({
-      resolve: [{ kind: "intercept", request: "GET https://example.com/api/*", waitMs: 0 }],
+      resolve: [{ kind: "intercept", request: "GET https://example.com/api/*", reloadOnMiss: true, waitMs: 0 }],
     });
     const frames: BrokerFrame[] = [];
     await orchestrator.handle({ type: "call", id: "retry", spec, params: {}, timeoutMs: 500 },
       (frame) => frames.push(frame), { authRetry: true });
     expect(backend.binds[0]).toMatchObject({ navigation: "reuse", existingOnly: true });
     expect(backend.session.reloads).toBe(0);
+  });
+
+  it.each([
+    {
+      location: "document",
+      exceptions: { needs_captcha: null, needs_auth: null },
+      resolverExceptions: {},
+      expected: "needs_auth",
+    },
+    {
+      location: "resolver",
+      exceptions: { needs_captcha: null },
+      resolverExceptions: { needs_consent: null, needs_auth: null },
+      expected: "needs_auth",
+    },
+    {
+      location: "no auth exception",
+      exceptions: { needs_captcha: null },
+      resolverExceptions: { needs_consent: null },
+      expected: "needs_consent",
+    },
+  ])("chooses $expected for a missing target during auth retry ($location)", async ({ exceptions, resolverExceptions, expected }) => {
+    const backend = new FakeBackend("cdp");
+    backend.hasOpenTarget = async () => false;
+    const spec = domSpec({
+      exceptions,
+      resolve: [{ kind: "dom", exceptions: resolverExceptions, fields: { title: { selector: "h1" } } }],
+    });
+    const frames: BrokerFrame[] = [];
+    await createBrokerOrchestrator([backend]).handle(
+      { type: "call", id: "retry", spec, params: {}, timeoutMs: 500 },
+      (frame) => frames.push(frame), { authRetry: true }
+    );
+    expect(frames.find((frame) => frame.type === "result")).toMatchObject({
+      result: { kind: "outcome", name: expected, value: { url: spec.url } },
+    });
+    expect(backend.binds).toHaveLength(0);
+  });
+
+  it("reloads a departed auth tab on intercept miss", async () => {
+    const session = new FakeSession();
+    session.navigated = false;
+    session.atAuthGate = false;
+    const backend = new FakeBackend("cdp", true, session);
+    backend.hasOpenTarget = async () => true;
+    const response: InterceptedResponse = {
+      ...capture("api/usage"), url: "https://example.com/api/usage", body: '{"signedIn":true}',
+    };
+    session.reload = async () => {
+      session.reloads++;
+      session.reads.push({ captures: [response], nextCursor: 1, truncated: false });
+    };
+    const spec = domSpec({
+      resolve: [{ kind: "intercept", request: "GET https://example.com/api/*", reloadOnMiss: true, waitMs: 100 }],
+    });
+    const frames: BrokerFrame[] = [];
+    await createBrokerOrchestrator([backend]).handle(
+      { type: "call", id: "retry", spec, params: {}, timeoutMs: 500 },
+      (frame) => frames.push(frame), { authRetry: true }
+    );
+    expect(backend.binds).toMatchObject([{ existingOnly: true, navigation: "reuse" }]);
+    expect(session.reloads).toBe(1);
+    expect(frames.find((frame) => frame.type === "result")).toMatchObject({
+      result: { kind: "value", value: { signedIn: true } },
+    });
   });
 
   it("bounds a stuck call and identifies it in the timeout", async () => {
@@ -327,6 +395,31 @@ describe("broker orchestration", () => {
     }, (frame) => frames.push(frame));
     expect(frames.find((frame) => frame.type === "result")).toMatchObject({
       result: { kind: "outcome", name: "needs_auth" }, authReplaySafe: false,
+    });
+  });
+
+  it.each([
+    { stage: "before", replaySafe: true, performCalls: 0 },
+    { stage: "after", replaySafe: false, performCalls: 1 },
+  ])("marks idempotent perform needs_auth $stage a step as replay-safe: $replaySafe", async ({ stage, replaySafe, performCalls }) => {
+    const session = new FakeSession();
+    if (stage === "before") {
+      session.domResult = { url: "https://example.com/login", title: "Login", value: null };
+    } else {
+      session.performResult = { url: "https://example.com/login", title: "Login", failedStep: 0 };
+    }
+    const frames: BrokerFrame[] = [];
+    await createBrokerOrchestrator([new FakeBackend("cdp", true, session)]).handle({
+      type: "call", id: `idempotent-auth-${stage}`, params: {}, timeoutMs: 1000, allowWrites: true,
+      spec: domSpec({
+        effects: { reads: [], writes: ["example.com"], idempotent: true },
+        exceptions: { needs_auth: { matches: "title = 'Login'" } },
+        perform: [{ navigate: "https://example.com/next" }],
+      }),
+    }, (frame) => frames.push(frame));
+    expect(session.performCalls).toHaveLength(performCalls);
+    expect(frames.find((frame) => frame.type === "result")).toMatchObject({
+      result: { kind: "outcome", name: "needs_auth" }, authReplaySafe: replaySafe,
     });
   });
 
