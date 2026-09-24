@@ -355,12 +355,24 @@ function onClientMessage(client: WebSocket, raw: string): void {
       ? (message.deadline ?? Date.now() + message.timeoutMs) + message.authLeaseMs
       : 0;
     let attempt = 0;
+    let resumeGate = false;
     let authOutcome: Extract<import("./broker-orchestrator.js").BrokerFrame, { type: "result" }> | undefined;
     for (;;) {
       queuedCalls++;
       broadcastStatus();
+      let started = false;
+      let expiredWhileQueued = false;
+      // The queue may be busy at lease expiry. Deliver the original outcome
+      // on time without waiting for another call's browser work to complete.
+      const expiryTimer = attempt > 0 && authOutcome ? setTimeout(() => {
+        if (started || expiredWhileQueued) return;
+        expiredWhileQueued = true;
+        if (client.readyState === WebSocket.OPEN) send(client, authOutcome);
+      }, Math.max(0, authExpiresAt - Date.now())) : undefined;
       const result = await requestQueue.run(async () => {
         queuedCalls--;
+        started = true;
+        if (expiredWhileQueued) return;
         const deadline = attempt === 0 ? message.deadline : message.type === "call"
           ? Math.min(authExpiresAt, Date.now() + message.timeoutMs)
           : message.deadline;
@@ -418,17 +430,22 @@ function onClientMessage(client: WebSocket, raw: string): void {
           broadcastStatus();
         }
       });
+      if (expiryTimer) clearTimeout(expiryTimer);
       if (!result || message.type !== "call") return;
       authOutcome ??= result;
       let target: string;
       try { target = expandUrl(message.spec.url, message.params); }
       catch { send(client, result); return; }
       const origin = urlOrigin(target);
-      authOrigin = origin;
+      if (!authOrigin) {
+        authOrigin = origin;
+        authLeases.retain(origin);
+      }
       if (attempt === 0) send(client, { type: "progress", id: message.id, message: `waiting for sign-in at ${origin}` });
-      const reason = await authLeases.wait(origin, target, authExpiresAt, cancelled.signal, attempt > 0);
-      if (client.readyState === WebSocket.OPEN && reason !== "poll") {
-        send(client, { type: "progress", id: message.id, message: `sign-in wait ended: ${reason}` });
+      const reason = await authLeases.wait(origin, target, authExpiresAt, cancelled.signal, resumeGate);
+      if (reason !== "unavailable") resumeGate = true;
+      if (client.readyState === WebSocket.OPEN && reason === "expired") {
+        send(client, { type: "progress", id: message.id, message: "sign-in wait expired" });
       }
       if (reason === "cancelled" || reason === "expired" ||
           client.readyState !== WebSocket.OPEN || Date.now() >= authExpiresAt) {
@@ -438,7 +455,7 @@ function onClientMessage(client: WebSocket, raw: string): void {
       // A detached or replaced browser page is not a cancelled sign-in. Wait
       // outside the serial queue, then check the site again using the browser's
       // cookies. A missing tab must not cause an immediate retry loop.
-      if (reason === "closed") {
+      if (reason === "closed" || reason === "unavailable") {
         await sleep(Math.min(1_000, Math.max(0, authExpiresAt - Date.now())), undefined,
           { signal: cancelled.signal }).catch(() => {});
         if (cancelled.signal.aborted || Date.now() >= authExpiresAt) {

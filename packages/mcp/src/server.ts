@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
 import { scanLensFiles, type LensClient } from "@djgrant/lenses-client";
 
-export function createLensMcpServer(client: LensClient): McpServer {
+export function createLensMcpServer(client: LensClient, progressIntervalMs = 10_000): McpServer {
   const server = new McpServer({ name: "lens-mcp", version: "0.1.0" });
 
   server.registerTool(
@@ -68,7 +68,7 @@ export function createLensMcpServer(client: LensClient): McpServer {
           method: "notifications/progress",
           params: { progressToken: token, progress: Date.now() - started, message: "Waiting for sign-in or request completion" },
         }).catch(() => {});
-      }, 10_000);
+      }, progressIntervalMs);
       try {
         const result = await client.call({ ...input, authLeaseMs });
         return result.kind === "error" ? failure(result.message) : ok(result);

@@ -89,8 +89,14 @@ describe.skipIf(!existsSync(chrome))("real browser sign-in lease", () => {
         const link = document.querySelector('a')!.getBoundingClientRect();
         return link.top >= banner.bottom;
       })).toBe(true);
+      // A periodic retry must not replace the banner element or its shadow tree.
+      await login!.evaluate(() => { (document.querySelector('[data-lenses-auth]') as any).__marker = 42; });
+      expect(await waiting).toBe("poll");
+      const pollingAgain = wait(true);
+      await vi.waitFor(async () => expect(await login!.evaluate(() =>
+        (document.querySelector('[data-lenses-auth]') as any)?.__marker)).toBe(42));
       await login!.click("a");
-      expect(await waiting).toBe("moved");
+      expect(await pollingAgain).toBe("moved");
       expect(login!.url()).toBe(`${origin}/login/password`);
       const intermediate = await attempt(true);
       expect(intermediate.result).toMatchObject({ kind: "outcome", name: "needs_auth" });

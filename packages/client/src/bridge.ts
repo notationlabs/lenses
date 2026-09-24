@@ -229,9 +229,9 @@ export class BrowserBridge implements LensTransport {
         ...(noCache !== undefined ? { noCache } : {}),
         ...(recording ? { recording } : {}),
       }),
-      // Leave a small delivery margin so the broker's needs_auth result on
-      // lease expiry wins the race against the client-side safety timer.
-      timeoutMs + authLeaseMs + (authLeaseMs > 0 ? 2_000 : 0)
+      // The broker delivers lease expiry even while a retry is queued; leave
+      // transport margin for the final result rather than racing it at expiry.
+      timeoutMs + authLeaseMs + (authLeaseMs > 0 ? 5_000 : 0)
     );
   }
 

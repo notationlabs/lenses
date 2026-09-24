@@ -225,7 +225,7 @@ export function createBrokerOrchestrator(
         // ever comes from an explicit `navigate` step, so a send cannot
         // reload the chat it is about to type into. Intercept-implies-fresh
         // stays for read-only documents.
-        navigation: performs
+        navigation: performs || authRetry
           ? "reuse"
           : message.spec.resolve.some((resolver) => resolver.kind === "intercept")
             ? "fresh"
@@ -292,7 +292,8 @@ export function createBrokerOrchestrator(
       loadTimeoutMs,
       progress,
       httpFetch,
-      mutation
+      mutation,
+      authRetry
     );
     let result: LensResult | undefined;
     try {
@@ -405,7 +406,7 @@ export function createBrokerOrchestrator(
       try {
         const mutation =
           message.type === "call" &&
-          (message.spec.perform?.length ?? 0) > 0
+          (message.spec.perform?.length ?? 0) > 0 && message.spec.effects.idempotent !== true
             ? createMutationTracker()
             : undefined;
         const work =
@@ -650,7 +651,8 @@ export function createSessionEngineIO(
   loadTimeoutMs: number,
   progress: (message: string) => void = () => {},
   httpFetch?: EngineIO["httpFetch"],
-  mutation?: MutationTracker
+  mutation?: MutationTracker,
+  authRetry = false
 ): EngineIO {
   let cursor = 0;
   let captures: InterceptedResponse[] = [];
@@ -680,6 +682,9 @@ export function createSessionEngineIO(
     },
     async reload() {
       const session = await acquire();
+      // An auth retry observes the existing login form and its captures;
+      // never reload it just to generate fresh intercept traffic.
+      if (authRetry) return;
       if (navigationIsFresh) {
         navigationIsFresh = false;
         progress("using the page's fresh navigation for intercept capture");
@@ -822,7 +827,6 @@ function gateOutcome(spec: LensSpec, signInUrl: string): LensResult {
     ...spec.resolve.flatMap((resolver) =>
       "exceptions" in resolver ? Object.keys(resolver.exceptions ?? {}) : []
     ),
-    ...Object.keys({}),
     ...Object.keys(spec.exceptions ?? {}),
   ].find((name) => name.startsWith("needs_"));
   return {
