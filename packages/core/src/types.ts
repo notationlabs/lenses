@@ -385,6 +385,8 @@ export type LensBridgeRequest =
       deadline?: number;
       /** consent for a spec with `perform` steps; default false at every layer */
       allowWrites?: boolean;
+      /** bypass cached results and do not cache the result of this call */
+      noCache?: boolean;
       /** Per-call target supplied only by the client instance with an active recorder. */
       recording?: { path: string; callId: string; lens: string };
     }

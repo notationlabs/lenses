@@ -72,6 +72,8 @@ export interface LensCall {
    * calls or {$lens} parameter defaults.
    */
   allowWrites?: boolean;
+  /** bypass cached results and do not cache the result of this call */
+  noCache?: boolean;
   /** when false, demote `returns` schema violations from an error result to warnings (default true) */
   strict?: boolean;
 }
@@ -332,7 +334,7 @@ export class LensClient {
     const ttl = (spec.effects.cache ?? 0) * 1000;
     const hit = this.cache.get(key);
     if (hit && hit.expiresAt <= Date.now()) this.cache.delete(key);
-    if (ttl > 0 && hit && hit.expiresAt > Date.now()) {
+    if (!input.noCache && ttl > 0 && hit && hit.expiresAt > Date.now()) {
       this.log(`returning cached result for ${spec.name}`);
       return this.validate(spec, { ...hit.result, cached: true }, input.strict ?? true);
     }
@@ -350,9 +352,10 @@ export class LensClient {
             lens: spec.name,
           }
         : undefined,
-      input.authLeaseMs
+      input.authLeaseMs,
+      input.noCache
     );
-    if (result.kind === "value" && !result.partial && !result.cached && ttl > 0) {
+    if (!input.noCache && result.kind === "value" && !result.partial && !result.cached && ttl > 0) {
       this.cache.set(key, { result, expiresAt: Date.now() + ttl });
     }
     return this.validate(spec, result, input.strict ?? true);

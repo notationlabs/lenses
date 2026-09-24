@@ -153,6 +153,7 @@ lens list --catalog ./examples --catalog git:github.com/notationlabs/lenses#main
 lens update -c git:github.com/notationlabs/lenses#main/examples
 lens call hn/top
 lens call claude/usage
+lens call claude/usage --no-cache
 lens call hn/item --params '{"id":"42","p":2,"limit":10}' --verbose
 lens call chatgpt/send --params '{"message":"hello"}' --allow-writes
 lens observe https://github.com/notifications --wait-ms 4000 --html
@@ -209,7 +210,8 @@ parameter set.
 
 Each command connects to the persistent broker and disconnects when it finishes. The
 broker stays connected to Chrome between commands and shares successful cached results
-for each lens's declared TTL. Browser acquisition is lazy: `call` and `observe` launch
+for each lens's declared TTL. Pass `--no-cache` (or `noCache: true` to `call()`)
+to bypass both caches without storing the call's result. Browser acquisition is lazy: `call` and `observe` launch
 Chrome with the configured profile or reconnect a running browser when they need one. A
 call served entirely by credential-free `http` tiers needs no browser. `lens status` is
 available for operator diagnostics and has no browser-startup side effects.

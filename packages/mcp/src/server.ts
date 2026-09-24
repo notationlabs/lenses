@@ -47,6 +47,10 @@ export function createLensMcpServer(client: LensClient): McpServer {
         params: z.record(z.string(), z.unknown()).optional(),
         authLeaseMs: z.number().int().min(0).max(600_000).optional()
           .describe("Milliseconds to wait for sign-in after needs_auth (default 120000 with MCP progress, 0 without)"),
+        noCache: z
+          .boolean()
+          .optional()
+          .describe("Ignore cached results and do not cache this call's result (default false)"),
         allowWrites: z
           .boolean()
           .optional()

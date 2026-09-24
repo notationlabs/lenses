@@ -176,10 +176,10 @@ export function createBrokerOrchestrator(
     const cacheTtlMs = writes ? 0 : (message.spec.effects.cache ?? 0) * 1000;
     const cacheKey = `${JSON.stringify(message.spec)}|${JSON.stringify(message.params)}`;
     const cached = writes ? undefined : cache.get(cacheKey);
-    if (cached && cached.expiresAt > Date.now()) {
+    if (!message.noCache && cached && cached.expiresAt > Date.now()) {
       return { ...cached.result, cached: true } as unknown as LensResult;
     }
-    if (cached) cache.delete(cacheKey);
+    if (!message.noCache && cached) cache.delete(cacheKey);
 
     const target = expandUrl(message.spec.url, message.params);
     const loadTimeoutMs = message.spec.loadTimeoutMs ?? 30_000;
@@ -297,7 +297,7 @@ export function createBrokerOrchestrator(
     let result: LensResult | undefined;
     try {
       result = await executeLens(message.spec, message.params, io);
-      if (result.kind === "value" && !result.partial && cacheTtlMs > 0) {
+      if (!message.noCache && result.kind === "value" && !result.partial && cacheTtlMs > 0) {
         cache.set(cacheKey, { result, expiresAt: Date.now() + cacheTtlMs });
       }
       return result;
