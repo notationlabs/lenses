@@ -48,6 +48,60 @@ describe("Playwright CDP relay", () => {
     ]);
   });
 
+  it("accepts the beforeunload prompt of a tab it closes", async () => {
+    const commands: { method: string; params: any }[] = [];
+    const emitted: { method?: string }[] = [];
+    const model: BrowserModel = new BrowserModel(async (method, params) => {
+      commands.push({ method, params });
+      if (method === "chrome.tabs.create") {
+        return { id: 1, index: 0, windowId: 1, active: true, pinned: false };
+      }
+      if (method === "chrome.debugger.sendCommand" && params[1] === "Target.getTargetInfo") {
+        return { targetInfo: { targetId: "target-1", type: "page" } };
+      }
+      if (method === "chrome.tabs.remove") {
+        // Chrome holds the tab open while the page's beforeunload prompt is up.
+        model.onDebuggerEvent({ tabId: 1 }, "Page.javascriptDialogOpening", {
+          type: "beforeunload",
+          message: "",
+        });
+      }
+      return undefined;
+    });
+    model.connectOverCDP((message) => emitted.push(message));
+
+    const { targetId } = await model.createTarget("https://github.com/");
+    await expect(model.closeTarget(targetId)).resolves.toEqual({ success: true });
+
+    expect(commands).toContainEqual({
+      method: "chrome.debugger.sendCommand",
+      params: [{ tabId: 1 }, "Page.handleJavaScriptDialog", { accept: true }],
+    });
+    expect(emitted.map((row) => row.method)).not.toContain("Page.javascriptDialogOpening");
+  });
+
+  it("forwards the beforeunload prompt of a tab it is not closing", async () => {
+    const commands: string[] = [];
+    const emitted: { method?: string }[] = [];
+    const model = new BrowserModel(async (method) => {
+      commands.push(method);
+      if (method === "chrome.tabs.create") {
+        return { id: 1, index: 0, windowId: 1, active: true, pinned: false };
+      }
+      return { targetInfo: { targetId: "target-1", type: "page" } };
+    });
+    model.connectOverCDP((message) => emitted.push(message));
+
+    await model.createTarget("https://github.com/");
+    model.onDebuggerEvent({ tabId: 1 }, "Page.javascriptDialogOpening", {
+      type: "beforeunload",
+      message: "",
+    });
+
+    expect(emitted.map((row) => row.method)).toContain("Page.javascriptDialogOpening");
+    expect(commands).not.toContain("chrome.tabs.remove");
+  });
+
   it("accepts a real Puppeteer connection", async () => {
     relay = new CDPRelayServer();
     await relay.start();
