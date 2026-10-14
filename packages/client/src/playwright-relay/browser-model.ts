@@ -41,6 +41,8 @@ type TabSession = {
 type TabState = {
   session?: TabSession;
   attachment?: Promise<TabSession>;
+  /** Set while the relay removes the tab, so its beforeunload prompt is accepted. */
+  closing?: boolean;
 };
 
 export class BrowserModel {
@@ -80,8 +82,21 @@ export class BrowserModel {
 
   onDebuggerEvent(source: DebuggerSession, method: string, params: any): void {
     if (source.tabId === undefined) return;
-    const tabSession = this._tabs.get(source.tabId)?.session;
+    const state = this._tabs.get(source.tabId);
+    const tabSession = state?.session;
     if (!tabSession) return;
+    if (
+      state.closing &&
+      method === "Page.javascriptDialogOpening" &&
+      params?.type === "beforeunload"
+    ) {
+      void this._sendToExtension("chrome.debugger.sendCommand", [
+        source,
+        "Page.handleJavaScriptDialog",
+        { accept: true },
+      ]).catch(() => {});
+      return;
+    }
     const childSessionId = (params as { sessionId?: string } | undefined)?.sessionId;
     if (method === "Target.attachedToTarget" && childSessionId) {
       tabSession.childSessions.add(childSessionId);
@@ -213,8 +228,27 @@ export class BrowserModel {
     }
   }
 
+  /**
+   * CDP's Target.closeTarget skips beforeunload handlers, but chrome.tabs.remove
+   * runs them, so a page with unsaved input (e.g. a drafted comment) would
+   * prompt "Leave site?". Page.enable makes Chrome report that prompt, and
+   * onDebuggerEvent accepts it.
+   */
   private async _removeTab(tabId: number): Promise<void> {
-    await this._sendToExtension("chrome.tabs.remove", [tabId]);
+    const state = this._tabs.get(tabId);
+    if (state?.session) {
+      state.closing = true;
+      await this._sendToExtension("chrome.debugger.sendCommand", [
+        { tabId },
+        "Page.enable",
+      ]).catch(() => {});
+    }
+    try {
+      await this._sendToExtension("chrome.tabs.remove", [tabId]);
+    } catch (error) {
+      if (state) state.closing = false;
+      throw error;
+    }
   }
 
   private _detachTab(tabId: number): void {
