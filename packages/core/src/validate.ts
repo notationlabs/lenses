@@ -115,6 +115,7 @@ const waitSchema = z
 const PERFORM_HINT =
   'must be one perform step: {"fill": <sel>, "value": <expr>}, {"click": <sel>}, ' +
   '{"submit": <form-sel>, "form"?: {<field>: <expr>}}, {"press": <key>}, ' +
+  '{"drop": <sel>, "file": <param>}, ' +
   '{"wait": {"appears" | "gone" | "increases": <sel>, "timeoutMs"?: <ms>}}, ' +
   'or {"navigate": "fresh"}';
 
@@ -124,7 +125,7 @@ const PERFORM_HINT =
 const performStepSchema = z
   .record(z.string(), z.unknown(), { error: PERFORM_HINT })
   .refine(
-    (step) => ["fill", "click", "submit", "press", "wait", "navigate"].some((opcode) => opcode in step),
+    (step) => ["fill", "click", "submit", "press", "drop", "wait", "navigate"].some((opcode) => opcode in step),
     { message: PERFORM_HINT }
   )
   .pipe(
@@ -134,6 +135,7 @@ const performStepSchema = z
         z.strictObject({ click: z.string() }),
         z.strictObject({ submit: z.string(), form: bodyFields.optional() }),
         z.strictObject({ press: z.string() }),
+        z.strictObject({ drop: z.string(), file: z.string() }),
         z.strictObject({ wait: waitSchema }),
         z.strictObject({ navigate: z.literal("fresh") }),
       ],
@@ -361,6 +363,7 @@ export function validateSpec(raw: unknown): LensSpec {
     if ("fill" in step) selectors.push(step.fill);
     else if ("click" in step) selectors.push(step.click);
     else if ("submit" in step) selectors.push(step.submit);
+    else if ("drop" in step) selectors.push(step.drop);
     else if ("wait" in step) {
       const selector = step.wait.appears ?? step.wait.gone ?? step.wait.increases;
       if (selector !== undefined) selectors.push(selector);
@@ -371,6 +374,23 @@ export function validateSpec(raw: unknown): LensSpec {
       if (!result.data.params?.[hole]) {
         throw new Error(`invalid lens spec:\n  selector parameter "${hole}" is not declared`);
       }
+    }
+  }
+  // A drop reads a local file into the page, so its path must come from the
+  // caller: a declared string param with no default, never a document literal.
+  for (const step of result.data.perform ?? []) {
+    if (!("drop" in step)) continue;
+    const declaration = result.data.params?.[step.file];
+    const type = typeof declaration === "string" ? declaration : declaration?.type;
+    if (type !== "string") {
+      throw new Error(
+        `invalid lens spec:\n  drop file "${step.file}" must name a declared string parameter`
+      );
+    }
+    if (typeof declaration === "object" && declaration.default !== undefined) {
+      throw new Error(
+        `invalid lens spec:\n  drop file parameter "${step.file}" must not declare a default`
+      );
     }
   }
   for (const [name, declaration] of Object.entries(result.data.params ?? {})) {

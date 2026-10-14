@@ -267,6 +267,56 @@ export function pagePerformPress(spec: { key: string }):
 }
 
 /**
+ * Stage one base64 chunk of a file for pagePerformDrop. Hosts send a large
+ * file in several evaluations rather than one oversized CDP message; `first`
+ * discards anything an earlier, abandoned drop left behind.
+ */
+export function pagePerformDropChunk(spec: { chunk: string; first: boolean }): number {
+  const holder = globalThis as { __lensDropChunks?: string[] };
+  if (spec.first || !holder.__lensDropChunks) holder.__lensDropChunks = [];
+  holder.__lensDropChunks.push(spec.chunk);
+  return holder.__lensDropChunks.length;
+}
+
+/**
+ * Drop the staged file onto the first visible match, as if dragged in from
+ * outside the page: dragenter, dragover, then drop, each carrying a
+ * DataTransfer that holds the file. Each chunk is whole base64 quads, so
+ * chunks decode independently.
+ */
+export function pagePerformDrop(spec: { selector: string; name: string; type: string }):
+  | { ok: true }
+  | { ok: false; message: string } {
+  const holder = globalThis as { __lensDropChunks?: string[] };
+  const chunks = holder.__lensDropChunks ?? [];
+  delete holder.__lensDropChunks;
+  const matches = [...document.querySelectorAll(spec.selector)];
+  const target = matches.find(
+    (el) => (el as HTMLElement).offsetParent !== null || el.getClientRects().length > 0
+  );
+  if (!target) {
+    return {
+      ok: false,
+      message: `drop "${spec.selector}" matched ${matches.length === 0 ? "nothing" : "no visible element"}`,
+    };
+  }
+  const parts = chunks.map((chunk) => {
+    const binary = atob(chunk);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+  });
+  const transfer = new DataTransfer();
+  transfer.items.add(new File(parts, spec.name, { type: spec.type }));
+  for (const type of ["dragenter", "dragover", "drop"]) {
+    target.dispatchEvent(
+      new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: transfer })
+    );
+  }
+  return { ok: true };
+}
+
+/**
  * Match count for the wait forms. Hosts poll this for all three: `appears` is
  * count ≥ 1, `gone` is count = 0, `increases` is count > the baseline the
  * host sampled at step entry. One probe keeps the wait semantics in the host,

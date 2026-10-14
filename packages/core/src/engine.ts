@@ -106,6 +106,12 @@ async function runPerform(
         submit: expandTemplate(step.submit, params),
         ...(step.form !== undefined ? { form } : {}),
       });
+    } else if ("drop" in step) {
+      const file = params[step.file];
+      if (typeof file !== "string" || file === "") {
+        return { kind: "error", message: `perform drop file param "${step.file}" is empty` };
+      }
+      steps.push({ drop: expandTemplate(step.drop, params), file });
     } else if ("wait" in step) {
       const wait = step.wait;
       steps.push({

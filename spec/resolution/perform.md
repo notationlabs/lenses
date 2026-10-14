@@ -10,11 +10,12 @@ A $LensDocument may declare a top-level `perform` block — an ordered list of w
 
 ## Rules
 
-- **Step opcodes:** A step is exactly one of `{fill, value}`, `{click}`, `{press}`, `{wait}`, or `{navigate: "fresh"}` — a closed, validated union; unknown keys fail closed at validation.
+- **Step opcodes:** A step is exactly one of `{fill, value}`, `{click}`, `{press}`, `{drop, file}`, `{wait}`, or `{navigate: "fresh"}` — a closed, validated union; unknown keys fail closed at validation.
 - **Fill semantics:** `fill` focuses the single element the selector resolves to, selects all, and inserts text via `insertText` — never a `value=` property write, which ProseMirror-style editors ignore. Zero or multiple matches hard-error the step.
 - **Fill value is an expression:** `value` is a JSONata expression over declared params (`"$message"`), evaluated before any step runs; an expression that produces nothing errors the call before the page is touched.
 - **Click semantics:** `click` clicks the first visible match and errors on zero matches or a disabled/`aria-disabled` target.
 - **Press semantics:** `press` takes named keys (`Enter`, `Meta+Enter`), never key codes.
+- **Drop semantics:** `drop` dispatches dragenter, dragover and drop, carrying one file, onto the first visible match. `file` names a declared string param with no default; the caller passes an absolute path, the host reads it and the bytes reach the page in chunks. A document can never name the file itself.
 - **Wait forms:** A `wait` declares exactly one of `appears` (≥1 match present), `gone` (0 matches; stateless, immediately true when already satisfied), or `increases` (match count exceeds the baseline sampled at step entry). Every form takes `timeoutMs` (default 10000); the poll interval is internal.
 - **Navigate fresh:** `navigate: "fresh"` reloads the bound target — the same reload a fresh bind performs; a tab that has drifted off-origin navigates back to the expanded lens `url` and settles. `"fresh"` is the only navigation.
 - **Browser is forced:** A document with `perform` always binds a browser; the http-only short-circuit does not apply.

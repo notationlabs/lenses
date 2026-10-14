@@ -347,12 +347,13 @@ repository — or at a direct HTTP URL.
     { "fill": "#prompt-textarea", "value": "$message" },   // insertText, never value=
     { "click": "[data-testid='send-button']" },
     { "press": "Enter" },
+    { "drop": "#editor", "file": "path" },                  // the caller's file, dropped as if dragged in
     { "wait": { "increases": "section[data-turn]", "timeoutMs": 30000 } },
     { "navigate": "fresh" }                                 // reload the bound target
   ]
   ```
 
-  `wait` takes exactly one of `appears` (≥1 match), `gone` (0 matches, immediately true when already satisfied), or `increases` (match count exceeds the baseline sampled at step entry — place it right after the step that triggers the change), plus `timeoutMs` (default 10000). `navigate` accepts only `"fresh"`.
+  `wait` takes exactly one of `appears` (≥1 match), `gone` (0 matches, immediately true when already satisfied), or `increases` (match count exceeds the baseline sampled at step entry — place it right after the step that triggers the change), plus `timeoutMs` (default 10000). `navigate` accepts only `"fresh"`. `drop` reads the absolute path the caller passed in the named param — a declared string param with no default, so a document can never choose the file — and dispatches dragenter, dragover and drop carrying it onto the first visible match.
 
   Consent is declared and enforced: `perform` requires non-empty `effects.writes`, `effects.cache` absent or 0, and `idempotent: true` only when every step is a navigate. The caller must pass `--allow-writes`/`allowWrites` or the call is refused with `code: "writes_not_allowed"`; a step failure is `code: "perform_failed"` with the 0-based `step`, and no tier runs after it. Results are never cached, and any result from a call whose steps all ran carries `performed: true` — the write happened, even if reading the result back failed. With `--verbose`, each step reports started/completed; selectors are bounded and likely secret-bearing attribute values are redacted, and fill values are never logged. Steps are not retried after a lost acknowledgement.
 

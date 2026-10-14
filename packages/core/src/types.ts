@@ -74,6 +74,7 @@ export type PerformStep =
   | { click: string }
   | { submit: string; form?: Record<string, ExprString> } // values resolve before requestSubmit()
   | { press: string } // named key, e.g. "Enter"
+  | { drop: string; file: string } // file names a string param; hosts receive its absolute path
   | { wait: PerformWait }
   | { navigate: "fresh" };
 
