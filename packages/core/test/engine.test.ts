@@ -444,6 +444,29 @@ describe("perform", () => {
     ]);
   });
 
+  it("hands a drop the caller's file path and the expanded selector", async () => {
+    const dropSpec = validateSpec({
+      ...sendSpec,
+      params: { path: "string", row: "integer" },
+      perform: [{ drop: "#upload-{row}", file: "path" }],
+    });
+    const { io: withPerform, performed } = performIo();
+    await executeLens(dropSpec, { path: "/tmp/clip.mp4", row: 2 }, withPerform);
+    expect(performed[0]).toEqual([{ drop: "#upload-2", file: "/tmp/clip.mp4" }]);
+  });
+
+  it("fails before dispatch when a drop file param is empty", async () => {
+    const dropSpec = validateSpec({
+      ...sendSpec,
+      params: { path: "string" },
+      perform: [{ drop: "#upload", file: "path" }],
+    });
+    const { io: withPerform, performed } = performIo();
+    const r = await executeLens(dropSpec, { path: "" }, withPerform);
+    expect(r).toEqual({ kind: "error", message: 'perform drop file param "path" is empty' });
+    expect(performed).toEqual([]);
+  });
+
   it("fails before dispatch when a submit form expression produces nothing", async () => {
     const invalid = validateSpec({
       ...sendSpec,

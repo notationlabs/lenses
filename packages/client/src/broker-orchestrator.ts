@@ -771,6 +771,7 @@ const MAX_DIAGNOSTIC_SELECTOR_CHARS = 120;
 function describePerformStep(step: PerformStep): string {
   if ("navigate" in step) return "navigate fresh";
   if ("press" in step) return `press ${truncateDiagnostic(step.press)}`;
+  if ("drop" in step) return `drop ${safeSelector(step.drop)} (file redacted)`;
   if ("fill" in step) return `fill ${safeSelector(step.fill)} (value redacted)`;
   if ("click" in step) return `click ${safeSelector(step.click)}`;
   if ("submit" in step) return `submit ${safeSelector(step.submit)}`;

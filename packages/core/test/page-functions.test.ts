@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { pageDomExtract, pagePerformSubmit } from "../src/page-functions.js";
+import {
+  pageDomExtract,
+  pagePerformDrop,
+  pagePerformDropChunk,
+  pagePerformSubmit,
+} from "../src/page-functions.js";
 
 /**
  * A shim rather than a DOM: it fixes what `innerText` returns instead of
@@ -182,6 +187,75 @@ describe("pagePerformSubmit", () => {
     expect(pagePerformSubmit({ selector: "#checkout" })).toEqual({
       ok: false,
       message: 'submit "#checkout" target is not a form',
+    });
+  });
+});
+
+describe("pagePerformDrop", () => {
+  class FakeDataTransfer {
+    files: File[] = [];
+    items = { add: (file: File) => this.files.push(file) };
+  }
+  class FakeDragEvent {
+    constructor(
+      public type: string,
+      public init: { bubbles: boolean; cancelable: boolean; dataTransfer: FakeDataTransfer }
+    ) {}
+  }
+
+  function stubPage(matches: unknown[]) {
+    const globals = globalThis as Record<string, unknown>;
+    globals.DataTransfer = FakeDataTransfer;
+    globals.DragEvent = FakeDragEvent;
+    globals.document = { querySelectorAll: () => matches };
+  }
+
+  function dropTarget(visible = true) {
+    const events: FakeDragEvent[] = [];
+    return {
+      events,
+      offsetParent: visible ? {} : null,
+      getClientRects: () => (visible ? [{}] : []),
+      dispatchEvent: (event: FakeDragEvent) => events.push(event),
+    };
+  }
+
+  it("reassembles staged chunks into one file and drops it on the target", async () => {
+    const target = dropTarget();
+    stubPage([target]);
+    pagePerformDropChunk({ chunk: Buffer.from("abc").toString("base64"), first: true });
+    pagePerformDropChunk({ chunk: Buffer.from("def").toString("base64"), first: false });
+
+    expect(pagePerformDrop({ selector: "#upload", name: "clip.mp4", type: "video/mp4" }))
+      .toEqual({ ok: true });
+    expect(target.events.map((event) => event.type)).toEqual(["dragenter", "dragover", "drop"]);
+    const [file] = target.events[2]!.init.dataTransfer.files;
+    expect(file!.name).toBe("clip.mp4");
+    expect(file!.type).toBe("video/mp4");
+    expect(await file!.text()).toBe("abcdef");
+    expect((globalThis as Record<string, unknown>).__lensDropChunks).toBeUndefined();
+  });
+
+  it("discards chunks an abandoned drop left behind", async () => {
+    const target = dropTarget();
+    stubPage([target]);
+    pagePerformDropChunk({ chunk: Buffer.from("stale").toString("base64"), first: true });
+    pagePerformDropChunk({ chunk: Buffer.from("new").toString("base64"), first: true });
+
+    pagePerformDrop({ selector: "#upload", name: "a.txt", type: "text/plain" });
+    expect(await target.events[2]!.init.dataTransfer.files[0]!.text()).toBe("new");
+  });
+
+  it("fails when no visible element matches", () => {
+    stubPage([dropTarget(false)]);
+    expect(pagePerformDrop({ selector: "#upload", name: "a.txt", type: "text/plain" })).toEqual({
+      ok: false,
+      message: 'drop "#upload" matched no visible element',
+    });
+    stubPage([]);
+    expect(pagePerformDrop({ selector: "#upload", name: "a.txt", type: "text/plain" })).toEqual({
+      ok: false,
+      message: 'drop "#upload" matched nothing',
     });
   });
 });

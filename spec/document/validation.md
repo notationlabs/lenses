@@ -24,7 +24,8 @@ The @author writes a lens as one JSON file. !validate accepts the raw JSON and r
 - **Http holes declared:** Every hole in an http resolver's `request`, resolver-level `headers` values, and chained source requests must name a declared parameter or a source declared earlier in the same resolver (dotted holes such as `{orgs.0.uuid}` bind from the named source's body). Source-level headers are JSONata expressions evaluated when that source runs and may reference earlier `$source` bindings.
 - **Selector holes declared:** Every hole in a dom resolver's `item`, field `selector`, or field `scope` must name a declared parameter.
 - **At least one resolver:** $LensDocument.resolve must contain at least one resolver.
-- **Perform step union:** Each `perform` entry must be exactly one step form — `{fill, value}`, `{click}`, `{press}`, `{wait}`, or `{navigate: "fresh"}` — and a `wait` must declare exactly one of `appears`, `gone`, or `increases` (plus optional `timeoutMs`); unknown keys fail closed. `perform`, when present, must be non-empty.
+- **Perform step union:** Each `perform` entry must be exactly one step form — `{fill, value}`, `{click}`, `{press}`, `{drop, file}`, `{wait}`, or `{navigate: "fresh"}` — and a `wait` must declare exactly one of `appears`, `gone`, or `increases` (plus optional `timeoutMs`); unknown keys fail closed. `perform`, when present, must be non-empty.
+- **Drop file is a caller param:** A `drop` step's `file` must name a declared string parameter that declares no default.
 - **Perform declares its writes:** A document with `perform` must declare non-empty `effects.writes` — the steps are writes, so the declaration must name what they write to.
 - **Perform is never cached:** A document with `perform` must leave `effects.cache` absent or 0.
 - **Perform idempotence is navigate-only:** A document with `perform` may declare `idempotent: true` only when every step is a `navigate`; any acting step contradicts the claim.

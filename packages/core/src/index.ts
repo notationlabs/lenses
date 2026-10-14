@@ -22,6 +22,8 @@ export {
   pageDomExtract,
   pagePerformClick,
   pagePerformCount,
+  pagePerformDrop,
+  pagePerformDropChunk,
   pagePerformFill,
   pagePerformPress,
   pagePerformSubmit,

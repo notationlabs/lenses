@@ -37,7 +37,7 @@ A call result is one of:
 
 ## Write lenses
 
-A lens with a `perform` block acts on the page: its steps (fill, click, native form submit, press, wait, navigate) run once, then the resolve tiers read the result in the same call. Mutating HTTP methods (anything except GET, HEAD, or OPTIONS) are writes too. Calling either kind requires `--allow-writes`; otherwise it is refused with `code: "writes_not_allowed"`. Check `effects.idempotent` first — a non-idempotent write (e.g. sending a message) sends twice on a manual retry. `performed: true` specifically means every `perform` step ran and the page write happened, even if the result itself is an error; `code: "perform_failed"` with a `step` index means it did not. The pattern, on logged-out chatgpt.com:
+A lens with a `perform` block acts on the page: its steps (fill, click, native form submit, press, drop, wait, navigate) run once, then the resolve tiers read the result in the same call. Mutating HTTP methods (anything except GET, HEAD, or OPTIONS) are writes too. Calling either kind requires `--allow-writes`; otherwise it is refused with `code: "writes_not_allowed"`. Check `effects.idempotent` first — a non-idempotent write (e.g. sending a message) sends twice on a manual retry. `performed: true` specifically means every `perform` step ran and the page write happened, even if the result itself is an error; `code: "perform_failed"` with a `step` index means it did not. The pattern, on logged-out chatgpt.com:
 
 ```sh
 lens call chatgpt/send --params '{"message":"hello"}' --allow-writes   # fills, clicks, waits, returns the transcript
@@ -45,7 +45,7 @@ lens call chatgpt/clear --allow-writes                                  # naviga
 lens call chatgpt/chat                                                  # plain read; no flag needed
 ```
 
-Authoring one: every write requires non-empty `effects.writes` and `cache` 0 or absent; `perform` permits `idempotent: true` only when every step is a navigate. HTTP request bodies are declared as `{ "json": expr }`, `{ "text": expr }`, `{ "form": { field: expr } }`, or `{ "search": { field: expr } }`. A native form action is `{ "submit": "#form", "form": { "field[name]": expr } }`; its field expressions become literal named controls before `requestSubmit()`. The expressions run over params and earlier HTTP source bindings. Keep a page read as its own lens (like `chatgpt/chat`) and give a perform lens the same tiers as its readback.
+Authoring one: every write requires non-empty `effects.writes` and `cache` 0 or absent; `perform` permits `idempotent: true` only when every step is a navigate. A drop attaches a local file the way a drag from the desktop would: `{ "drop": "#editor", "file": "path" }` names a declared string param with no default, the caller passes an absolute path, and the host drops that file onto the first visible match. HTTP request bodies are declared as `{ "json": expr }`, `{ "text": expr }`, `{ "form": { field: expr } }`, or `{ "search": { field: expr } }`. A native form action is `{ "submit": "#form", "form": { "field[name]": expr } }`; its field expressions become literal named controls before `requestSubmit()`. The expressions run over params and earlier HTTP source bindings. Keep a page read as its own lens (like `chatgpt/chat`) and give a perform lens the same tiers as its readback.
 
 ## Authoring a lens for an unmapped page
 

@@ -288,6 +288,35 @@ describe("validateSpec", () => {
       expect(validateSpec(spec)).toEqual(spec);
     });
 
+    it("accepts a drop whose file names a caller-supplied string param", () => {
+      const spec = {
+        ...writeSpec,
+        params: { page: "string", path: "string", row: "integer" },
+        perform: [{ drop: "#upload-{row}", file: "path" }],
+      };
+      expect(validateSpec(spec)).toEqual(spec);
+    });
+
+    it("rejects a drop file that is not a declared string param", () => {
+      expect(() => validateSpec({
+        ...writeSpec,
+        perform: [{ drop: "#upload", file: "path" }],
+      })).toThrow(/drop file "path" must name a declared string parameter/);
+      expect(() => validateSpec({
+        ...writeSpec,
+        params: { page: "string", path: "integer" },
+        perform: [{ drop: "#upload", file: "path" }],
+      })).toThrow(/drop file "path" must name a declared string parameter/);
+    });
+
+    it("rejects a drop file param with a default", () => {
+      expect(() => validateSpec({
+        ...writeSpec,
+        params: { page: "string", path: { type: "string", default: "/etc/hosts" } },
+        perform: [{ drop: "#upload", file: "path" }],
+      })).toThrow(/drop file parameter "path" must not declare a default/);
+    });
+
     it("rejects non-expression values in a submit form map", () => {
       expect(() => validateSpec({
         ...writeSpec,

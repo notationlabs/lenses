@@ -3,7 +3,7 @@
  * Lens orchestration, caching, retries, and result policy live in the broker.
  */
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, extname, isAbsolute, join } from "node:path";
 import puppeteer, { type Browser, type Page } from "puppeteer-core";
 import { defaultChromeUserDataDir } from "./chrome-paths.js";
 import { showAuthBanner } from "./auth-banner.js";
@@ -13,6 +13,8 @@ import {
   pageDomExtract,
   pagePerformClick,
   pagePerformCount,
+  pagePerformDrop,
+  pagePerformDropChunk,
   pagePerformFill,
   pagePerformPress,
   pagePerformSubmit,
@@ -794,6 +796,9 @@ async function performStep(
     const outcome = await page.evaluate(pagePerformPress, { key: step.press });
     return outcome.ok ? undefined : outcome.message;
   }
+  if ("drop" in step) {
+    return performDrop(page, step);
+  }
   if ("wait" in step) {
     return performWait(step.wait, (selector) =>
       page.evaluate(pagePerformCount, { selector })
@@ -801,6 +806,55 @@ async function performStep(
   }
   await navigateFresh();
   return undefined;
+}
+
+/** Raw bytes per staged chunk: a multiple of 3, so each chunk is whole base64 quads. */
+const DROP_CHUNK_BYTES = 3 * 256 * 1024;
+
+const DROP_TYPES: Record<string, string> = {
+  ".gif": "image/gif",
+  ".jpeg": "image/jpeg",
+  ".jpg": "image/jpeg",
+  ".json": "application/json",
+  ".md": "text/markdown",
+  ".mov": "video/quicktime",
+  ".mp4": "video/mp4",
+  ".pdf": "application/pdf",
+  ".png": "image/png",
+  ".svg": "image/svg+xml",
+  ".txt": "text/plain",
+  ".webm": "video/webm",
+  ".webp": "image/webp",
+  ".zip": "application/zip",
+};
+
+/**
+ * Read the caller's file and drop it onto the page. The bytes cross in
+ * chunks so no single CDP message carries the whole file.
+ */
+async function performDrop(
+  page: Page,
+  step: { drop: string; file: string }
+): Promise<string | undefined> {
+  if (!isAbsolute(step.file)) return `drop file "${step.file}" must be an absolute path`;
+  let bytes: Buffer;
+  try {
+    bytes = readFileSync(step.file);
+  } catch (error) {
+    return `drop file "${step.file}" could not be read: ${error instanceof Error ? error.message : String(error)}`;
+  }
+  for (let offset = 0; offset === 0 || offset < bytes.length; offset += DROP_CHUNK_BYTES) {
+    await page.evaluate(pagePerformDropChunk, {
+      chunk: bytes.subarray(offset, offset + DROP_CHUNK_BYTES).toString("base64"),
+      first: offset === 0,
+    });
+  }
+  const outcome = await page.evaluate(pagePerformDrop, {
+    selector: step.drop,
+    name: basename(step.file),
+    type: DROP_TYPES[extname(step.file).toLowerCase()] ?? "application/octet-stream",
+  });
+  return outcome.ok ? undefined : outcome.message;
 }
 
 /**
