@@ -35,6 +35,14 @@ A call result is one of:
   failing JSON pointers when the value violated the lens's schema. Retry with
   `--lax` to receive the value with warnings instead.
 
+A lens whose `returns` is `{"type": "file"}` (e.g. a statement PDF) writes a
+file instead of returning content. Pass a directory: `lens call
+bank/statement-pdf --params '{...}' --out-dir ~/Statements`. The value is
+`{"path", "name", "mimeType", "bytes"}`; `path` is absolute. Without
+`--out-dir` the call is refused with `code: "out_dir_required"` before any
+browser work; a relative, missing, or unwritable directory is
+`code: "out_dir_invalid"`. An existing file of the same name is replaced.
+
 A result whose tab stays open carries `"tab": "t1"`, a broker id for that tab.
 Pass it back to target the same tab: `lens call <lens> --tab t1`, or
 `lens observe --tab t1` to read it where it is (add a URL to route it there
@@ -52,6 +60,33 @@ lens call chatgpt/chat                                                  # plain 
 ```
 
 Authoring one: a mutating HTTP method requires non-empty `effects.writes`; a write requires `cache` 0 or absent. Declare `idempotent: true` only when repeating the steps is harmless. `{ "click": "a.statement", "text": "{params.period}" }` clicks the first visible match whose whitespace-collapsed text contains the template. A drop attaches a local file the way a drag from the desktop would: `{ "drop": "#editor", "file": "$params.path" }` names, exactly as `$params.<name>`, a declared string param with no default, the caller passes an absolute path, and the host drops that file onto the first visible match. HTTP request bodies are declared as `{ "json": expr }`, `{ "text": expr }`, `{ "form": { field: expr } }`, or `{ "search": { field: expr } }`. A native form action is `{ "submit": "#form", "form": { "field[name]": expr } }`; its field expressions become literal named controls before `requestSubmit()`. These expressions read `$params`, and a chained source's body also reads the sources before it as `$sources` (see [Expressions](#expressions-and-templates)). Keep a page read as its own lens (like `chatgpt/chat`) and give a perform lens the same tiers as its readback.
+
+## File lenses
+
+`"returns": { "type": "file" }` is the whole result; it cannot be nested. The
+tier produces file content and the broker writes it into the caller's
+`--out-dir`:
+
+```json
+"map": {
+  "content": "$res.body.content",
+  "encoding": "'base64'",
+  "mimeType": "'application/pdf'",
+  "name": "'Statement-' & $params.id & '.pdf'"
+}
+```
+
+| Field | Value |
+| --- | --- |
+| `content` | the file as a string |
+| `encoding` | `"base64"` (decoded to bytes) or `"utf8"` (written as text) |
+| `mimeType` | a media type such as `application/pdf` |
+| `name` | optional bare file name; no `/`, `\`, or leading `.`. Default `<lens>-<sha256 12 hex>.<ext>` |
+
+A tier missing a field, or with invalid base64 or an unsafe name, fails with
+`code: "file_invalid"`. Intercept and http tiers of a file lens keep response
+bodies up to 32MB (512KB otherwise). `effects.cache` applies as usual: a hit
+writes the cached file again.
 
 ## Authoring a lens for an unmapped page
 

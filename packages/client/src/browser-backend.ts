@@ -20,6 +20,8 @@ export interface BackendHttpRequest {
   body?: HttpFetchBody;
   /** Execute in a matching top-level page rather than a cookie-only fetch. */
   context?: "same-origin-page";
+  /** Keep response bodies up to this size; a file lens reads larger ones. */
+  maxBodyBytes?: number;
 }
 
 export type BrowserCapability =
@@ -98,6 +100,8 @@ export interface BindRequest extends TabChoice {
    * so the call reports the outcome instead of disturbing the form.
    */
   holdAt?(page: { url: string; title: string }): Promise<boolean>;
+  /** Capture response bodies up to this size while bound; a file lens reads larger ones. */
+  maxBodyBytes?: number;
 }
 
 export interface DomExtractResult {

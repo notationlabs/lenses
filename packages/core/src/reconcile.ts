@@ -1,3 +1,4 @@
+import { fileContentProblem } from "./file-result.js";
 import { isPlainObject } from "./util.js";
 
 /** Fill fields missing from an earlier resolver without replacing its values. */
@@ -37,6 +38,9 @@ export function satisfiesReturns(
     const def = defs?.[schema.$ref];
     return def === undefined || satisfiesReturns(value, def, defs);
   }
+
+  // A file lens's tiers produce FileContent; the broker turns it into a LensFile.
+  if (schema.type === "file") return fileContentProblem(value) === undefined;
 
   if (schema.type === "object" && isPlainObject(schema.fields)) {
     if (!isPlainObject(value)) return false;

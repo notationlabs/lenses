@@ -8,7 +8,7 @@ import { skillMarkdown } from "./skill.js";
 
 const globalHelp = `Usage:
   lens list [--catalog <source>] [--port <number>]
-  lens call <lens> [--params <json>] [--tab <id>] [--timeout-ms <number>] [--auth-lease-ms <number>] [--no-cache] [--lax] [--allow-writes]
+  lens call <lens> [--params <json>] [--tab <id>] [--timeout-ms <number>] [--auth-lease-ms <number>] [--no-cache] [--lax] [--allow-writes] [--out-dir <dir>]
   lens schema <lens>
   lens gen ts-sdk [<catalog> ...] [--out <file>]
   lens eval <expression> [--input <file>] [--as <variable>] [--params <json>]
@@ -62,7 +62,8 @@ Options:
                           field instead of finding or opening one. A closed
                           tab is an error with code "tab_closed".
   --no-cache              Ignore cached results and do not cache this call's result
-  --allow-writes          Permit page actions and mutating HTTP requests.
+  --allow-writes          Permit lenses that declare effects.writes.
+  --out-dir <dir>         Write a file lens's file into <dir>; the result is its path.
                           Without it a write lens is refused with
                           code "writes_not_allowed"; read lenses never need it.
   --lax                   Attach result schema violations to the value result
@@ -320,6 +321,7 @@ async function main(): Promise<void> {
       lax: { type: "boolean" },
       "no-cache": { type: "boolean" },
       "allow-writes": { type: "boolean" },
+      "out-dir": { type: "string" },
       input: { type: "string" },
       as: { type: "string" },
       out: { type: "string", short: "o" },
@@ -436,6 +438,7 @@ async function main(): Promise<void> {
           strict: !values.lax,
           allowWrites: values["allow-writes"],
           noCache: values["no-cache"],
+          ...(values["out-dir"] !== undefined ? { outDir: values["out-dir"] } : {}),
           ...(values.tab !== undefined ? { tab: values.tab } : {}),
         });
         break;

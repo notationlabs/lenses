@@ -156,6 +156,7 @@ lens call claude/usage
 lens call claude/usage --no-cache
 lens call hn/item --params '{"id":"42","p":2,"limit":10}' --verbose
 lens call chatgpt/send --params '{"message":"hello"}' --allow-writes
+lens call bank/statement-pdf --params '{"id":"123"}' --out-dir ~/Statements
 lens observe https://github.com/notifications --wait-ms 4000 --html
 lens schema hn/top
 lens gen ts-sdk -o src/lenses.gen.ts
@@ -308,7 +309,11 @@ repository — or at a direct HTTP URL.
   }
   ```
 
-- `returns` — result shape. A field can contain a callable lens reference:
+- `returns` — result shape. `{ "type": "file" }` makes the whole result a file: the
+  tier maps `{content, encoding: "base64" | "utf8", mimeType, name?}`, the broker
+  writes it into the caller's `--out-dir` (`outDir`), and the caller receives
+  `{path, name, mimeType, bytes}` (see [skill/SKILL.md](skill/SKILL.md#file-lenses)).
+  A field can contain a callable lens reference:
 
   ```jsonc
   "next_page": {

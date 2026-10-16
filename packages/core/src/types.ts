@@ -372,7 +372,10 @@ export type LensResult =
         | "required_backend_unavailable"
         | "perform_failed"
         | "broker_busy"
-        | "tab_closed";
+        | "tab_closed"
+        | "out_dir_required"
+        | "out_dir_invalid"
+        | "file_invalid";
       /** 0-based index of the perform step that failed */
       step?: number;
       performed?: true;
@@ -442,6 +445,8 @@ export type LensBridgeRequest =
       allowWrites?: boolean;
       /** bypass cached results and do not cache the result of this call */
       noCache?: boolean;
+      /** absolute directory a `returns: {"type": "file"}` lens writes its file into */
+      outDir?: string;
       /** Per-call target supplied only by the client instance with an active recorder. */
       recording?: { path: string; callId: string; lens: string };
       /** Run in this broker tab id (an earlier result's `tab`). */

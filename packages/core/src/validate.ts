@@ -193,7 +193,8 @@ const RETURNS_HINT =
   'must be a primitive type ("string" | "number" | "integer" | "boolean" | "null"), ' +
   'a nullable primitive {"type": ..., "nullable": true}, a lens reference {"$lens": ..., "params"?}, ' +
   'a def reference {"$ref": <name in $defs>}, ' +
-  '{"type": "object", "fields"?: {...}}, or {"type": "array", "items"?: <field map> | {"$ref": ...}}';
+  '{"type": "object", "fields"?: {...}}, {"type": "array", "items"?: <field map> | {"$ref": ...}}, ' +
+  'or, as the whole result, {"type": "file"}';
 
 const defRefSchema = z.strictObject({ $ref: z.string() });
 
@@ -266,7 +267,10 @@ const lensSpecSchema = z.strictObject({
   tab: z.literal("reuse").optional(),
   navigate: z.literal("in-page").optional(),
   ready: z.string().min(1).optional(),
-  returns: returnSchema.optional(),
+  // A file is only ever the whole result: the broker writes it to disk.
+  returns: z
+    .union([z.strictObject({ type: z.literal("file") }), returnSchema], { error: RETURNS_HINT })
+    .optional(),
   $defs: z.record(z.string(), defSchema).optional(),
   exceptions: exceptionsSchema.optional(),
   helpers: z.record(z.string(), expression).optional(),

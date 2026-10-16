@@ -4,6 +4,7 @@ import {
   expandTemplate,
   expandUrl,
   pageNeedsUser,
+  returnsFile,
   specWrites,
   type EngineIO,
   type HttpFetchRequest,
@@ -14,6 +15,7 @@ import {
   type MutationState,
   type PerformStep,
 } from "@djgrant/lenses-core";
+import { MAX_FILE_BODY_BYTES, outDirProblem, saveFile } from "./file-output.js";
 import { materialiseHttpBody } from "./http-body.js";
 import { RecordingMonitor } from "./recording-monitor.js";
 import { appendRecordingCheckpoint } from "./recording.js";
@@ -182,13 +184,24 @@ export function createBrokerOrchestrator(
         message: `${message.spec.name} performs writes; call it with allowWrites: true to consent`,
       };
     }
+    // A file lens writes into the caller's directory; a bad one fails before
+    // any browser work.
+    const fileLens = returnsFile(message.spec);
+    if (fileLens) {
+      const problem = await outDirProblem(message.outDir);
+      if (problem) return problem;
+    }
+    const maxBodyBytes = fileLens ? MAX_FILE_BODY_BYTES : undefined;
+    // The cache keeps the file's content, so a hit writes the file again.
+    const deliver = (result: LensResult): Promise<LensResult> =>
+      fileLens ? saveFile(message.spec, result, message.outDir!) : Promise.resolve(result);
     // Enforced here, not trusted from the document: a perform result is never
     // cached and never served from cache, whatever effects.cache claims.
     const cacheTtlMs = writes ? 0 : (message.spec.effects.cache ?? 0) * 1000;
     const cacheKey = `${JSON.stringify(message.spec)}|${JSON.stringify(message.params)}|${message.tab ?? ""}`;
     const cached = writes ? undefined : cache.get(cacheKey);
     if (!message.noCache && cached && cached.expiresAt > Date.now()) {
-      return { ...cached.result, cached: true } as unknown as LensResult;
+      return deliver({ ...cached.result, cached: true } as unknown as LensResult);
     }
     if (!message.noCache && cached) cache.delete(cacheKey);
 
@@ -244,6 +257,7 @@ export function createBrokerOrchestrator(
         ...(inPage ? { inPage } : {}),
         ...(message.spec.ready ? { ready: expandTemplate(message.spec.ready, message.params) } : {}),
         holdAt: (page) => pageNeedsUser(message.spec, page, message.params),
+        ...(maxBodyBytes ? { maxBodyBytes } : {}),
         loadTimeoutMs,
         existingOnly: authRetry,
         // A document with perform steps binds with "reuse": a reload only
@@ -273,7 +287,7 @@ export function createBrokerOrchestrator(
     ): Promise<InterceptedResponse | undefined> => {
       if (!request.credentials) {
         progress(`fetching ${request.url} directly`);
-        return directHttpFetch(request, loadTimeoutMs);
+        return directHttpFetch(request, loadTimeoutMs, maxBodyBytes);
       }
       const required: BrowserCapability[] = request.body
         ? ["credentialed-http-body"]
@@ -305,6 +319,7 @@ export function createBrokerOrchestrator(
         ...(request.credentials === "same-origin-page"
           ? { context: "same-origin-page" as const }
           : {}),
+        ...(maxBodyBytes ? { maxBodyBytes } : {}),
       });
       if (!response && request.credentials === "same-origin-page") {
         throw requiredBackendUnavailable();
@@ -335,6 +350,7 @@ export function createBrokerOrchestrator(
         const { tab: _tab, ...untabbed } = result;
         cache.set(cacheKey, { result: untabbed, expiresAt: Date.now() + cacheTtlMs });
       }
+      result = await deliver(result);
       return result;
     } catch (error) {
       if (authRetry && error instanceof AuthPageUnavailable) {
@@ -358,7 +374,8 @@ export function createBrokerOrchestrator(
 
   async function directHttpFetch(
     request: HttpFetchRequest,
-    timeoutMs: number
+    timeoutMs: number,
+    maxBodyBytes = MAX_HTTP_BODY_CHARS
   ): Promise<InterceptedResponse> {
     const init = materialiseHttpBody(request.body, request.headers);
     const response = await fetch(request.url, {
@@ -367,7 +384,7 @@ export function createBrokerOrchestrator(
       redirect: "follow",
       signal: AbortSignal.timeout(timeoutMs),
     });
-    const body = (await response.text()).slice(0, MAX_HTTP_BODY_CHARS);
+    const body = (await response.text()).slice(0, maxBodyBytes);
     return {
       url: response.url || request.url,
       method: request.method,

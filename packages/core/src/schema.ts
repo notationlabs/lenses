@@ -43,6 +43,14 @@ function toZod(node: unknown, scope: DefScope): z.ZodType {
   if (node.nullable === true && typeof node.type === "string" && node.type in primitives) {
     return primitives[node.type].nullable();
   }
+  if (node.type === "file") {
+    return z.object({
+      path: z.string(),
+      name: z.string(),
+      mimeType: z.string(),
+      bytes: z.number().int(),
+    });
+  }
   if (node.type === "object") {
     return isPlainObject(node.fields)
       ? fieldMap(node.fields, scope)
