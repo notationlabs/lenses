@@ -5,6 +5,7 @@ import {
   expandUrl,
   paramLensDefault,
   resolveParams,
+  returnsFile,
   specWarnings,
   validateResult,
   type LensParam,
@@ -21,6 +22,7 @@ import {
   type LensTransport,
   type LensTransportResult,
 } from "./bridge.js";
+import { resolve as resolvePath } from "node:path";
 import { LensStore, type CatalogUpdate } from "./lens-store.js";
 import { parseCatalogSource, scanLensFiles, type CatalogSource, type LensFile } from "./catalog.js";
 export { applyCatalogSettings } from "./catalog.js";
@@ -75,6 +77,13 @@ export interface LensCall {
   allowWrites?: boolean;
   /** bypass cached results and do not cache the result of this call */
   noCache?: boolean;
+  /**
+   * Directory a `returns: {"type": "file"}` lens writes its file into; the
+   * result is then `{path, name, mimeType, bytes}`. Relative paths resolve
+   * against the current directory. Required for file lenses, ignored otherwise.
+   * Never inherited by {$lens} parameter defaults.
+   */
+  outDir?: string;
   /** when false, demote `returns` schema violations from an error result to warnings (default true) */
   strict?: boolean;
   /**
@@ -354,7 +363,9 @@ export class LensClient {
     this.log(`resolved ${spec.name} to ${url}`);
 
     const key = `${JSON.stringify(spec)}|${JSON.stringify(params)}|${input.tab ?? ""}`;
-    const ttl = (spec.effects.cache ?? 0) * 1000;
+    // A file lens is cached by the broker, which rewrites the file on a hit;
+    // a client-side hit would name a file that may no longer exist.
+    const ttl = returnsFile(spec) ? 0 : (spec.effects.cache ?? 0) * 1000;
     const hit = this.cache.get(key);
     if (hit && hit.expiresAt <= Date.now()) this.cache.delete(key);
     if (!input.noCache && ttl > 0 && hit && hit.expiresAt > Date.now()) {
@@ -377,7 +388,8 @@ export class LensClient {
         : undefined,
       input.authLeaseMs,
       input.noCache,
-      input.tab
+      input.tab,
+      input.outDir === undefined ? undefined : resolvePath(input.outDir)
     );
     if (!input.noCache && result.kind === "value" && !result.partial && !result.cached && ttl > 0) {
       // A cached result names no tab: the tab may be gone when it is served.

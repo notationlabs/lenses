@@ -95,11 +95,11 @@ export type LensCallResult<Result> =
 /** The client from \`@djgrant/lenses\` with \`call\` and \`value\` typed against the generated lens map. */
 export interface LensClient extends Omit<BaseLensClient, "call" | "value"> {
   call<Name extends LensName>(
-    input: { lens: Name; timeoutMs?: number; strict?: boolean; noCache?: boolean; authLeaseMs?: number } & ParamsArg<Lenses[Name]["params"]>
+    input: { lens: Name; timeoutMs?: number; strict?: boolean; noCache?: boolean; authLeaseMs?: number; outDir?: string } & ParamsArg<Lenses[Name]["params"]>
   ): Promise<LensCallResult<Lenses[Name]["result"]>>;
   /** \`call()\` unwrapped: the value, or a thrown LensOutcomeError / LensResultError. */
   value<Name extends LensName>(
-    input: { lens: Name; timeoutMs?: number; strict?: boolean; noCache?: boolean; authLeaseMs?: number } & ParamsArg<Lenses[Name]["params"]>
+    input: { lens: Name; timeoutMs?: number; strict?: boolean; noCache?: boolean; authLeaseMs?: number; outDir?: string } & ParamsArg<Lenses[Name]["params"]>
   ): Promise<Lenses[Name]["result"]>;
 }
 
@@ -139,6 +139,7 @@ function returnsType(node: unknown, scope: DefScope, indent: string): string {
   if (node.nullable === true && typeof node.type === "string" && node.type in primitiveTypes) {
     return `${primitiveTypes[node.type]} | null`;
   }
+  if (node.type === "file") return "{ path: string; name: string; mimeType: string; bytes: number }";
   if (node.type === "object") {
     return isPlainObject(node.fields)
       ? fieldMap(node.fields, scope, indent)

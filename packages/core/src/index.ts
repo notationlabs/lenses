@@ -19,6 +19,14 @@ export {
 export { validateSpec, validateExceptions, specWarnings } from "./validate.js";
 export { errorMessage } from "./util.js";
 export { deriveJsonSchema, returnsSchema, validateResult } from "./schema.js";
+export {
+  fileContentProblem,
+  fileExtension,
+  returnsFile,
+  unsafeFileName,
+  type FileContent,
+  type SavedFile,
+} from "./file-result.js";
 export { generateTsSdk } from "./generate.js";
 export {
   pageDomExtract,

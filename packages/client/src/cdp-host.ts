@@ -209,6 +209,13 @@ export function createCdpBackend(
     for (const listener of statusListeners) listener();
   };
 
+  /** A file lens's larger body limit, for the page it last bound. */
+  const captureLimits = new WeakMap<Page, number>();
+  function limitCaptures(page: Page, request: BindRequest): void {
+    if (request.maxBodyBytes) captureLimits.set(page, request.maxBodyBytes);
+    else captureLimits.delete(page);
+  }
+
   function captures(page: Page): CaptureBuffer {
     let state = captureBuffers.get(page);
     if (state) return state;
@@ -226,7 +233,7 @@ export function createCdpBackend(
             contentType.includes("json") ||
             trimmed.startsWith("{") ||
             trimmed.startsWith("[");
-          if (!looksJson || body.length > MAX_BODY_BYTES) return;
+          if (!looksJson || body.length > (captureLimits.get(page) ?? MAX_BODY_BYTES)) return;
           pushCapture(owned, {
             url: response.url(),
             method: response.request().method(),
@@ -1055,7 +1062,7 @@ export function createCdpBackend(
             const text = await res.text();
             return { url: res.url, status: res.status, body: text.slice(0, req.maxBodyChars) };
           },
-          { ...request, maxBodyChars: MAX_BODY_BYTES }
+          { ...request, maxBodyChars: request.maxBodyBytes ?? MAX_BODY_BYTES }
         );
         return {
           url: result.url || request.url,
@@ -1085,6 +1092,7 @@ export function createCdpBackend(
       const current = await ensureBrowser(() => {});
       const chosen = await chooseTab(current, request);
       if (chosen) {
+        limitCaptures(chosen, request);
         const kept = keptGate(chosen);
         const atAuthGate = request.existingOnly
           ? !kept || sameGatePlace(chosen.url(), kept.keptUrl)
@@ -1125,6 +1133,7 @@ export function createCdpBackend(
       if (request.target === undefined) throw new Error("bind needs a target or a tab");
       const existing = await findPage(current, request.target);
       if (existing) {
+        limitCaptures(existing, request);
         const kept = keptGate(existing);
         // A retry that has left the original sign-in place must not resolve
         // against responses captured before login (even if they match first).
@@ -1153,6 +1162,7 @@ export function createCdpBackend(
       if (request.existingOnly) throw new AuthPageUnavailable("auth retry has no open target tab");
       const page = await current.newPage({ background: true });
       transport.recordEvent?.("Call tab opened");
+      limitCaptures(page, request);
       resetCaptures(page);
       // Register before loading: a slow sign-in redirect must not orphan the tab.
       if (request.reuse) rememberReuse(urlOrigin(request.target), page);

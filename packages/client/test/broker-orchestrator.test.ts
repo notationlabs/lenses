@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type {
   DomResolver,
   InterceptedResponse,
@@ -1466,5 +1469,108 @@ describe("broker tab ids", () => {
     expect(backend.binds[0]).toMatchObject({ tab: "t2", inPage: true, navigation: "reuse" });
     expect(backend.binds[0]).not.toHaveProperty("target");
     expect(result).toMatchObject({ kind: "value", tab: "t2" });
+  });
+});
+
+describe("file lenses", () => {
+  const pdf = Buffer.from("%PDF-1.7 statement");
+  const fileSpec = (overrides: Partial<LensSpec> = {}) =>
+    domSpec({ name: "@example/bank/statement-pdf", returns: { type: "file" }, ...overrides });
+  const fileSession = (value: Record<string, unknown>) => {
+    const session = new FakeSession();
+    session.domResult = { url: "https://example.com", title: "Example", value: value as never };
+    return session;
+  };
+  const outDir = () => mkdtempSync(join(tmpdir(), "lens-out-"));
+
+  it("refuses a file lens without an out dir before binding a page", async () => {
+    const backend = new FakeBackend("cdp");
+    const result = await request(createBrokerOrchestrator([backend]), {
+      type: "call", id: "no-dir", spec: fileSpec(), params: {}, timeoutMs: 1000,
+    });
+    expect(result).toMatchObject({ kind: "error", code: "out_dir_required" });
+    expect(backend.binds).toHaveLength(0);
+  });
+
+  it.each([
+    ["relative", "statements", "must be an absolute path"],
+    ["missing", "/definitely/not/here", "does not exist"],
+  ])("refuses a %s out dir", async (_kind, dir, reason) => {
+    const result = await request(createBrokerOrchestrator([new FakeBackend("cdp")]), {
+      type: "call", id: "bad-dir", spec: fileSpec(), params: {}, timeoutMs: 1000, outDir: dir,
+    });
+    expect(result).toMatchObject({ kind: "error", code: "out_dir_invalid" });
+    expect((result as { message: string }).message).toContain(reason);
+  });
+
+  it("decodes the content into the out dir and returns where it went", async () => {
+    const dir = outDir();
+    const backend = new FakeBackend("cdp", true, fileSession({
+      content: pdf.toString("base64"), encoding: "base64", mimeType: "application/pdf", name: "Statement.pdf",
+    }));
+    const result = await request(createBrokerOrchestrator([backend]), {
+      type: "call", id: "save", spec: fileSpec(), params: {}, timeoutMs: 1000, outDir: dir,
+    });
+    expect(result).toMatchObject({
+      kind: "value",
+      value: { path: join(dir, "Statement.pdf"), name: "Statement.pdf", mimeType: "application/pdf", bytes: pdf.length },
+    });
+    expect(readFileSync(join(dir, "Statement.pdf"))).toEqual(pdf);
+    expect(readdirSync(dir)).toEqual(["Statement.pdf"]);
+    expect(backend.binds[0].maxBodyBytes).toBeGreaterThan(512 * 1024);
+  });
+
+  it("names an unnamed file after the lens and its content hash", async () => {
+    const dir = outDir();
+    const backend = new FakeBackend("cdp", true, fileSession({
+      content: "a,b\n1,2\n", encoding: "utf8", mimeType: "text/csv",
+    }));
+    const result = await request(createBrokerOrchestrator([backend]), {
+      type: "call", id: "hash", spec: fileSpec(), params: {}, timeoutMs: 1000, outDir: dir,
+    });
+    const name = (result as { value: { name: string } }).value.name;
+    expect(name).toMatch(/^statement-pdf-[0-9a-f]{12}\.csv$/);
+    expect(readFileSync(join(dir, name), "utf8")).toBe("a,b\n1,2\n");
+  });
+
+  it("refuses a name that would leave the out dir", async () => {
+    const dir = outDir();
+    const backend = new FakeBackend("cdp", true, fileSession({
+      content: "x", encoding: "utf8", mimeType: "text/plain", name: "../escape.txt",
+    }));
+    const result = await request(createBrokerOrchestrator([backend]), {
+      type: "call", id: "escape", spec: fileSpec(), params: {}, timeoutMs: 1000, outDir: dir,
+    });
+    expect(result).toMatchObject({ kind: "error", code: "file_invalid" });
+    expect((result as { message: string }).message).toContain("path separator");
+    expect(readdirSync(dir)).toEqual([]);
+  });
+
+  it("writes the file again on a cache hit", async () => {
+    const dir = outDir();
+    const backend = new FakeBackend("cdp", true, fileSession({
+      content: pdf.toString("base64"), encoding: "base64", mimeType: "application/pdf", name: "s.pdf",
+    }));
+    const orchestrator = createBrokerOrchestrator([backend]);
+    const spec = fileSpec({ effects: { reads: ["example.com"], writes: [], cache: 60 } });
+    const call = (id: string) =>
+      request(orchestrator, { type: "call", id, spec, params: {}, timeoutMs: 1000, outDir: dir });
+    await call("first");
+    rmSync(join(dir, "s.pdf"));
+    expect(await call("second")).toMatchObject({ kind: "value", cached: true, value: { name: "s.pdf" } });
+    expect(readFileSync(join(dir, "s.pdf"))).toEqual(pdf);
+    expect(backend.binds).toHaveLength(1);
+  });
+});
+
+describe("author-declared writes", () => {
+  it("runs a perform lens that declares no writes without consent", async () => {
+    const session = new FakeSession();
+    const result = await request(createBrokerOrchestrator([new FakeBackend("cdp", true, session)]), {
+      type: "call", id: "read-click", params: {}, timeoutMs: 1000,
+      spec: domSpec({ perform: [{ click: "a.statement", text: "Sep 2026" }] }),
+    });
+    expect(result).toMatchObject({ kind: "value" });
+    expect(session.performCalls).toEqual([[{ click: "a.statement", text: "Sep 2026" }]]);
   });
 });

@@ -61,6 +61,12 @@ export function createLensMcpServer(client: LensClient, progressIntervalMs = 10_
           .string()
           .optional()
           .describe("Run in the tab a previous result named in its tab field; a closed tab is error code tab_closed"),
+        outDir: z
+          .string()
+          .optional()
+          .describe(
+            'Absolute directory a lens returning {"type": "file"} writes its file into; required for those lenses. The result is {path, name, mimeType, bytes}'
+          ),
       }),
     },
     async (input, ctx) => {

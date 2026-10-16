@@ -68,7 +68,9 @@ export interface LensTransport {
     /** bypass the broker cache without storing the result */
     noCache?: boolean,
     /** run in this broker tab id, from an earlier result's `tab` */
-    tab?: string
+    tab?: string,
+    /** absolute directory a file lens writes into */
+    outDir?: string
   ): Promise<LensTransportResult>;
   observe(
     /** omitted with `tab`: read the tab where it is */
@@ -222,7 +224,8 @@ export class BrowserBridge implements LensTransport {
     recording?: RecordingTarget,
     authLeaseMs = 0,
     noCache?: boolean,
-    tab?: string
+    tab?: string,
+    outDir?: string
   ): Promise<LensTransportResult> {
     return this.request(
       (id) => ({
@@ -237,6 +240,7 @@ export class BrowserBridge implements LensTransport {
         ...(noCache !== undefined ? { noCache } : {}),
         ...(recording ? { recording } : {}),
         ...(tab !== undefined ? { tab } : {}),
+        ...(outDir !== undefined ? { outDir } : {}),
       }),
       // The broker delivers lease expiry even while a retry is queued; leave
       // transport margin for the final result rather than racing it at expiry.
