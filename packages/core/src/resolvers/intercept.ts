@@ -9,7 +9,7 @@ import type {
   ResolverMiss,
 } from "../types.js";
 import { evaluate } from "../expr.js";
-import { matchRequestPattern } from "../url-pattern.js";
+import { expandRequestPattern, matchRequestPattern } from "../url-pattern.js";
 import { matchPageException, matchTierException } from "./outcome.js";
 
 // Normalise a single request as one source; named sources become JSONata variables.
@@ -19,7 +19,15 @@ export async function runIntercept(
   io: EngineIO,
   spec: LensSpec
 ): Promise<LensResult | ResolverMiss> {
-  const sources = r.sources ?? { body: { request: r.request!, items: r.items } };
+  // Request patterns take the same {name} holes as the lens URL and selectors,
+  // so a capture is matched to the account (or item) this call asked about.
+  // Values are percent-encoded as in the URL, since they meet encoded request
+  // URLs; see expandRequestPattern for `*`.
+  const sources = Object.fromEntries(
+    Object.entries(r.sources ?? { body: { request: r.request!, items: r.items } }).map(
+      ([name, source]) => [name, { ...source, request: expandRequestPattern(source.request, params) }]
+    )
+  );
   const names = Object.keys(sources);
 
   let found = await findMatches(sources, io);

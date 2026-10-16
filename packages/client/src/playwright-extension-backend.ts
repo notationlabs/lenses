@@ -1,5 +1,10 @@
 import puppeteer from "puppeteer-core";
-import { createCdpBackend, type CdpBackend, type CdpTransport } from "./cdp-host.js";
+import {
+  createCdpBackend,
+  pageTargetId,
+  type CdpBackend,
+  type CdpTransport,
+} from "./cdp-host.js";
 import {
   foregroundApplication,
   openUrlInChrome,
@@ -89,6 +94,11 @@ function createPlaywrightExtensionTransport(
       "then retry to reopen the connect page.",
     recordEvent(message) {
       anchor?.record(message);
+    },
+    tabKey(page) {
+      const targetId = pageTargetId(page);
+      const tabId = targetId === undefined ? undefined : relay?.tabIdForTarget(targetId);
+      return tabId === undefined ? undefined : String(tabId);
     },
     async prepareLeaseRelease() {
       const current = anchor;

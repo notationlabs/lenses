@@ -62,7 +62,7 @@ export class CDPRelayServer {
       if (!this._extensionConnection) throw new Error("Extension not connected");
       return this._extensionConnection.send(method as keyof ExtensionCommandV2, params);
     };
-    this._handler = new ExtensionProtocolV2(sendCommand);
+    this._handler = new ExtensionProtocolV2(sendCommand, log);
 
     const uuid = crypto.randomUUID();
     this._cdpPath = `/cdp/${uuid}`;
@@ -111,6 +111,11 @@ export class CDPRelayServer {
   async waitForExtension(): Promise<void> {
     await this._extensionConnectionPromise.promise;
     await this._handler.ready();
+  }
+
+  /** The Chrome tab id behind a CDP target this relay attached. */
+  tabIdForTarget(targetId: string): number | undefined {
+    return this._handler.tabIdForTarget(targetId);
   }
 
   stop(): void {
@@ -178,6 +183,7 @@ export class CDPRelayServer {
     const connection = new ExtensionConnection(ws);
     this._extensionConnection = connection;
     connection.onclose = (reason) => {
+      this._log(`extension connection closed: ${reason || "no reason given"}`);
       if (this._extensionConnection === connection) this._extensionConnection = null;
       this._handler.onExtensionDisconnect(reason);
       this._closeCdpConnection(`Extension disconnected: ${reason}`);

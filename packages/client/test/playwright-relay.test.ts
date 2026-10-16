@@ -102,6 +102,21 @@ describe("Playwright CDP relay", () => {
     expect(commands).not.toContain("chrome.tabs.remove");
   });
 
+  it("names an attached target by its Chrome tab id", async () => {
+    const model = new BrowserModel(async (method, params) => {
+      if (method === "chrome.tabs.create") return { id: 7 };
+      if (method === "chrome.debugger.sendCommand" && params[1] === "Target.getTargetInfo") {
+        return { targetInfo: { targetId: `target-${params[0].tabId}`, type: "page" } };
+      }
+      return undefined;
+    });
+    model.connectOverCDP(() => {});
+
+    expect(await model.createTarget("https://example.com")).toEqual({ targetId: "target-7" });
+    expect(model.tabIdForTarget("target-7")).toBe(7);
+    expect(model.tabIdForTarget("target-99")).toBeUndefined();
+  });
+
   it("accepts a real Puppeteer connection", async () => {
     relay = new CDPRelayServer();
     await relay.start();

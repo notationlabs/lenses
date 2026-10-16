@@ -144,6 +144,7 @@ describe("git catalog source", () => {
     git("-c", "user.email=t@t", "-c", "user.name=t", "add", ".");
     git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "one");
 
+    const previousCacheDir = process.env.LENS_CACHE_DIR;
     process.env.LENS_CACHE_DIR = await mkdtemp(join(tmpdir(), "lens-cache-"));
     try {
       const store = new LensStore([`git:${repo}#main`]);
@@ -166,7 +167,8 @@ describe("git catalog source", () => {
       await store.update();
       expect(await store.load()).toHaveLength(2);
     } finally {
-      delete process.env.LENS_CACHE_DIR;
+      if (previousCacheDir === undefined) delete process.env.LENS_CACHE_DIR;
+      else process.env.LENS_CACHE_DIR = previousCacheDir;
     }
   });
 });

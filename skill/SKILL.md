@@ -35,6 +35,12 @@ A call result is one of:
   failing JSON pointers when the value violated the lens's schema. Retry with
   `--lax` to receive the value with warnings instead.
 
+A result whose tab stays open carries `"tab": "t1"`, a broker id for that tab.
+Pass it back to target the same tab: `lens call <lens> --tab t1`, or
+`lens observe --tab t1` to read it where it is (add a URL to route it there
+in-page first). A closed tab fails with `code: "tab_closed"`; nothing opens a
+replacement.
+
 ## Write lenses
 
 A lens with a `perform` block acts on the page: its steps (fill, click, native form submit, press, drop, wait, navigate) run once, then the resolve tiers read the result in the same call. Mutating HTTP methods (anything except GET, HEAD, or OPTIONS) are writes too. Calling either kind requires `--allow-writes`; otherwise it is refused with `code: "writes_not_allowed"`. Check `effects.idempotent` first — a non-idempotent write (e.g. sending a message) sends twice on a manual retry. `performed: true` specifically means every `perform` step ran and the page write happened, even if the result itself is an error; `code: "perform_failed"` with a `step` index means it did not. The pattern, on logged-out chatgpt.com:
@@ -79,7 +85,9 @@ Authoring one: every write requires non-empty `effects.writes` and `cache` 0 or 
      chains requests: each binds `$name` for `map`/`matches`, and later templates address
      earlier bodies with dotted holes — `{orgs.0.uuid}` — which is how an id
      only another response knows reaches a URL.
-   - `intercept` — map a JSON response the page already fetched.
+   - `intercept` — map a JSON response the page already fetched. The
+     `request` pattern takes `{param}` holes, so a per-account lens matches
+     only that account's response.
    - `dom` — CSS selectors, optionally a repeating `item` selector.
    - `llm` — last resort; returns the snapshot and prompt to you.
 
@@ -273,11 +281,48 @@ Authoring one: every write requires non-empty `effects.writes` and `cache` 0 or 
    thirteen live pages. A document's own `helpers` entry overrides the
    catalogue's, and a declared param of the same name shadows both.
 
+   Some sites hold their session in the open tab rather than in cookies: any
+   fresh load or reload lands on the login page. Give their scope two
+   settings (a document may also set them itself):
+
+   ```jsonc
+   { "scopes": [{ "url": "https://bank.example/*",
+     "tab": "reuse",          // run in the tab this origin used last; never close it
+     "navigate": "in-page",   // reach the lens URL with pushState + popstate, never a load or reload
+     "exceptions": { "needs_auth": { "matches": "$contains(url, '/login')" } } }] }
+   ```
+
+   The first call opens a tab, `needs_auth` holds it while the user signs in,
+   and every later call routes that same tab. With the Playwright extension,
+   only tabs in its tab group are reused: when the broker restarts or loses
+   its connection the extension ungroups them, and the next call opens a new
+   tab. Drag the signed-in tab back into the group first to keep using it.
+   A tab whose current page already matches a `needs_*` exception is never
+   navigated; the call reports the outcome and brings the tab to the front
+   instead. Tab ids (`t` + Chrome tab id) stay valid while the tab is open
+   and in the group.
+
+   Such apps often keep rendering after `load`: a transient error screen, a
+   timed redirect to sign-in. Give the document a `ready` selector unique to
+   its page (`"ready": "ibank-account-card"`); after navigating, tiers wait
+   until it matches or the page matches a `needs_*` exception, up to
+   `loadTimeoutMs`. Without one there is no extra wait. Intercept tiers
+   already wait for their response, so `ready` matters most to dom tiers.
+
+   An app can render an error or sign-in screen at the requested URL under an
+   unchanged title. A dom tier's own exceptions also see what it extracted, as
+   `value`: `"exceptions": { "needs_auth": { "matches": "$contains($string(value.heading), 'unable to continue')" } }`. Author against it with
+   `lens observe --tab <id>`, never a bare `lens observe <url>`, which loads a
+   fresh document and signs the session out.
+
 4. Call it by file path to test: `lens call ./my-lens.json --catalog .`
 
 `map`, `post`, and `matches` are sandboxed JSONata: no network or DOM
 access. Declared params are available as variables (`$id`) in every
 expression, and as `{name}` holes in `url` and in selectors.
+
+The broker logs to `~/.cache/lenses/broker.log` (connections, tab reuse,
+debugger detaches); read it when a call behaves unexpectedly.
 
 ## Result types
 

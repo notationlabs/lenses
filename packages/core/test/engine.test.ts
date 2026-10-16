@@ -166,6 +166,60 @@ describe("executeLens", () => {
     });
   });
 
+  // An app can render its error or sign-in screen at the requested URL with
+  // an unchanged title; only the extracted content tells them apart.
+  it("matches a DOM tier's own exceptions against what it extracted", async () => {
+    const domOnly = validateSpec({
+      name: "@example/web/summary",
+      url: "https://example.com/summary",
+      effects: { reads: ["example.com"], writes: [] },
+      resolve: [{
+        kind: "dom",
+        fields: { heading: { selector: "h1" } },
+        exceptions: { needs_auth: { matches: "$contains(value.heading, 'unable to continue')" } },
+      }],
+    });
+    const extract = (heading: string) => io({
+      domExtract: async () => ({ url: "https://example.com/summary", title: "Bank", value: { heading } }),
+    });
+    expect(await executeLens(domOnly, {}, extract("Sorry, but we're unable to continue.")))
+      .toMatchObject({ kind: "outcome", name: "needs_auth" });
+    expect(await executeLens(domOnly, {}, extract("Your accounts")))
+      .toMatchObject({ kind: "value", value: { heading: "Your accounts" } });
+  });
+
+  it("expands parameters in intercept request patterns", async () => {
+    const perAccount = validateSpec({
+      name: "@example/web/transactions",
+      url: "https://example.com/accounts/{id}",
+      params: { id: "string" },
+      effects: { reads: ["example.com"], writes: [] },
+      resolve: [{
+        kind: "intercept",
+        request: "GET https://api.example.com/accounts/{id}/*",
+        items: "things",
+        map: "{ 'title': name }",
+      }],
+    });
+    const r = await executeLens(perAccount, { id: "b" }, io({
+      getIntercepted: async () => [
+        captured({ url: "https://api.example.com/accounts/b/statement?from=1" }),
+        captured({ url: "https://api.example.com/accounts/a/statement?from=1", body: JSON.stringify({ things: [{ name: "wrong" }] }) }),
+      ],
+    }));
+    expect(r).toMatchObject({ kind: "value", value: [{ title: "a" }, { title: "b" }] });
+    // Values meet encoded request URLs, and a `*` in one is not a wildcard.
+    const encoded = await executeLens(perAccount, { id: "a b*" }, io({
+      getIntercepted: async () => [
+        captured({ url: "https://api.example.com/accounts/a b-other/statement", body: JSON.stringify({ things: [{ name: "wrong" }] }) }),
+        captured({ url: "https://api.example.com/accounts/a%20b%2A/statement" }),
+      ],
+    }));
+    expect(encoded).toMatchObject({ kind: "value", value: [{ title: "a" }, { title: "b" }] });
+    expect(() => validateSpec({ ...perAccount, params: {}, url: "https://example.com/x" }))
+      .toThrow('intercept parameter "id" is not declared');
+  });
+
   it("names the unmatched request when an intercept tier captures nothing", async () => {
     const interceptOnly = validateSpec({
       name: "@example/web/things",

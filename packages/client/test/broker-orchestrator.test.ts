@@ -23,6 +23,7 @@ import type {
   InterceptDelta,
   SnapshotOptions,
 } from "../src/browser-backend.js";
+import { TabClosed } from "../src/browser-backend.js";
 
 const capture = (body: string): InterceptedResponse => ({
   url: `https://example.com/${body}`,
@@ -34,7 +35,8 @@ const capture = (body: string): InterceptedResponse => ({
 
 class FakeSession implements BrowserSession {
   readonly id = "fake_session";
-  readonly created = true;
+  created = true;
+  tab?: string;
   navigated = true;
   atAuthGate?: boolean;
   reads: InterceptDelta[] = [];
@@ -163,7 +165,7 @@ class FakeBackend implements BrowserBackend {
     if (disposition === "keep" && this.binds.length > 0) {
       this.authGate = {
         url: this.session.snapshotResult.url,
-        target: this.binds[this.binds.length - 1].target,
+        target: this.binds[this.binds.length - 1].target ?? "",
       };
     }
   }
@@ -1387,5 +1389,82 @@ describe("http tiers", () => {
     expect(result).toMatchObject({ kind: "value", resolver: "dom" });
     expect(backend.binds).toHaveLength(1);
     expect(backend.finishes).toEqual(["close-if-created"]);
+  });
+});
+
+describe("broker tab ids", () => {
+  const call = (spec: LensSpec, extra: Partial<Extract<LensBridgeRequest, { type: "call" }>> = {}) => ({
+    type: "call" as const,
+    id: "call",
+    spec,
+    params: {},
+    timeoutMs: 1000,
+    ...extra,
+  });
+
+  it("passes tab reuse and in-page navigation to bind and names the kept tab", async () => {
+    const session = new FakeSession();
+    session.tab = "t1";
+    const backend = new FakeBackend("cdp", true, session);
+    const result = await request(
+      createBrokerOrchestrator([backend]),
+      call(domSpec({ tab: "reuse", navigate: "in-page" }))
+    );
+    expect(backend.binds[0]).toMatchObject({ reuse: true, inPage: true });
+    expect(result).toMatchObject({ kind: "value", tab: "t1" });
+  });
+
+  it("does not name a tab in a result served from cache", async () => {
+    const session = new FakeSession();
+    session.tab = "t1";
+    const backend = new FakeBackend("cdp", true, session);
+    const orchestrator = createBrokerOrchestrator([backend]);
+    const spec = domSpec({ tab: "reuse", effects: { reads: ["example.com"], writes: [], cache: 60 } });
+    expect(await request(orchestrator, call(spec, { id: "first" }))).toMatchObject({ tab: "t1" });
+    const cached = await request(orchestrator, call(spec, { id: "second" }));
+    expect(cached).toMatchObject({ kind: "value", cached: true });
+    expect(cached).not.toHaveProperty("tab");
+  });
+
+  it("does not name a created tab that the call closes", async () => {
+    const session = new FakeSession();
+    session.tab = "t1";
+    const backend = new FakeBackend("cdp", true, session);
+    const result = await request(createBrokerOrchestrator([backend]), call(domSpec()));
+    expect(result).toMatchObject({ kind: "value" });
+    expect(result).not.toHaveProperty("tab");
+    expect(backend.binds[0]).not.toHaveProperty("reuse");
+    expect(backend.binds[0]).not.toHaveProperty("inPage");
+  });
+
+  it("runs a call in a named tab and reports a closed one as tab_closed", async () => {
+    const session = new FakeSession();
+    session.created = false;
+    session.tab = "t4";
+    const backend = new FakeBackend("cdp", true, session);
+    const orchestrator = createBrokerOrchestrator([backend]);
+    expect(await request(orchestrator, call(domSpec(), { tab: "t4" })))
+      .toMatchObject({ kind: "value", tab: "t4" });
+    expect(backend.binds[0]).toMatchObject({ tab: "t4" });
+
+    backend.onBind = () => { throw new TabClosed("tab t4 is closed"); };
+    expect(await request(orchestrator, call(domSpec(), { tab: "t4", noCache: true })))
+      .toMatchObject({ kind: "error", code: "tab_closed" });
+  });
+
+  it("observes a named tab in place without a document load", async () => {
+    const session = new FakeSession();
+    session.created = false;
+    session.tab = "t2";
+    const backend = new FakeBackend("cdp", true, session);
+    const result = await request(createBrokerOrchestrator([backend]), {
+      type: "observe",
+      id: "observe",
+      tab: "t2",
+      waitMs: 0,
+    });
+    expect(backend.binds[0]).toMatchObject({ tab: "t2", inPage: true, navigation: "reuse" });
+    expect(backend.binds[0]).not.toHaveProperty("target");
+    expect(result).toMatchObject({ kind: "value", tab: "t2" });
   });
 });

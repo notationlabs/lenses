@@ -37,7 +37,9 @@ export async function runDom(
 ): Promise<LensResult | ResolverMiss> {
   const extracted = await io.domExtract(expandSelectors(r, params));
   const page = { url: extracted.url, title: extracted.title };
-  const outcome = await matchTierException(spec, r.exceptions, page, params, "dom")
+  // A tier's own predicates also see what it extracted: an app can render an
+  // error or sign-in screen at the requested URL, under an unchanged title.
+  const outcome = await matchTierException(spec, r.exceptions, { ...page, value: extracted.value }, params, "dom")
     ?? await matchPageException(spec, page, params, "dom", r.exceptions);
   if (outcome) return outcome;
 

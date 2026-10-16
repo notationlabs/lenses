@@ -47,12 +47,39 @@ export interface BackendInfo {
 
 export class AuthPageUnavailable extends Error {}
 
-export interface BindRequest {
-  target: string;
+/** A `tab` id named a tab that is gone (or that this broker never issued). */
+export class TabClosed extends Error {
+  readonly code = "tab_closed";
+}
+
+/** How a call picks its tab; shared by bind and the auth-retry presence check. */
+export interface TabChoice {
+  /** An explicit broker tab id from an earlier result. */
+  tab?: string;
+  /** Lens `tab: "reuse"`: the tab this origin used last, never closed. */
+  reuse?: boolean;
+}
+
+export interface BindRequest extends TabChoice {
+  /** Omitted only with `tab`: bind the tab where it is. */
+  target?: string;
   /** Refuse to create or navigate a tab while checking sign-in. */
   existingOnly?: boolean;
   loadTimeoutMs: number;
   navigation: "reuse" | "fresh";
+  /** Lens `navigate: "in-page"`: route with pushState + popstate; never load or reload. */
+  inPage?: boolean;
+  /**
+   * Lens `ready`: after navigating, wait until this selector matches or
+   * `holdAt` reports the page needs the user, bounded by the load timeout.
+   */
+  ready?: string;
+  /**
+   * For a reused or named tab: whether the page it is on now needs the user
+   * (a sign-in step). If so the tab is bound where it is, never navigated,
+   * so the call reports the outcome instead of disturbing the form.
+   */
+  holdAt?(page: { url: string; title: string }): Promise<boolean>;
 }
 
 export interface DomExtractResult {
@@ -87,6 +114,8 @@ export interface RecordingCheckpoint {
 
 export interface BrowserSession {
   readonly id: string;
+  /** Broker id of the bound tab, stable while the tab stays open. */
+  readonly tab?: string;
   readonly created: boolean;
   readonly navigated: boolean;
   /** Auth retry bound the original kept sign-in place (or cannot prove it left). */
@@ -121,7 +150,7 @@ export interface BrowserBackend {
    */
   findAuthGate(origin: string): Promise<AuthGate | undefined>;
   /** Read-only presence check. An auth retry must not open a browser tab. */
-  hasOpenTarget?(target: string): Promise<boolean>;
+  hasOpenTarget?(target: string, choice?: TabChoice): Promise<boolean>;
   /** Show a sign-in tab for a needs_auth result, including HTTP-only calls. */
   openAuthGate?(origin: string, target: string): Promise<boolean>;
   /** Subscribe to the kept tab without navigating it. Dispose removes the prompt. */

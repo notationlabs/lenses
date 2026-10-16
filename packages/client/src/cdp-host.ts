@@ -41,11 +41,25 @@ import type {
   InterceptDelta,
   SnapshotOptions,
   BackendInfo,
+  TabChoice,
 } from "./browser-backend.js";
-import { AuthPageUnavailable } from "./browser-backend.js";
+import { AuthPageUnavailable, TabClosed } from "./browser-backend.js";
+
+/** A lens `ready` selector, plus the call's needs-the-user test that also ends the wait. */
+interface ReadyCheck {
+  selector: string;
+  needsUser?: BindRequest["holdAt"];
+}
+
+function readyCheck(request: BindRequest): ReadyCheck | undefined {
+  return request.ready ? { selector: request.ready, needsUser: request.holdAt } : undefined;
+}
 
 const MAX_BODY_BYTES = 512 * 1024;
 const LOAD_GRACE_MS = 500;
+/** Upper bound on waiting for an in-page app to settle after a load or route. */
+const IN_PAGE_SETTLE_MS = 10_000;
+const URL_POLL_MS = 250;
 const PERFORM_POLL_MS = 150;
 const PERFORM_WAIT_DEFAULT_MS = 10_000;
 const CONNECT_WINDOW_MS = 45_000;
@@ -86,6 +100,11 @@ export interface CdpTransport {
   disconnectHint?(): string;
   /** Transport cleanup before the browser lease is disconnected. */
   prepareLeaseRelease?(browser: Browser): Promise<void>;
+  /**
+   * A tab identity that lasts as long as the tab (a Chrome tab id, or a CDP
+   * target id), when the transport can name one.
+   */
+  tabKey?(page: Page): string | undefined;
   /** Transport cleanup before a session or temporary page is released. */
   preparePageRelease?(
     browser: Browser,
@@ -117,6 +136,8 @@ interface CdpSession extends BrowserSession {
   target: string;
   captures: CaptureBuffer;
   closed: boolean;
+  /** Bound by tab id or `tab: "reuse"`: the tab outlives the call, whoever created it. */
+  pinned: boolean;
   stopRecordingState: () => void;
 }
 
@@ -144,6 +165,12 @@ export function createCdpBackend(
    */
   const keptGates = new Map<Page, { target: string; keptUrl: string; lastMoveUrl?: string }>();
   const watchedGateOrigins = new Set<string>();
+  /** Broker tab ids: issued on first bind, valid while the page stays open. */
+  const tabIds = new WeakMap<Page, string>();
+  const tabsById = new Map<string, Page>();
+  /** `tab: "reuse"`: the tab each origin used last, and its durable key. */
+  const reuseTabs = new Map<string, Page>();
+  const reuseKeys = new Map<string, string>();
 
   const endpointAvailable = () => transport.looksReady();
   const endpointLive = () => transport.probeLive();
@@ -245,9 +272,13 @@ export function createCdpBackend(
     nextReconnectAt = 0;
     connected.on("disconnected", () => {
       if (browser !== connected) return;
+      log(`${transport.name} disconnected${released ? " (lease released)" : ""}`);
       browser = undefined;
       browserVersion = "";
       endpointPresent = false;
+      // Pages from a lost connection are never usable again; durable ids are
+      // re-found by key on the next connection.
+      tabsById.clear();
       if (!released) {
         lastConnectionError =
           transport.disconnectHint?.() ??
@@ -292,6 +323,176 @@ export function createCdpBackend(
   }
 
   /**
+   * Broker tab ids: `t` + the transport's tab key, so an id names the same tab
+   * for the tab's life. A tab without a key gets no id: a made-up one could
+   * collide with a real tab's.
+   */
+  function tabIdFor(page: Page): string | undefined {
+    let id = tabIds.get(page);
+    if (!id) {
+      const key = transport.tabKey?.(page);
+      if (key === undefined) return undefined;
+      id = `t${key}`;
+      registerTab(page, id);
+    }
+    return id;
+  }
+
+  /** Index a tab by id until it closes, so a long-lived broker holds no closed pages. */
+  function registerTab(page: Page, id: string): void {
+    tabIds.set(page, id);
+    tabsById.set(id, page);
+    page.on("close", () => {
+      if (tabsById.get(id) === page) tabsById.delete(id);
+    });
+  }
+
+  /** Open, and reached through the connection this backend holds now. */
+  function usable(page: Page | undefined, current: Browser): page is Page {
+    return !!page && !page.isClosed() && page.browser() === current;
+  }
+
+  function rememberReuse(origin: string, page: Page): void {
+    reuseTabs.set(origin, page);
+    const key = transport.tabKey?.(page);
+    if (key !== undefined) reuseKeys.set(origin, key);
+  }
+
+  /**
+   * The live page for a tab key, among the tabs this connection sees (with
+   * the extension, the tabs in its group). A tab's page object does not
+   * outlive a document swap the debugger re-attaches across (a forced full
+   * navigation after sign-in), so the tab is looked up by key, not by object.
+   * A tab outside the group is never pulled back in.
+   */
+  async function pageForKey(current: Browser, key: string): Promise<Page | undefined> {
+    if (!transport.tabKey) return undefined;
+    for (const page of await current.pages()) {
+      if (usable(page, current) && transport.tabKey(page) === key) return page;
+    }
+    return undefined;
+  }
+
+  /**
+   * The tab a call names (explicit id) or reuses (`tab: "reuse"`). Undefined
+   * means the ordinary exact-URL-or-new-tab binding applies.
+   */
+  async function chooseTab(current: Browser, request: TabChoice & { target?: string }): Promise<Page | undefined> {
+    if (request.tab !== undefined) {
+      const known = tabsById.get(request.tab);
+      if (usable(known, current)) return known;
+      tabsById.delete(request.tab);
+      const found = request.tab.startsWith("t") ? await pageForKey(current, request.tab.slice(1)) : undefined;
+      if (found) {
+        registerTab(found, request.tab);
+        return found;
+      }
+      throw new TabClosed(`tab ${request.tab} is closed`);
+    }
+    if (!request.reuse || request.target === undefined) return undefined;
+    const origin = urlOrigin(request.target);
+    const last = reuseTabs.get(origin);
+    if (usable(last, current) && sameSite(last.url(), origin)) return last;
+    const recorded = reuseKeys.get(origin);
+    if (recorded !== undefined) {
+      const found = await pageForKey(current, recorded);
+      // A sign-out moves the tab to the site's own logout page on a sibling
+      // host; that is still this site's tab, and loading the lens URL in it
+      // beats leaving it behind and opening another.
+      if (found && sameSite(found.url(), origin)) {
+        log(`reuse ${origin}: tab ${recorded} ${found === last ? "" : "re-found "}at ${found.url()}`);
+        rememberReuse(origin, found);
+        return found;
+      }
+      log(`reuse ${origin}: tab ${recorded} ${found ? `left the site (${found.url()})` : "is gone"}; forgetting it`);
+      // The tab is gone or the user took it elsewhere: forget it rather than hijack it.
+      reuseKeys.delete(origin);
+    }
+    // Adopt an open tab on the origin, preferring the user's sign-in tab.
+    const candidates = (await current.pages()).filter(
+      (page) => !page.isClosed() && urlOrigin(page.url()) === origin
+    );
+    const found =
+      candidates.find((page) => keptGates.has(page)) ??
+      candidates.find((page) => sameTarget(page.url(), request.target!)) ??
+      candidates[0];
+    if (found) {
+      log(`reuse ${origin}: adopting open tab at ${found.url()}`);
+      rememberReuse(origin, found);
+    } else {
+      log(`reuse ${origin}: no open tab; a new one will be opened`);
+    }
+    return found;
+  }
+
+  /**
+   * `navigate: "in-page"`: change the route the way the app's own links do,
+   * so in-memory session state survives. Cross-origin targets cannot be
+   * reached in-page and load normally.
+   */
+  async function routeInPage(
+    page: Page,
+    target: string,
+    loadTimeoutMs: number,
+    ready?: ReadyCheck
+  ): Promise<void> {
+    if (urlOrigin(page.url()) !== urlOrigin(target)) {
+      resetCaptures(page);
+      await settle(page.goto(target, { waitUntil: "load", timeout: loadTimeoutMs }));
+      await settleApp(page, loadTimeoutMs, ready);
+      return;
+    }
+    resetCaptures(page);
+    const url = new URL(target);
+    await page.evaluate((path: string) => {
+      history.pushState(history.state, "", path);
+      dispatchEvent(new PopStateEvent("popstate", { state: history.state }));
+    }, url.pathname + url.search + url.hash);
+    await settleApp(page, loadTimeoutMs, ready);
+  }
+
+  /**
+   * An app that routes in-page also boots in-page: after `load` it may still
+   * be fetching, or show a transient screen and redirect. With a lens `ready`
+   * selector, wait for it (or for a page that needs the user); otherwise wait
+   * for the app's requests to go quiet.
+   */
+  async function settleApp(page: Page, loadTimeoutMs: number, ready?: ReadyCheck): Promise<void> {
+    const deadline = Date.now() + Math.min(loadTimeoutMs, IN_PAGE_SETTLE_MS);
+    if (ready) {
+      await awaitReady(page, ready, deadline);
+      return;
+    }
+    await page
+      .waitForNetworkIdle({ idleTime: LOAD_GRACE_MS, timeout: Math.max(0, deadline - Date.now()) })
+      .catch(() => {});
+  }
+
+  async function settleReady(page: Page, request: BindRequest): Promise<void> {
+    const ready = readyCheck(request);
+    if (ready) await settleApp(page, request.loadTimeoutMs, ready);
+  }
+
+  async function awaitReady(page: Page, ready: ReadyCheck, deadline: number): Promise<void> {
+    while (!page.isClosed()) {
+      const matched = await page
+        .evaluate((selector: string) => document.querySelector(selector) !== null, ready.selector)
+        .catch(() => false);
+      if (matched) return;
+      const title = await page.title().catch(() => "");
+      if (await ready.needsUser?.({ url: page.url(), title }).catch(() => false)) {
+        log(`ready: ${page.url()} needs the user`);
+        return;
+      }
+      if (Date.now() >= deadline) {
+        log(`ready: ${ready.selector} did not appear at ${page.url()}`);
+        return;
+      }
+      await delay(URL_POLL_MS);
+    }
+  }
+
+  /**
    * Serve a `navigate: "fresh"` step: reload when the tab is still on the
    * lens's origin, otherwise go back to the lens URL (an earlier step may
    * have taken the tab elsewhere).
@@ -299,8 +500,13 @@ export function createCdpBackend(
   async function navigateFresh(
     page: Page,
     target: string,
-    loadTimeoutMs: number
+    loadTimeoutMs: number,
+    inPage = false
   ): Promise<void> {
+    if (inPage) {
+      await routeInPage(page, target, loadTimeoutMs);
+      return;
+    }
     if (urlOrigin(page.url()) === urlOrigin(target)) {
       await reloadPage(page, loadTimeoutMs);
       return;
@@ -315,7 +521,8 @@ export function createCdpBackend(
     navigated: boolean,
     target: string,
     loadTimeoutMs: number,
-    atAuthGate?: boolean
+    atAuthGate?: boolean,
+    { pinned = false, inPage = false }: { pinned?: boolean; inPage?: boolean } = {}
   ): CdpSession {
     let documentRevision = 0;
     let loading = false;
@@ -331,6 +538,7 @@ export function createCdpBackend(
     page.on("load", loaded);
     const session: CdpSession = {
       id: `cdp_${++sessionSequence}`,
+      tab: tabIdFor(page),
       created,
       navigated,
       atAuthGate,
@@ -338,13 +546,15 @@ export function createCdpBackend(
       target,
       captures: captures(page),
       closed: false,
+      pinned,
       stopRecordingState: () => {
         page.off?.("request", navigationStarted);
         page.off?.("load", loaded);
       },
       async reload(loadTimeoutMs) {
         assertOpen(session);
-        await reloadPage(page, loadTimeoutMs);
+        if (inPage) await routeInPage(page, target, loadTimeoutMs);
+        else await reloadPage(page, loadTimeoutMs);
       },
       async readIntercepts(cursor, deadline) {
         assertOpen(session);
@@ -360,7 +570,7 @@ export function createCdpBackend(
       async perform(steps) {
         assertOpen(session);
         return performSteps(page, steps, () =>
-          navigateFresh(page, target, loadTimeoutMs)
+          navigateFresh(page, target, loadTimeoutMs, inPage)
         );
       },
       async snapshot(options) {
@@ -464,6 +674,18 @@ export function createCdpBackend(
       if (!browser?.connected || urlOrigin(target) !== origin) return false;
       const existing = await this.findAuthGate(origin);
       if (existing) return true;
+      // An origin with a reused tab signs in there: it is the tab later calls
+      // will run in.
+      const recorded = reuseKeys.get(origin);
+      if (recorded !== undefined) {
+        const reused = await pageForKey(browser, recorded);
+        if (reused && sameSite(reused.url(), origin)) {
+          keptGates.set(reused, { target, keptUrl: reused.url() });
+          await reused.bringToFront().catch(() => {});
+          await raiseChrome();
+          return true;
+        }
+      }
       let page: Page | undefined;
       try {
         page = await browser.newPage({ background: true });
@@ -532,8 +754,15 @@ export function createCdpBackend(
         },
       };
     },
-    async hasOpenTarget(target: string): Promise<boolean> {
-      return !!browser?.connected && !!await findPage(browser, target);
+    async hasOpenTarget(target: string, choice: TabChoice = {}): Promise<boolean> {
+      if (!browser?.connected) return false;
+      try {
+        if (await chooseTab(browser, { ...choice, target })) return true;
+      } catch (error) {
+        if (error instanceof TabClosed) return false;
+        throw error;
+      }
+      return !!await findPage(browser, target);
     },
     async findAuthGate(origin: string): Promise<AuthGate | undefined> {
       if (!browser?.connected) return undefined;
@@ -650,6 +879,44 @@ export function createCdpBackend(
     },
     async bind(request: BindRequest) {
       const current = await ensureBrowser(() => {});
+      const chosen = await chooseTab(current, request);
+      if (chosen) {
+        const kept = keptGates.get(chosen);
+        const atAuthGate = request.existingOnly
+          ? !kept || sameGatePlace(chosen.url(), kept.keptUrl)
+          : undefined;
+        if (atAuthGate === false) resetCaptures(chosen);
+        const target = request.target ?? chosen.url();
+        let navigated = false;
+        // A tab part-way through signing in stays put; so does an auth retry,
+        // which reads the tab wherever sign-in has taken it.
+        const held = request.target !== undefined && !request.existingOnly && request.holdAt
+          ? await request.holdAt({ url: chosen.url(), title: await chosen.title().catch(() => "") })
+              .catch(() => false)
+          : false;
+        if (held) log(`holding tab at ${chosen.url()}: it is part-way through sign-in`);
+        if (request.target !== undefined && !request.existingOnly && !held) {
+          const ready = readyCheck(request);
+          if (!sameTarget(chosen.url(), target)) {
+            if (request.inPage) await routeInPage(chosen, target, request.loadTimeoutMs, ready);
+            else {
+              resetCaptures(chosen);
+              await settle(chosen.goto(target, { waitUntil: "load", timeout: request.loadTimeoutMs }));
+              if (ready) await settleApp(chosen, request.loadTimeoutMs, ready);
+            }
+            navigated = true;
+          } else if (request.navigation === "fresh" && !request.inPage) {
+            await reloadPage(chosen, request.loadTimeoutMs);
+            if (ready) await settleApp(chosen, request.loadTimeoutMs, ready);
+            navigated = true;
+          }
+        }
+        return makeSession(chosen, false, navigated, target, request.loadTimeoutMs, atAuthGate, {
+          pinned: true,
+          inPage: request.inPage,
+        });
+      }
+      if (request.target === undefined) throw new Error("bind needs a target or a tab");
       const existing = await findPage(current, request.target);
       if (existing) {
         const kept = keptGates.get(existing);
@@ -662,6 +929,7 @@ export function createCdpBackend(
         const state =
           request.navigation === "fresh"
             ? (await reloadPage(existing, request.loadTimeoutMs),
+              await settleReady(existing, request),
               captures(existing))
             : captures(existing);
         const session = makeSession(
@@ -679,13 +947,20 @@ export function createCdpBackend(
       const page = await current.newPage({ background: true });
       transport.recordEvent?.("Call tab opened");
       resetCaptures(page);
+      // Register before loading: a slow sign-in redirect must not orphan the tab.
+      if (request.reuse) rememberReuse(urlOrigin(request.target), page);
       await settle(
         page.goto(request.target, {
           waitUntil: "load",
           timeout: request.loadTimeoutMs,
         })
       );
-      return makeSession(page, true, true, request.target, request.loadTimeoutMs);
+      const ready = readyCheck(request);
+      if (request.inPage || ready) await settleApp(page, request.loadTimeoutMs, ready);
+      return makeSession(page, true, true, request.target, request.loadTimeoutMs, undefined, {
+        pinned: request.reuse === true,
+        inPage: request.inPage,
+      });
     },
     async finish(
       session: BrowserSession,
@@ -697,17 +972,19 @@ export function createCdpBackend(
       wakeCaptureWaiters(cdpSession.captures);
       // A retry can still land on another login step. Keep the user's original
       // sign-in tab, not an extra tab created just to check authentication.
-      if (disposition === "keep" && cdpSession.created && [...keptGates].some(
+      if (disposition === "keep" && cdpSession.created && !cdpSession.pinned && [...keptGates].some(
         ([page, kept]) => page !== cdpSession.page && !page.isClosed() &&
           urlOrigin(kept.target) === urlOrigin(cdpSession.target)
       )) disposition = "close-if-created";
+      // A pinned tab (named by id, or an origin's reused tab) outlives every call.
+      const closes = cdpSession.created && !cdpSession.pinned && disposition !== "keep";
       if (browser?.connected) {
         try {
           await transport.preparePageRelease?.(
             browser,
             cdpSession.page,
             disposition,
-            cdpSession.created && disposition !== "keep"
+            closes
           );
         } catch {
           // Cleanup must not replace the lens result.
@@ -728,7 +1005,7 @@ export function createCdpBackend(
           // The user may close the page while its call is still running.
         }
       }
-      if (!cdpSession.created || disposition === "keep") return;
+      if (!closes) return;
       try {
         await cdpSession.page.close();
         transport.recordEvent?.("Call tab closed");
@@ -947,6 +1224,40 @@ async function findPage(
   return pages.find((page) => sameTarget(page.url(), target));
 }
 
+/**
+ * Whether a URL is on the same site as an origin: the same registrable
+ * domain, approximated without a public-suffix list as the last two labels,
+ * or three under a two-letter country code with a generic second level
+ * (co.uk, com.au). Enough to keep a bank's logout page (www.rbs.co.uk) with
+ * its app (www.digitalbanking.rbs.co.uk) and tell both apart from elsewhere.
+ */
+export function sameSite(url: string, origin: string): boolean {
+  const site = (value: string): string | undefined => {
+    try {
+      const { protocol, hostname } = new URL(value);
+      if (protocol !== "https:" && protocol !== "http:") return undefined;
+      const labels = hostname.split(".");
+      const generic = /^(co|com|org|net|gov|ac|edu)$/;
+      const keep = labels.length >= 3 && labels.at(-1)!.length === 2 && generic.test(labels.at(-2)!) ? 3 : 2;
+      return labels.slice(-keep).join(".");
+    } catch {
+      return undefined;
+    }
+  };
+  const a = site(url);
+  return a !== undefined && a === site(origin);
+}
+
+/** Puppeteer keeps a target's CDP id internal; it is stable for the tab's life. */
+export function pageTargetId(page: Page): string | undefined {
+  try {
+    const id = (page.target() as unknown as { _targetId?: unknown })._targetId;
+    return typeof id === "string" ? id : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function createDirectCdpTransport(
   probeEndpoint?: () => Promise<boolean>
 ): CdpTransport {
@@ -984,5 +1295,7 @@ export function createDirectCdpTransport(
     async connect() {
       return puppeteer.connect({ channel: "chrome", defaultViewport: null });
     },
+    // Remote debugging sees every tab, and a target id lasts as long as its tab.
+    tabKey: pageTargetId,
   };
 }
