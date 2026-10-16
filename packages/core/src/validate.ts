@@ -2,7 +2,7 @@ import * as z from "zod/v4";
 import { httpRequestMethod, httpResolverWrites } from "./http-request.js";
 import { checkExpression, checkTemplate, RESERVED_VARIABLES, type ExprSite, type ReservedVariable } from "./expr-check.js";
 import type { ExceptionMap, HttpBody, HttpSource, LensSpec, MapSpec } from "./types.js";
-import { HOLE } from "./url-pattern.js";
+import { dropFileParam, HOLE } from "./url-pattern.js";
 
 const expression = z.string();
 const REQUEST_HINT =
@@ -246,7 +246,8 @@ const lensSpecSchema = z.strictObject({
               z.number(),
               z.boolean(),
               // A {$lens, field} default the host resolves by calling the
-              // target lens; params are literals only — no expressions.
+              // target lens; `field` is an expression over its result,
+              // `$value`. params are literals only — no expressions.
               z.strictObject({
                 $lens: z.string(),
                 field: z.string(),
@@ -365,10 +366,17 @@ export function validateSpec(raw: unknown): LensSpec {
   }
   checkExpressionsAndTemplates(result.data);
   // A drop reads a local file into the page, so its path must come from the
-  // caller: a declared string param with no default, never a document literal.
+  // caller: exactly `$params.name`, a declared string param with no default,
+  // never a document literal or a computed path.
   for (const step of result.data.perform ?? []) {
     if (!("drop" in step)) continue;
-    const declaration = result.data.params?.[step.file];
+    const name = dropFileParam(step.file);
+    if (name === undefined) {
+      throw new Error(
+        `invalid lens spec:\n  drop file "${step.file}" must be "$params.<name>", naming the parameter that holds the path`
+      );
+    }
+    const declaration = result.data.params?.[name];
     const type = typeof declaration === "string" ? declaration : declaration?.type;
     if (type !== "string") {
       throw new Error(
@@ -377,7 +385,7 @@ export function validateSpec(raw: unknown): LensSpec {
     }
     if (typeof declaration === "object" && declaration.default !== undefined) {
       throw new Error(
-        `invalid lens spec:\n  drop file parameter "${step.file}" must not declare a default`
+        `invalid lens spec:\n  drop file parameter "${name}" must not declare a default`
       );
     }
   }
@@ -508,6 +516,12 @@ function checkExpressionsAndTemplates(spec: LensSpec): void {
   }
 
   template(spec.url, "url");
+  template(spec.ready, "ready");
+  // A {$lens, field} default reads the other lens's result as $value.
+  for (const [name, declaration] of Object.entries(spec.params ?? {})) {
+    if (typeof declaration === "string" || typeof declaration.default !== "object") continue;
+    expr(declaration.default.field, { label: `params.${name}.default.field`, vars: ["value"] });
+  }
 
   const tierVars = (resolver: LensSpec["resolve"][number]): readonly ReservedVariable[] =>
     resolver.kind === "dom"

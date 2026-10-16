@@ -101,7 +101,7 @@ describe("buildLensSchema", () => {
       ...base,
       name: "@example/hmrc/vat",
       params: {
-        vrn: { type: "string", default: { $lens: "@example/hmrc/summary", field: "vrn" } },
+        vrn: { type: "string", default: { $lens: "@example/hmrc/summary", field: "$value.vrn" } },
       },
       returns: { type: "object", fields: { total: "number" } },
     };

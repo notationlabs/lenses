@@ -70,6 +70,14 @@ export function expandRequestPattern(template: string, params: Record<string, un
  * things — so the value goes in as written, and a lens that interpolates a
  * caller-supplied string should declare it as an integer where it can.
  */
+/**
+ * A drop's `file` names the call parameter holding the path, written
+ * `$params.name`; undefined when it is not exactly that form.
+ */
+export function dropFileParam(file: string): string | undefined {
+  return /^\$params\.([A-Za-z_][A-Za-z0-9_]*)$/.exec(file)?.[1];
+}
+
 export function expandTemplate(template: string, params: Record<string, unknown>): string {
   return fill(template, { params }, (value) => value);
 }

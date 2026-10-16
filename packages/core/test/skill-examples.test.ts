@@ -256,11 +256,11 @@ describe("SKILL.md authoring examples", () => {
       name: "@scope/site/vat",
       url: "https://site.com/vat/{params.vrn}",
       params: {
-        vrn: { type: "string", default: { $lens: "@scope/site/summary", field: "vrn" } },
+        vrn: { type: "string", default: { $lens: "@scope/site/summary", field: "$value.vrn" } },
       },
       effects: { reads: ["site.com"], writes: [] },
       resolve: [{ kind: "dom", fields: { total: { selector: ".total" } } }],
     });
-    expect(spec.params).toMatchObject({ vrn: { default: { field: "vrn" } } });
+    expect(spec.params).toMatchObject({ vrn: { default: { field: "$value.vrn" } } });
   });
 });

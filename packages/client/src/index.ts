@@ -1,6 +1,7 @@
 import {
   deriveJsonSchema,
   errorMessage,
+  evaluate,
   expandUrl,
   paramLensDefault,
   resolveParams,
@@ -202,20 +203,31 @@ function checkRefDefaultTarget(
   via: string
 ): void {
   const paramType = typeof declaration === "string" ? declaration : declaration.type;
+  // Only `$value.name` can be checked against the target's returns before the
+  // call; any other expression is checked against the value it produces.
+  const name = /^\$value\.([A-Za-z_][A-Za-z0-9_]*)$/.exec(ref.field)?.[1];
+  if (name === undefined) return;
   const returns = target.returns as { type?: unknown; fields?: Record<string, unknown> } | undefined;
   const field =
-    returns && returns.type === "object" && returns.fields ? returns.fields[ref.field] : undefined;
+    returns && returns.type === "object" && returns.fields ? returns.fields[name] : undefined;
   if (field === undefined) {
     throw new Error(
-      `${via}: ${ref.$lens} does not declare a top-level "${ref.field}" field in its returns`
+      `${via}: ${ref.$lens} does not declare a top-level "${name}" field in its returns`
     );
   }
   const agrees = field === paramType || (paramType === "number" && field === "integer");
   if (!agrees) {
     throw new Error(
-      `${via}: field "${ref.field}" of ${ref.$lens} is not a non-nullable ${paramType}`
+      `${via}: field "${name}" of ${ref.$lens} is not a non-nullable ${paramType}`
     );
   }
+}
+
+/** Whether a resolved default agrees with the declared param type. */
+function defaultAgrees(value: unknown, declaration: LensParam): boolean {
+  const paramType = typeof declaration === "string" ? declaration : declaration.type;
+  if (paramType === "integer") return Number.isInteger(value);
+  return typeof value === paramType;
 }
 
 export class LensClient {
@@ -414,15 +426,14 @@ export class LensClient {
       if (result.kind === "outcome") throw new Error(`${via}: returned outcome "${result.name}"`);
       if (result.kind === "error") throw new Error(`${via}: ${result.message}`);
       if (result.partial) throw new Error(`${via}: returned a partial result`);
-      const row = result.value;
-      const value =
-        typeof row === "object" && row !== null && !Array.isArray(row)
-          ? (row as Record<string, unknown>)[ref.field]
-          : undefined;
+      const value = await evaluate(ref.field, { value: result.value });
       if (value === undefined || value === null) {
         throw new Error(
-          `${via}: field "${ref.field}" is ${value === null ? "null" : "missing"} in the result`
+          `${via}: field ${ref.field} is ${value === null ? "null" : "missing"} in the result`
         );
+      }
+      if (!defaultAgrees(value, declaration)) {
+        throw new Error(`${via}: field ${ref.field} is not a ${typeof declaration === "string" ? declaration : declaration.type}`);
       }
       filled[key] = value;
     }

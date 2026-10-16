@@ -1,6 +1,7 @@
 import {
   errorMessage,
   executeLens,
+  expandTemplate,
   expandUrl,
   pageNeedsUser,
   specWrites,
@@ -241,7 +242,7 @@ export function createBrokerOrchestrator(
         target,
         ...choice,
         ...(inPage ? { inPage } : {}),
-        ...(message.spec.ready ? { ready: message.spec.ready } : {}),
+        ...(message.spec.ready ? { ready: expandTemplate(message.spec.ready, message.params) } : {}),
         holdAt: (page) => pageNeedsUser(message.spec, page, message.params),
         loadTimeoutMs,
         existingOnly: authRetry,

@@ -4,7 +4,7 @@ export { pageNeedsUser } from "./resolvers/outcome.js";
 export { evaluate, evaluateBool, type ExprVars } from "./expr.js";
 export { checkExpression, checkTemplate, RESERVED_VARIABLES, type ExprSite, type TemplateSite } from "./expr-check.js";
 export { materialiseLenses } from "./materialise.js";
-export { expandUrl, matchRequestPattern, matchUrlGlob, sameGatePlace, sameTarget, urlOrigin } from "./url-pattern.js";
+export { dropFileParam, expandTemplate, expandUrl, matchRequestPattern, matchUrlGlob, sameGatePlace, sameTarget, urlOrigin } from "./url-pattern.js";
 export type { AuthGate } from "./url-pattern.js";
 export { httpRequestMethod, httpResolverWrites, isWriteHttpMethod, specWrites } from "./http-request.js";
 export {

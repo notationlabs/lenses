@@ -91,7 +91,7 @@ describe("validateSpec", () => {
       params: {
         page: {
           type: "string",
-          default: { $lens: "@example/web/home", field: "page", params: { limit: 1 } },
+          default: { $lens: "@example/web/home", field: "$value.page", params: { limit: 1 } },
         },
       },
     };
@@ -107,7 +107,7 @@ describe("validateSpec", () => {
         page: {
           type: "string",
           enum: ["a", "b"],
-          default: { $lens: "@example/web/home", field: "page" },
+          default: { $lens: "@example/web/home", field: "$value.page" },
         },
       },
     };
@@ -127,7 +127,7 @@ describe("validateSpec", () => {
     expect(() =>
       validateSpec({
         ...validSpec,
-        params: { page: { type: "string", default: { $lens: "web/home", field: "page" } } },
+        params: { page: { type: "string", default: { $lens: "web/home", field: "$value.page" } } },
       })
     ).toThrow(/default.*page.*scoped lens name/);
   });
@@ -141,7 +141,7 @@ describe("validateSpec", () => {
             type: "string",
             default: {
               $lens: "@example/web/home",
-              field: "page",
+              field: "$value.page",
               params: { limit: { nested: true } },
             },
           },
@@ -292,7 +292,7 @@ describe("validateSpec", () => {
       const spec = {
         ...writeSpec,
         params: { page: "string", path: "string", row: "integer" },
-        perform: [{ drop: "#upload-{params.row}", file: "path" }],
+        perform: [{ drop: "#upload-{params.row}", file: "$params.path" }],
       };
       expect(validateSpec(spec)).toEqual(spec);
     });
@@ -300,20 +300,36 @@ describe("validateSpec", () => {
     it("rejects a drop file that is not a declared string param", () => {
       expect(() => validateSpec({
         ...writeSpec,
-        perform: [{ drop: "#upload", file: "path" }],
-      })).toThrow(/drop file "path" must name a declared string parameter/);
+        perform: [{ drop: "#upload", file: "$params.path" }],
+      })).toThrow(/drop file "\$params\.path" must name a declared string parameter/);
       expect(() => validateSpec({
         ...writeSpec,
         params: { page: "string", path: "integer" },
-        perform: [{ drop: "#upload", file: "path" }],
-      })).toThrow(/drop file "path" must name a declared string parameter/);
+        perform: [{ drop: "#upload", file: "$params.path" }],
+      })).toThrow(/drop file "\$params\.path" must name a declared string parameter/);
+    });
+
+    it("checks holes in ready like any selector", () => {
+      const base = { ...writeSpec, params: { page: "string", id: "string" }, perform: undefined, effects: { reads: ["x"], writes: [] } };
+      expect(() => validateSpec({ ...base, ready: "#row-{params.id}" })).not.toThrow();
+      expect(() => validateSpec({ ...base, ready: "#row-{id}" })).toThrow(/ready/);
+    });
+
+    it("rejects a drop file that is not exactly $params.<name>", () => {
+      for (const file of ["path", "'/etc/passwd'", "$params.path & '.bak'"]) {
+        expect(() => validateSpec({
+          ...writeSpec,
+          params: { page: "string", path: "string" },
+          perform: [{ drop: "#upload", file }],
+        })).toThrow(/must be "\$params.<name>"/);
+      }
     });
 
     it("rejects a drop file param with a default", () => {
       expect(() => validateSpec({
         ...writeSpec,
         params: { page: "string", path: { type: "string", default: "/etc/hosts" } },
-        perform: [{ drop: "#upload", file: "path" }],
+        perform: [{ drop: "#upload", file: "$params.path" }],
       })).toThrow(/drop file parameter "path" must not declare a default/);
     });
 
