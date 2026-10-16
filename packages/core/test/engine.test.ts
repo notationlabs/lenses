@@ -1263,7 +1263,7 @@ describe("http tier chained sources", () => {
     });
   });
 
-  it("applies source-specific credentials and evaluates headers against earlier bindings", async () => {
+  it("applies source-specific credentials and fills header templates from earlier sources", async () => {
     const requests: unknown[] = [];
     const spec = validateSpec({
       name: "@example/api/delete",
@@ -1278,8 +1278,8 @@ describe("http tier chained sources", () => {
             request: { method: "POST", url: "https://example.com/items/1" },
             credentials: "same-origin-page",
             headers: {
-              "X-CSRF-Token": "$sources.confirmation.body.token",
-              "X-Requested-With": "'XMLHttpRequest'",
+              "X-CSRF-Token": "{sources.confirmation.body.token}",
+              "X-Requested-With": "XMLHttpRequest",
             },
             body: { search: { _method: "'delete'" } },
           },

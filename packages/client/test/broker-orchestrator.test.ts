@@ -967,7 +967,7 @@ describe("write consent and execution", () => {
             deleted: {
               request: { method: "POST", url: "https://example.com/items/1" },
               credentials: "same-origin-page",
-              headers: { "X-CSRF-Token": "$sources.confirmation.body.token" },
+              headers: { "X-CSRF-Token": "{sources.confirmation.body.token}" },
               body: { search: { _method: "'delete'" } },
             },
           },

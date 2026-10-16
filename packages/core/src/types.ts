@@ -212,8 +212,8 @@ export interface HttpSource {
   body?: HttpBody;
   /** Override the resolver's browser credential/context requirement for this request. */
   credentials?: HttpCredentials;
-  /** Header values are JSONata over `$params` and earlier `$sources`. */
-  headers?: Record<string, ExprString>;
+  /** Header values are templates: `{params.name}` and `{sources.name.…}` holes for earlier sources, filled verbatim. */
+  headers?: Record<string, string>;
   /** JSONata over `$res` (this source's parsed body) producing its bound value */
   items?: ExprString;
 }

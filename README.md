@@ -416,10 +416,10 @@ repeated fields.
   and CDP provide this using an already-open matching tab. If no qualifying backend or
   page exists, the call fails before transmission with
   `code: "required_backend_unavailable"`.
-- A source may override the resolver's `credentials` and declare `headers` whose
-  JSONata values can reference earlier sources (for example
-  `{ "X-CSRF-Token": "$sources.confirmation.body.token" }`). Resolver-level headers remain
-  `{params.name}` templates shared by every source.
+- A source may override the resolver's `credentials` and declare its own `headers`.
+  Like resolver-level headers they are templates, and they can also fill holes from
+  earlier sources (for example `{ "X-CSRF-Token": "{sources.confirmation.body.token}" }`);
+  resolver-level headers are shared by every source.
 - `sources` chains requests in declaration order. Each binds its reply,
   `{status, url, body}`, as `$sources.name` for `map` and for later sources (its
   `body` is what the source's `items` selected), and later request URLs address
