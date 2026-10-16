@@ -123,11 +123,6 @@ export class CDPRelayServer {
     return this._handler.tabLink(tabId);
   }
 
-  /** One attempt to re-attach a detached tab still in the group; never one outside it. */
-  reattachTab(tabId: number): Promise<TabLink | undefined> {
-    return this._handler.reattachTab(tabId);
-  }
-
   onTabLinkChange(listener: (tabId: number, link: TabLink) => void): void {
     this._handler.onTabLinkChange(listener);
   }
