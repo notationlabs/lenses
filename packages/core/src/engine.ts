@@ -83,7 +83,10 @@ async function runPerform(
       }
       steps.push({ fill: expandTemplate(step.fill, params), value: String(value) });
     } else if ("click" in step) {
-      steps.push({ click: expandTemplate(step.click, params) });
+      steps.push({
+        click: expandTemplate(step.click, params),
+        ...(step.text !== undefined ? { text: expandTemplate(step.text, params) } : {}),
+      });
     } else if ("submit" in step) {
       const form: Record<string, string> = {};
       for (const [name, expr] of Object.entries(step.form ?? {})) {

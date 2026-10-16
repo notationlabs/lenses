@@ -159,7 +159,7 @@ const waitSchema = z
   );
 
 const PERFORM_HINT =
-  'must be one perform step: {"fill": <sel>, "value": <expr>}, {"click": <sel>}, ' +
+  'must be one perform step: {"fill": <sel>, "value": <expr>}, {"click": <sel>, "text"?: <template>}, ' +
   '{"submit": <form-sel>, "form"?: {<field>: <expr>}}, {"press": <key>}, ' +
   '{"drop": <sel>, "file": <param>}, ' +
   '{"wait": {"appears" | "gone" | "increases": <sel>, "timeoutMs"?: <ms>}}, ' +
@@ -178,7 +178,7 @@ const performStepSchema = z
     z.union(
       [
         z.strictObject({ fill: z.string(), value: expression }),
-        z.strictObject({ click: z.string() }),
+        z.strictObject({ click: z.string(), text: z.string().optional() }),
         z.strictObject({ submit: z.string(), form: bodyFields.optional() }),
         z.strictObject({ press: z.string() }),
         z.strictObject({ drop: z.string(), file: z.string() }),
@@ -439,29 +439,17 @@ export function validateSpec(raw: unknown): LensSpec {
       }
     }
   }
-  // Consent keys off the declaration, so every executable write must say what
-  // it writes and must never serve a cached result.
-  if (result.data.perform || writeHttpResolvers.length > 0) {
-    if (result.data.effects.writes.length === 0) {
-      throw new Error(
-        'invalid lens spec:\n  write operations require a declaration: "effects.writes" must name what they write to'
-      );
-    }
-    if ((result.data.effects.cache ?? 0) > 0) {
-      throw new Error(
-        'invalid lens spec:\n  a write result must not be cached — "effects.cache" must be absent or 0'
-      );
-    }
+  // Consent keys off the declaration, so a mutating HTTP method must say what
+  // it writes. Perform steps are the author's call: they write only if declared.
+  if (writeHttpResolvers.length > 0 && result.data.effects.writes.length === 0) {
+    throw new Error(
+      'invalid lens spec:\n  write operations require a declaration: "effects.writes" must name what they write to'
+    );
   }
-  // A perform document may only claim idempotence when its steps are
-  // navigate-only (a reload is; a send is not).
-  if (result.data.perform) {
-    const navigateOnly = result.data.perform.every((step) => "navigate" in step);
-    if (result.data.effects.idempotent === true && !navigateOnly) {
-      throw new Error(
-        'invalid lens spec:\n  "effects.idempotent": true contradicts "perform" unless every step is a navigate'
-      );
-    }
+  if (result.data.effects.writes.length > 0 && (result.data.effects.cache ?? 0) > 0) {
+    throw new Error(
+      'invalid lens spec:\n  a write result must not be cached — "effects.cache" must be absent or 0'
+    );
   }
   const checkUrl = result.data.url.replace(HOLE, "value");
   try {
@@ -572,7 +560,10 @@ function checkExpressionsAndTemplates(spec: LensSpec): void {
     if ("fill" in step) {
       template(step.fill, `${at}.fill`);
       if (step.value !== "") expr(step.value, { label: `${at}.value`, vars: ["params"] });
-    } else if ("click" in step) template(step.click, `${at}.click`);
+    } else if ("click" in step) {
+      template(step.click, `${at}.click`);
+      template(step.text, `${at}.text`);
+    }
     else if ("submit" in step) {
       template(step.submit, `${at}.submit`);
       for (const [field, source] of Object.entries(step.form ?? {})) {

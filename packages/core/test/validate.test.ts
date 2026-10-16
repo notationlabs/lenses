@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { specWarnings, validateSpec } from "../src/validate.js";
+import { specWrites } from "../src/http-request.js";
+import type { LensSpec } from "../src/types.js";
 
 const validSpec = {
   name: "@example/web/page",
@@ -387,10 +389,21 @@ describe("validateSpec", () => {
       ).toThrow(/at \/perform\/0/);
     });
 
-    it("rejects perform without a writes declaration", () => {
+    // Clicks are not writes: the author declares what a lens writes.
+    it("accepts a read-only perform that declares no writes", () => {
+      const spec = { ...validSpec, perform: [{ click: "#statement", text: "{params.page}" }] };
+      expect(validateSpec(spec)).toEqual(spec);
+      expect(specWrites(spec as LensSpec)).toBe(false);
+    });
+
+    it("treats a lens as writing exactly when it declares effects.writes", () => {
+      expect(specWrites(writeSpec as LensSpec)).toBe(true);
+    });
+
+    it("checks a click text template against declared params", () => {
       expect(() =>
-        validateSpec({ ...validSpec, perform: [{ click: "#send" }] })
-      ).toThrow(/"effects.writes" must name what they write to/);
+        validateSpec({ ...validSpec, perform: [{ click: "a", text: "{params.missing}" }] })
+      ).toThrow(/perform\[0\]\.text/);
     });
 
     it("rejects perform with a positive result cache", () => {
@@ -410,16 +423,6 @@ describe("validateSpec", () => {
         perform: [{ click: "#send" }],
       };
       expect(validateSpec(spec)).toEqual(spec);
-    });
-
-    it("rejects an idempotent claim on non-navigate steps", () => {
-      expect(() =>
-        validateSpec({
-          ...writeSpec,
-          effects: { ...writeSpec.effects, idempotent: true },
-          perform: [{ click: "#send" }],
-        })
-      ).toThrow(/idempotent.*unless every step is a navigate/);
     });
 
     // A clear-the-thread lens reloads and nothing else; reloading twice is

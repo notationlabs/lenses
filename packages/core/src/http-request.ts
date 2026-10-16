@@ -19,9 +19,12 @@ export function httpResolverWrites(resolver: HttpResolver): boolean {
   return isWriteHttpMethod(httpRequestMethod(resolver.request));
 }
 
-/** Whether invoking this document can cause a side effect. */
+/**
+ * Whether invoking this document can cause a side effect. The author's
+ * declaration decides: a click or submit may only read (open a statement,
+ * page a list), so perform steps alone are not writes. Validation still
+ * requires mutating HTTP methods to declare what they write.
+ */
 export function specWrites(spec: LensSpec): boolean {
-  return Boolean(spec.perform?.length) || spec.resolve.some(
-    (resolver) => resolver.kind === "http" && httpResolverWrites(resolver)
-  );
+  return spec.effects.writes.length > 0;
 }

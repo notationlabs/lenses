@@ -1267,7 +1267,10 @@ async function performStep(
     return outcome.ok ? undefined : outcome.message;
   }
   if ("click" in step) {
-    const outcome = await page.evaluate(pagePerformClick, { selector: step.click });
+    const outcome = await page.evaluate(pagePerformClick, {
+      selector: step.click,
+      ...(step.text !== undefined ? { text: step.text } : {}),
+    });
     return outcome.ok ? undefined : outcome.message;
   }
   if ("submit" in step) {
