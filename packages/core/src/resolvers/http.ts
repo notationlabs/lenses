@@ -28,7 +28,7 @@ export async function runHttp(
   }
   // `sources` is the replies bound so far in a chain ({status, url, body},
   // body after the source's `items`), undefined for a single request; it fills
-  // `{sources.…}` holes and `$sources` in bodies and headers.
+  // `{sources.…}` holes in URLs and headers, and `$sources` in bodies.
   const fetchOne = async (
     request: RequestSpec,
     sources: Record<string, unknown> | undefined,
@@ -44,12 +44,8 @@ export async function runHttp(
           Object.entries(r.headers).map(([name, value]) => [name, expandTemplate(value, params)])
         )
       : {};
-    for (const [name, expression] of Object.entries(sourceHeaders ?? {})) {
-      const value = await evaluate(expression, vars, spec.helpers);
-      if (value === undefined || value === null || typeof value === "object") {
-        throw new Error(`http header "${name}" must evaluate to a scalar`);
-      }
-      headers[name] = String(value);
+    for (const [name, value] of Object.entries(sourceHeaders ?? {})) {
+      headers[name] = expandTemplate(value, params, sources);
     }
     const body = bodySpec
       ? await materialiseBody(bodySpec, vars, spec.helpers)

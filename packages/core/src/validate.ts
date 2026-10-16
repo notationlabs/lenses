@@ -69,7 +69,7 @@ const httpSourceSchema = z.strictObject({
   request: requestSchema,
   body: httpBodySchema.optional(),
   credentials: credentials.optional(),
-  headers: z.record(z.string(), expression).optional(),
+  headers: z.record(z.string(), z.string()).optional(),
   items: expression.optional(),
 });
 
@@ -612,7 +612,7 @@ function checkExpressionsAndTemplates(spec: LensSpec): void {
           template(source.request.url, `${sat}.request.url`, [...earlier], sourceNames);
           const site = { vars: ["sources", "params"] as ReservedVariable[], sources: [...earlier], allSources: sourceNames };
           for (const [header, value] of Object.entries(source.headers ?? {})) {
-            expr(value, { ...site, label: `${sat}.headers.${header}` });
+            template(value, `${sat}.headers.${header}`, [...earlier], sourceNames);
           }
           bodyExpressions(source.body).forEach(([label, value]) =>
             expr(value, { ...site, label: `${sat}.body.${label}` })

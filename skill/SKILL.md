@@ -51,7 +51,7 @@ lens call chatgpt/clear --allow-writes                                  # naviga
 lens call chatgpt/chat                                                  # plain read; no flag needed
 ```
 
-Authoring one: every write requires non-empty `effects.writes` and `cache` 0 or absent; `perform` permits `idempotent: true` only when every step is a navigate. A drop attaches a local file the way a drag from the desktop would: `{ "drop": "#editor", "file": "$params.path" }` names, exactly as `$params.<name>`, a declared string param with no default, the caller passes an absolute path, and the host drops that file onto the first visible match. HTTP request bodies are declared as `{ "json": expr }`, `{ "text": expr }`, `{ "form": { field: expr } }`, or `{ "search": { field: expr } }`. A native form action is `{ "submit": "#form", "form": { "field[name]": expr } }`; its field expressions become literal named controls before `requestSubmit()`. These expressions read `$params`, and a chained source's body and headers also read the sources before it as `$sources` (see [Expressions](#expressions-and-templates)). Keep a page read as its own lens (like `chatgpt/chat`) and give a perform lens the same tiers as its readback.
+Authoring one: every write requires non-empty `effects.writes` and `cache` 0 or absent; `perform` permits `idempotent: true` only when every step is a navigate. A drop attaches a local file the way a drag from the desktop would: `{ "drop": "#editor", "file": "$params.path" }` names, exactly as `$params.<name>`, a declared string param with no default, the caller passes an absolute path, and the host drops that file onto the first visible match. HTTP request bodies are declared as `{ "json": expr }`, `{ "text": expr }`, `{ "form": { field: expr } }`, or `{ "search": { field: expr } }`. A native form action is `{ "submit": "#form", "form": { "field[name]": expr } }`; its field expressions become literal named controls before `requestSubmit()`. These expressions read `$params`, and a chained source's body also reads the sources before it as `$sources` (see [Expressions](#expressions-and-templates)). Keep a page read as its own lens (like `chatgpt/chat`) and give a perform lens the same tiers as its readback.
 
 ## Authoring a lens for an unmapped page
 
@@ -84,7 +84,7 @@ Authoring one: every write requires non-empty `effects.writes` and `cache` 0 or 
      and `map` shapes each row `$item`; `credentials: true` sends browser cookies
      through any capable backend, while `credentials: "same-origin-page"`
      requires execution in an already-open page matching the request origin.
-     Sources may override credentials and define JSONata headers. `sources`
+     Sources may override credentials and add headers. `sources`
      chains requests: each binds `$sources.name` for `map` and for the sources
      after it, whose URLs address earlier bodies with holes —
      `{sources.orgs.body.0.uuid}` — which is how an id only another response
@@ -361,7 +361,7 @@ variable-rooted step you write plain field names:
 | http source `items` | `$res` — this source's reply; `$sources` — the sources declared before it; `$params` | `"items": "$match($res.body, /token=(\\w+)/).groups[0]"` |
 | intercept source `items` | `$res` — this source's reply; `$params` | `"items": "$res.body.limits"` |
 | `map` with `sources` | `$sources` — each source's reply, by name; `$params` | `"plan": "$sources.orgs.body[0].plan"` |
-| http source `headers` and `body` | `$sources` (earlier sources); `$params` | `"X-CSRF-Token": "$sources.csrf.body"` |
+| http source `body` | `$sources` (earlier sources); `$params` | `{ "search": { "token": "$sources.csrf.body" } }` |
 | http `body` (one request) | `$params` | `{ "json": "{ 'id': $params.id }" }` |
 | dom `post` | `$value` — what the fields extracted; `$params` | `"post": "$value[[0..$params.limit - 1]]"` |
 | perform `value`, submit `form` values | `$params` | `"value": "$params.message"` |
@@ -374,7 +374,7 @@ variable-rooted step you write plain field names:
 
 A reply is always `{status, url, body}`: `$res`, and each `$sources.name`,
 everywhere they appear, so a body field is `$res.body.error` and a status is
-`$res.status`. In `map`, `headers`, `body` and later sources, a source's `body`
+`$res.status`. In `map`, `body` and later sources, a source's `body`
 is what its `items` selected; in a sources tier's own exceptions it is the
 body as received, since they run before `items`. `$item` exists only in a
 `map` whose tier declares `items` (and in `$lens` params). Helpers and
@@ -412,7 +412,7 @@ expressions. A hole names its root:
 | Template | Holes |
 | --- | --- |
 | lens `url` and `ready`; dom `item`, `selector`, `scope`; perform selectors; intercept `request.url`; http `request.url` and `headers` | `{params.name}` |
-| an http source's `request.url` | `{params.name}`, and `{sources.name.body}` or `{sources.name.body.path.0.to}` for a source declared earlier |
+| an http source's `request.url` and `headers` | `{params.name}`, and `{sources.name.body}` or `{sources.name.body.path.0.to}` for a source declared earlier: `"X-CSRF-Token": "{sources.csrf.body}"`, `"Authorization": "Bearer {sources.auth.body.token}"` |
 
 URL holes are percent-encoded (a request pattern also encodes `*`, so a value
 never widens the glob); selector and header holes go in verbatim. A hole
