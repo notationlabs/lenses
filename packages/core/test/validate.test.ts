@@ -3,7 +3,7 @@ import { specWarnings, validateSpec } from "../src/validate.js";
 
 const validSpec = {
   name: "@example/web/page",
-  url: "https://example.com/{page}",
+  url: "https://example.com/{params.page}",
   params: { page: "string" },
   effects: { reads: ["example.com"], writes: [] },
   resolve: [{ kind: "dom", fields: { title: { selector: "h1" } } }],
@@ -47,7 +47,7 @@ describe("validateSpec", () => {
   });
 
   it("rejects an invalid canonical URL", () => {
-    expect(() => validateSpec({ ...validSpec, url: "example/{page}" })).toThrow(/absolute URL/);
+    expect(() => validateSpec({ ...validSpec, url: "example/{params.page}" })).toThrow(/absolute URL/);
   });
 
   it("rejects a parameter default with the wrong type", () => {
@@ -169,8 +169,8 @@ describe("validateSpec", () => {
         ...validSpec,
         resolve: [{
           kind: "intercept",
-          request: "GET https://example.com/api",
-          sources: { page: { request: "GET https://example.com/api" } },
+          request: { method: "GET", url: "https://example.com/api" },
+          sources: { page: { request: { method: "GET", url: "https://example.com/api" } } },
         }],
       })
     ).toThrow(/either.*request.*sources/i);
@@ -215,16 +215,16 @@ describe("validateSpec", () => {
       effects: { reads: ["example.com"], writes: ["example.com"] },
       resolve: [{
         kind: "http",
-        request: "POST https://example.com/api",
+        request: { method: "POST", url: "https://example.com/api" },
         ...(body ? { body } : {}),
       }],
     });
 
     it.each([
-      { json: "{ 'page': $page }" },
-      { form: { page: "$page" } },
-      { search: { page: "$page" } },
-      { text: "$page" },
+      { json: "{ 'page': $params.page }" },
+      { form: { page: "$params.page" } },
+      { search: { page: "$params.page" } },
+      { text: "$params.page" },
     ])("accepts a declarative request body: %j", (body) => {
       expect(validateSpec(writeHttp(body))).toMatchObject({ resolve: [{ body }] });
     });
@@ -246,7 +246,7 @@ describe("validateSpec", () => {
     it("rejects bodies on GET and HEAD", () => {
       expect(() => validateSpec({
         ...writeHttp({ json: "{}" }),
-        resolve: [{ kind: "http", request: "GET https://example.com/api", body: { json: "{}" } }],
+        resolve: [{ kind: "http", request: { method: "GET", url: "https://example.com/api" }, body: { json: "{}" } }],
       })).toThrow(/GET request cannot declare a body/);
     });
   });
@@ -262,9 +262,9 @@ describe("validateSpec", () => {
         ...writeSpec,
         perform: [
           { wait: { appears: "[data-testid='send']" } },
-          { fill: "#composer", value: "$message" },
+          { fill: "#composer", value: "$params.page" },
           { click: "[data-testid='send']" },
-          { submit: "#composer-form", form: { description: "$page" } },
+          { submit: "#composer-form", form: { description: "$params.page" } },
           { press: "Enter" },
           { wait: { increases: ".turn", timeoutMs: 30000 } },
           { wait: { gone: ".spinner" } },
@@ -279,10 +279,10 @@ describe("validateSpec", () => {
         ...writeSpec,
         params: { page: "string", row: "integer" },
         perform: [
-          { fill: "#input-{row}", value: "$page" },
-          { click: "#button-{row}" },
-          { submit: "#form-{row}", form: { description: "$page" } },
-          { wait: { appears: ".result-{row}" } },
+          { fill: "#input-{params.row}", value: "$params.page" },
+          { click: "#button-{params.row}" },
+          { submit: "#form-{params.row}", form: { description: "$params.page" } },
+          { wait: { appears: ".result-{params.row}" } },
         ],
       };
       expect(validateSpec(spec)).toEqual(spec);
@@ -292,7 +292,7 @@ describe("validateSpec", () => {
       const spec = {
         ...writeSpec,
         params: { page: "string", path: "string", row: "integer" },
-        perform: [{ drop: "#upload-{row}", file: "path" }],
+        perform: [{ drop: "#upload-{params.row}", file: "path" }],
       };
       expect(validateSpec(spec)).toEqual(spec);
     });
@@ -327,8 +327,8 @@ describe("validateSpec", () => {
     it("rejects undeclared holes in perform selectors", () => {
       expect(() => validateSpec({
         ...writeSpec,
-        perform: [{ wait: { gone: ".spinner-{row}" } }],
-      })).toThrow(/selector parameter "row" is not declared/);
+        perform: [{ wait: { gone: ".spinner-{params.row}" } }],
+      })).toThrow(/parameter "row" in "\{params.row\}" is not declared/);
     });
 
     it("rejects an empty step list", () => {

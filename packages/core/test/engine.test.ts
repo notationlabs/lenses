@@ -35,10 +35,10 @@ const spec = validateSpec({
   resolve: [
     {
       kind: "intercept",
-      request: "GET https://api.example.com/things*",
-      items: "things",
-      map: "{ 'title': name, 'count': n }",
-      exceptions: { needs_auth: { matches: "status = 401" } },
+      request: { method: "GET", url: "https://api.example.com/things*" },
+      items: "$res.body.things",
+      map: { title: "$item.name", count: "$item.n" },
+      exceptions: { needs_auth: { matches: "$res.status = 401" } },
     },
     {
       kind: "dom",
@@ -176,7 +176,7 @@ describe("executeLens", () => {
       resolve: [{
         kind: "dom",
         fields: { heading: { selector: "h1" } },
-        exceptions: { needs_auth: { matches: "$contains(value.heading, 'unable to continue')" } },
+        exceptions: { needs_auth: { matches: "$contains($value.heading, 'unable to continue')" } },
       }],
     });
     const extract = (heading: string) => io({
@@ -191,14 +191,14 @@ describe("executeLens", () => {
   it("expands parameters in intercept request patterns", async () => {
     const perAccount = validateSpec({
       name: "@example/web/transactions",
-      url: "https://example.com/accounts/{id}",
+      url: "https://example.com/accounts/{params.id}",
       params: { id: "string" },
       effects: { reads: ["example.com"], writes: [] },
       resolve: [{
         kind: "intercept",
-        request: "GET https://api.example.com/accounts/{id}/*",
-        items: "things",
-        map: "{ 'title': name }",
+        request: { method: "GET", url: "https://api.example.com/accounts/{params.id}/*" },
+        items: "$res.body.things",
+        map: { title: "$item.name" },
       }],
     });
     const r = await executeLens(perAccount, { id: "b" }, io({
@@ -217,7 +217,7 @@ describe("executeLens", () => {
     }));
     expect(encoded).toMatchObject({ kind: "value", value: [{ title: "a" }, { title: "b" }] });
     expect(() => validateSpec({ ...perAccount, params: {}, url: "https://example.com/x" }))
-      .toThrow('intercept parameter "id" is not declared');
+      .toThrow('parameter "id" in "{params.id}" is not declared');
   });
 
   it("names the unmatched request when an intercept tier captures nothing", async () => {
@@ -225,7 +225,7 @@ describe("executeLens", () => {
       name: "@example/web/things",
       url: "https://example.com/things",
       effects: { reads: ["example.com"], writes: [] },
-      resolve: [{ kind: "intercept", request: "GET https://api.example.com/things*", items: "things" }],
+      resolve: [{ kind: "intercept", request: { method: "GET", url: "https://api.example.com/things*" }, items: "$res.body.things" }],
     });
     const r = await executeLens(interceptOnly, {}, io());
     expect(r).toMatchObject({
@@ -240,7 +240,7 @@ describe("executeLens", () => {
       name: "@example/web/things",
       url: "https://example.com/things",
       effects: { reads: ["example.com"], writes: [] },
-      resolve: [{ kind: "intercept", request: "GET https://api.example.com/things*", items: "things" }],
+      resolve: [{ kind: "intercept", request: { method: "GET", url: "https://api.example.com/things*" }, items: "$res.body.things" }],
     });
     const r = await executeLens(interceptOnly, {}, io({
       getIntercepted: async () => [captured({ status: 401, body: "{}" })],
@@ -260,7 +260,7 @@ describe("executeLens", () => {
       name: "@example/web/things",
       url: "https://example.com/things",
       effects: { reads: ["example.com"], writes: [] },
-      exceptions: { needs_auth: { matches: "$contains(url, '/sign-in') or status = 401", hint: "Sign in and retry." } },
+      exceptions: { needs_auth: { matches: "$contains($page.url, '/sign-in') or $res.status = 401", hint: "Sign in and retry." } },
     };
 
     it("fires from a dom tier's {url, title} context", async () => {
@@ -277,7 +277,7 @@ describe("executeLens", () => {
     it("fires from an intercept tier's {status, url, body} context", async () => {
       const s = validateSpec({
         ...shared,
-        resolve: [{ kind: "intercept", request: "GET https://api.example.com/things*", items: "things" }],
+        resolve: [{ kind: "intercept", request: { method: "GET", url: "https://api.example.com/things*" }, items: "$res.body.things" }],
       });
       const r = await executeLens(s, {}, io({
         getIntercepted: async () => [captured({ status: 401, body: "{}" })],
@@ -292,7 +292,7 @@ describe("executeLens", () => {
           {
             kind: "dom",
             // narrower than the spec's: this page's sign-in lives elsewhere
-            exceptions: { needs_auth: { matches: "$contains(url, '/login')" } },
+            exceptions: { needs_auth: { matches: "$contains($page.url, '/login')" } },
             item: ".thing",
             fields: { title: { selector: ".t" } },
           },
@@ -316,8 +316,8 @@ describe("executeLens", () => {
       resolve: [
         {
           kind: "dom",
-          item: "#past-payments-{year} .row",
-          fields: { amount: { selector: ".amount-{year}" } },
+          item: "#past-payments-{params.year} .row",
+          fields: { amount: { selector: ".amount-{params.year}" } },
         },
       ],
     });
@@ -341,7 +341,7 @@ describe("executeLens", () => {
         url: "https://example.com/payments",
         params: { label: "string" },
         effects: { reads: ["example.com"], writes: [] },
-        resolve: [{ kind: "dom", fields: { v: { selector: "[aria-label='{label}']" } } }],
+        resolve: [{ kind: "dom", fields: { v: { selector: "[aria-label='{params.label}']" } } }],
       });
       const seen: DomResolver[] = [];
       await executeLens(spaced, { label: "Tax year" }, io({
@@ -359,23 +359,23 @@ describe("executeLens", () => {
           name: "@example/web/payments",
           url: "https://example.com/payments",
           effects: { reads: ["example.com"], writes: [] },
-          resolve: [{ kind: "dom", fields: { v: { selector: "#row-{year}" } } }],
+          resolve: [{ kind: "dom", fields: { v: { selector: "#row-{params.year}" } } }],
         })
-      ).toThrow(/selector parameter "year" is not declared/);
+      ).toThrow(/parameter "year" in "\{params.year\}" is not declared/);
     });
   });
 
   it("binds declared parameters in JSONata", async () => {
     const s = validateSpec({
       name: "@example/web/echo",
-      url: "https://example.com/{page}",
+      url: "https://example.com/{params.page}",
       params: { page: "string" },
       effects: { reads: [], writes: [] },
       resolve: [
         {
           kind: "intercept",
-          request: "GET https://api.example.com/things*",
-          map: "{ 'page': $page }",
+          request: { method: "GET", url: "https://api.example.com/things*" },
+          map: { page: "$params.page" },
         },
       ],
     });
@@ -418,9 +418,9 @@ describe("perform", () => {
     url: "https://example.com/chat",
     params: { message: "string" },
     effects: { reads: ["example.com"], writes: ["example.com"] },
-    exceptions: { needs_auth: { matches: "$contains(url, '/sign-in')", hint: "Sign in and retry." } },
+    exceptions: { needs_auth: { matches: "$contains($page.url, '/sign-in')", hint: "Sign in and retry." } },
     perform: [
-      { fill: "#composer", value: "$message" },
+      { fill: "#composer", value: "$params.message" },
       { click: "[data-testid='send']" },
       { wait: { increases: ".turn", timeoutMs: 30000 } },
     ],
@@ -468,19 +468,19 @@ describe("perform", () => {
       ...sendSpec,
       params: { message: "string", row: "integer" },
       perform: [
-        { fill: "#composer-{row}", value: "$message" },
-        { click: "#send-{row}" },
+        { fill: "#composer-{params.row}", value: "$params.message" },
+        { click: "#send-{params.row}" },
         {
-          submit: "#form-{row}",
+          submit: "#form-{params.row}",
           form: {
-            "journal_set[description]": "$message",
-            row: "$string(row)",
+            "journal_set[description]": "$params.message",
+            row: "$string($params.row)",
             empty: "",
           },
         },
-        { wait: { appears: ".reply-{row}", timeoutMs: 10 } },
-        { wait: { gone: ".spinner-{row}" } },
-        { wait: { increases: ".turn-{row}" } },
+        { wait: { appears: ".reply-{params.row}", timeoutMs: 10 } },
+        { wait: { gone: ".spinner-{params.row}" } },
+        { wait: { increases: ".turn-{params.row}" } },
       ],
     });
     const { io: withPerform, performed } = performIo();
@@ -502,7 +502,7 @@ describe("perform", () => {
     const dropSpec = validateSpec({
       ...sendSpec,
       params: { path: "string", row: "integer" },
-      perform: [{ drop: "#upload-{row}", file: "path" }],
+      perform: [{ drop: "#upload-{params.row}", file: "path" }],
     });
     const { io: withPerform, performed } = performIo();
     await executeLens(dropSpec, { path: "/tmp/clip.mp4", row: 2 }, withPerform);
@@ -524,13 +524,13 @@ describe("perform", () => {
   it("fails before dispatch when a submit form expression produces nothing", async () => {
     const invalid = validateSpec({
       ...sendSpec,
-      perform: [{ submit: "#form", form: { description: "$missing" } }],
+      perform: [{ submit: "#form", form: { description: "$params.message.missing" } }],
     });
     const { io: withPerform, performed } = performIo();
     const r = await executeLens(invalid, { message: "hi" }, withPerform);
     expect(r).toEqual({
       kind: "error",
-      message: 'perform submit field "description" value "$missing" produced nothing',
+      message: 'perform submit field "description" value "$params.message.missing" produced nothing',
     });
     expect(performed).toEqual([]);
   });
@@ -580,7 +580,7 @@ describe("perform", () => {
       perform: [{ click: "#send" }],
       resolve: [{
         kind: "intercept",
-        request: "POST https://api.example.com/send",
+        request: { method: "POST", url: "https://api.example.com/send" },
         waitMs: 100,
       }],
     });
@@ -671,8 +671,8 @@ describe("results are lenses too", () => {
       resolve: [
         {
           kind: "intercept",
-          request: "GET https://claude.ai/api/*/usage*",
-          exceptions: { needs_auth: { matches: "status = 401 or status = 403" } },
+          request: { method: "GET", url: "https://claude.ai/api/*/usage*" },
+          exceptions: { needs_auth: { matches: "$res.status = 401 or $res.status = 403" } },
         },
       ],
     });
@@ -700,8 +700,8 @@ describe("results are lenses too", () => {
       resolve: [
         {
           kind: "intercept",
-          request: "GET https://api.example.com/things*",
-          exceptions: { not_found: { matches: "status = 404" } },
+          request: { method: "GET", url: "https://api.example.com/things*" },
+          exceptions: { not_found: { matches: "$res.status = 404" } },
         },
       ],
     });
@@ -727,10 +727,10 @@ describe("results are lenses too", () => {
             type: "array",
             items: {
               id: "string",
-              item_url: { $lens: "@example/hn/item", params: { id: "id" } },
+              item_url: { $lens: "@example/hn/item", params: { id: "$item.id" } },
             },
           },
-          next_page: { $lens: "@example/hn/top", params: { p: "next_page" } },
+          next_page: { $lens: "@example/hn/top", params: { p: "$item.next_page" } },
         },
       },
       resolve: [
@@ -738,7 +738,7 @@ describe("results are lenses too", () => {
           kind: "dom",
           item: ".athing",
           fields: { id: { selector: ":self", attr: "id" } },
-          post: "{ 'stories': $map($, function($v) { $merge([$v, {'item_url': $v.id}]) }), 'next_page': 2 }",
+          post: "{ 'stories': $map($value, function($v) { $merge([$v, {'item_url': $v.id}]) }), 'next_page': 2 }",
         },
       ],
     });
@@ -764,13 +764,13 @@ describe("intercept sources composition", () => {
       {
         kind: "intercept",
         sources: {
-          usage: { request: "GET https://api.example.com/usage*" },
-          sub: { request: "GET https://api.example.com/subscription*" },
+          usage: { request: { method: "GET", url: "https://api.example.com/usage*" } },
+          sub: { request: { method: "GET", url: "https://api.example.com/subscription*" } },
         },
-        exceptions: { needs_auth: { matches: "$usage.status = 401 or $sub.status = 401" } },
+        exceptions: { needs_auth: { matches: "$sources.usage.status = 401 or $sources.sub.status = 401" } },
         map: {
-          plan: "$sub.plan_label",
-          limits: "$usage.limits.{ 'name': kind, 'percent': $string(percent) & '%' }",
+          plan: "$sources.sub.body.plan_label",
+          limits: "$sources.usage.body.limits.{ 'name': kind, 'percent': $string(percent) & '%' }",
         },
       },
       { kind: "llm", prompt: "Read the whole page." },
@@ -819,10 +819,10 @@ describe("intercept sources composition", () => {
         {
           kind: "intercept",
           sources: {
-            usage: { request: "GET https://api.example.com/usage*", items: "limits[kind='weekly']" },
-            sub: { request: "GET https://api.example.com/subscription*" },
+            usage: { request: { method: "GET", url: "https://api.example.com/usage*" }, items: "$res.body.limits[kind='weekly']" },
+            sub: { request: { method: "GET", url: "https://api.example.com/subscription*" } },
           },
-          map: { weekly_used: "$usage.percent * $sub.quota / 100" },
+          map: { weekly_used: "$sources.usage.body.percent * $sources.sub.body.quota / 100" },
         },
       ],
     });
@@ -863,10 +863,10 @@ describe("cross-tier reconciliation", () => {
     resolve: [
       {
         kind: "intercept",
-        request: "GET https://api.example.com/usage*",
-        map: { renews_at: "'2026-08-06'", limits: "limits" },
+        request: { method: "GET", url: "https://api.example.com/usage*" },
+        map: { renews_at: "'2026-08-06'", limits: "$res.body.limits" },
       },
-      { kind: "dom", fields: { plan: { selector: ".plan" } }, post: "{ 'plan': plan }" },
+      { kind: "dom", fields: { plan: { selector: ".plan" } }, post: "{ 'plan': $value.plan }" },
       { kind: "llm", prompt: "Read the whole page." },
     ],
   });
@@ -1020,22 +1020,22 @@ describe("shared JSONata helpers", () => {
   it("binds a helper lambda as $name in an expression", async () => {
     const spec = withHelpers(
       { money: 'function($s) { $number($replace($s, /[^0-9.]/, "")) }' },
-      "{ 'amount': $money(raw) }"
+      "{ 'amount': $money($value.raw) }"
     );
     const r = await executeLens(spec, {}, domValue({ raw: "£1,234.50" }));
     expect(r).toMatchObject({ kind: "value", value: { amount: 1234.5 } });
   });
 
-  // A catalogue must not be able to change what an expression means by adding a
-  // helper whose name a document already declares as a param.
-  it("lets a declared param shadow a helper of the same name", async () => {
+  // Params live under $params, so a catalogue helper can never change what a
+  // document's parameter reference means, even when the names coincide.
+  it("keeps a declared param and a helper of the same name apart", async () => {
     const spec = withHelpers(
       { limit: "function() { 99 }" },
-      "{ 'v': $limit }",
+      "{ 'v': $params.limit, 'h': $limit() }",
       { limit: { type: "integer", default: 5 } }
     );
     const r = await executeLens(spec, {}, domValue({ raw: "x" }));
-    expect(r).toMatchObject({ kind: "value", value: { v: 5 } });
+    expect(r).toMatchObject({ kind: "value", value: { v: 5, h: 99 } });
   });
 
   it("makes helpers available to detect as well as post", async () => {
@@ -1043,7 +1043,7 @@ describe("shared JSONata helpers", () => {
       name: "@example/web/things",
       url: "https://example.com/things",
       effects: { reads: ["example.com"], writes: [] },
-      exceptions: { needs_auth: { matches: "$isLogin(url)", hint: "Sign in." } },
+      exceptions: { needs_auth: { matches: "$isLogin($page.url)", hint: "Sign in." } },
       helpers: { isLogin: "function($u) { $contains($u, '/sign-in') }" },
       resolve: [{ kind: "dom", fields: { raw: { selector: ".raw" } } }],
     });
@@ -1058,16 +1058,16 @@ describe("http tier", () => {
   const body = JSON.stringify({ things: [{ name: "a" }, { name: "b" }] });
   const httpSpec = validateSpec({
     name: "@example/api/things",
-    url: "https://example.com/things/{id}",
+    url: "https://example.com/things/{params.id}",
     params: { id: "string" },
     effects: { reads: ["example.com"], writes: [] },
     resolve: [
       {
         kind: "http",
-        request: "GET https://api.example.com/things/{id}",
-        items: "things",
-        map: "{ 'title': name }",
-        exceptions: { needs_auth: { matches: "status = 401" } },
+        request: { method: "GET", url: "https://api.example.com/things/{params.id}" },
+        items: "$res.body.things",
+        map: { title: "$item.name" },
+        exceptions: { needs_auth: { matches: "$res.status = 401" } },
       },
     ],
   });
@@ -1095,10 +1095,10 @@ describe("http tier", () => {
   });
 
   it.each([
-    [{ json: "{ 'id': $id, 'tags': ['a', 'b'] }" }, { kind: "json", value: '{"id":"42","tags":["a","b"]}' }],
-    [{ text: "$id" }, { kind: "text", value: "42" }],
-    [{ search: { id: "$id", tag: "['a', 'b']" } }, { kind: "search", entries: [["id", "42"], ["tag", "a"], ["tag", "b"]] }],
-    [{ form: { id: "$id" } }, { kind: "form", entries: [["id", "42"]] }],
+    [{ json: "{ 'id': $params.id, 'tags': ['a', 'b'] }" }, { kind: "json", value: '{"id":"42","tags":["a","b"]}' }],
+    [{ text: "$params.id" }, { kind: "text", value: "42" }],
+    [{ search: { id: "$params.id", tag: "['a', 'b']" } }, { kind: "search", entries: [["id", "42"], ["tag", "a"], ["tag", "b"]] }],
+    [{ form: { id: "$params.id" } }, { kind: "form", entries: [["id", "42"]] }],
   ] as const)("materialises request body %j", async (declaration, expected) => {
     const requests: unknown[] = [];
     const writeSpec = validateSpec({
@@ -1106,7 +1106,7 @@ describe("http tier", () => {
       effects: { reads: ["example.com"], writes: ["api.example.com"] },
       resolve: [{
         kind: "http",
-        request: "POST https://api.example.com/things/{id}",
+        request: { method: "POST", url: "https://api.example.com/things/{params.id}" },
         body: declaration,
       }],
     });
@@ -1121,7 +1121,7 @@ describe("http tier", () => {
 
   it("defaults to a GET of the lens's canonical url", async () => {
     const urls: string[] = [];
-    const bare = validateSpec({ ...httpSpec, resolve: [{ kind: "http", items: "things" }] });
+    const bare = validateSpec({ ...httpSpec, resolve: [{ kind: "http", items: "$res.body.things" }] });
     await executeLens(bare, { id: "42" }, io({
       httpFetch: async (request) => {
         urls.push(`${request.method} ${request.url}`);
@@ -1142,7 +1142,7 @@ describe("http tier", () => {
   it("misses when a credentialed request is unsupported", async () => {
     const credentialed = validateSpec({
       ...httpSpec,
-      resolve: [{ kind: "http", credentials: true, items: "things" }],
+      resolve: [{ kind: "http", credentials: true, items: "$res.body.things" }],
     });
     const r = await executeLens(credentialed, { id: "42" }, io({
       httpFetch: async () => undefined,
@@ -1193,7 +1193,7 @@ describe("http tier", () => {
     const layered = validateSpec({
       ...httpSpec,
       resolve: [
-        { kind: "http", items: "things" },
+        { kind: "http", items: "$res.body.things" },
         { kind: "dom", item: ".thing", fields: { title: { selector: ".t" } } },
       ],
     });
@@ -1218,11 +1218,11 @@ describe("http tier chained sources", () => {
         kind: "http",
         credentials: true,
         sources: {
-          orgs: { request: "GET https://api.example.com/organizations" },
-          usage: { request: "GET https://api.example.com/organizations/{orgs.0.uuid}/usage" },
+          orgs: { request: { method: "GET", url: "https://api.example.com/organizations" } },
+          usage: { request: { method: "GET", url: "https://api.example.com/organizations/{sources.orgs.body.0.uuid}/usage" } },
         },
-        exceptions: { needs_auth: { matches: "$orgs.status = 401" } },
-        map: { plan: "$orgs[0].plan", used: "$usage.used" },
+        exceptions: { needs_auth: { matches: "$sources.orgs.status = 401" } },
+        map: { plan: "$sources.orgs.body[0].plan", used: "$sources.usage.body.used" },
       },
     ],
   });
@@ -1273,12 +1273,12 @@ describe("http tier chained sources", () => {
         kind: "http",
         credentials: true,
         sources: {
-          confirmation: { request: "GET https://example.com/items/1/confirm" },
+          confirmation: { request: { method: "GET", url: "https://example.com/items/1/confirm" } },
           deleted: {
-            request: "POST https://example.com/items/1",
+            request: { method: "POST", url: "https://example.com/items/1" },
             credentials: "same-origin-page",
             headers: {
-              "X-CSRF-Token": "$confirmation.token",
+              "X-CSRF-Token": "$sources.confirmation.body.token",
               "X-Requested-With": "'XMLHttpRequest'",
             },
             body: { search: { _method: "'delete'" } },
@@ -1321,7 +1321,7 @@ describe("http tier chained sources", () => {
       url: "https://example.com/items/1",
       effects: { reads: ["example.com"], writes: ["example.com"] },
       resolve: [
-        { kind: "http", request: "DELETE https://example.com/items/1", credentials: true },
+        { kind: "http", request: { method: "DELETE", url: "https://example.com/items/1" }, credentials: true },
         { kind: "dom", fields: { ok: { selector: "h1" } } },
       ],
     });
@@ -1361,7 +1361,7 @@ describe("http tier chained sources", () => {
     expect(r).toMatchObject({
       kind: "error",
       message:
-        'all resolvers exhausted (http resolver missed at http request failed: hole "{orgs.0.uuid}" did not resolve to a scalar)',
+        'all resolvers exhausted (http resolver missed at http request failed: hole "{sources.orgs.body.0.uuid}" did not resolve to a scalar)',
     });
   });
 
@@ -1375,19 +1375,19 @@ describe("http tier chained sources", () => {
           {
             kind: "http",
             sources: {
-              usage: { request: "GET https://api.example.com/{orgs.0.uuid}/usage" },
+              usage: { request: { method: "GET", url: "https://api.example.com/{sources.orgs.body.0.uuid}/usage" } },
             },
           },
         ],
       })
-    ).toThrow('http parameter "orgs" is not declared');
+    ).toThrow('source "orgs" in "{sources.orgs.body.0.uuid}" is not declared');
   });
 });
 
 describe("resolveParams with {$lens} defaults", () => {
   const refSpec = validateSpec({
     name: "@example/hmrc/vat",
-    url: "https://example.com/vat/{vrn}",
+    url: "https://example.com/vat/{params.vrn}",
     params: { vrn: { type: "string", default: { $lens: "@example/hmrc/summary", field: "vrn" } } },
     effects: { reads: ["example.com"], writes: [] },
     resolve: [{ kind: "dom", fields: { total: { selector: ".total" } } }],

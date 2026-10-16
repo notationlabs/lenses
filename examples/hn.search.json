@@ -1,7 +1,7 @@
 {
   "name": "@djgrant/hn/search",
   "description": "Hacker News stories via Algolia's HN Search, the first API-backed HN lens. Sorting happens server-side before pagination: order byPopularity queries the Item_dev index, byDate its _sort_date replica. An empty query browses all stories. Each story links onward to hn/item via item_url; next_page is the same search at the next page (null on the last). Pages are 0-based, matching Algolia.",
-  "url": "https://hn.algolia.com/?query={query}&sort={order}&type=story&page={page}",
+  "url": "https://hn.algolia.com/?query={params.query}&sort={params.order}&type=story&page={params.page}",
   "params": {
     "query": {
       "type": "string",
@@ -41,7 +41,7 @@
           "item_url": {
             "$lens": "@djgrant/hn/item",
             "params": {
-              "id": "id"
+              "id": "$item.id"
             }
           }
         }
@@ -49,9 +49,9 @@
       "next_page": {
         "$lens": "@djgrant/hn/search",
         "params": {
-          "query": "$query",
-          "order": "$order",
-          "page": "next_page"
+          "query": "$params.query",
+          "order": "$params.order",
+          "page": "$item.next_page"
         }
       }
     }
@@ -68,8 +68,11 @@
   "resolve": [
     {
       "kind": "intercept",
-      "request": "POST https://*/1/indexes/Item_dev*/query*",
-      "items": "{ \"stories\": [hits.{ \"id\": objectID, \"title\": title, \"url\": $exists(url) ? url : null, \"author\": author, \"points\": $exists(points) ? points : null, \"comments\": $exists(num_comments) ? num_comments : null, \"item_url\": objectID }], \"next_page\": page + 1 < nbPages ? page + 1 : null }",
+      "request": {
+        "method": "POST",
+        "url": "https://*/1/indexes/Item_dev*/query*"
+      },
+      "items": "{ \"stories\": [$res.body.hits.{ \"id\": objectID, \"title\": title, \"url\": $exists(url) ? url : null, \"author\": author, \"points\": $exists(points) ? points : null, \"comments\": $exists(num_comments) ? num_comments : null, \"item_url\": objectID }], \"next_page\": $res.body.page + 1 < $res.body.nbPages ? $res.body.page + 1 : null }",
       "reloadOnMiss": true
     },
     {

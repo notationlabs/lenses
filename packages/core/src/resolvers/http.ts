@@ -5,12 +5,13 @@ import type {
   HttpResolver,
   LensResult,
   LensSpec,
+  RequestSpec,
   ResolverMiss,
 } from "../types.js";
-import { evaluate } from "../expr.js";
+import { evaluate, type ExprVars } from "../expr.js";
 import { expandTemplate, expandUrl } from "../url-pattern.js";
 import { matchPageException, matchTierException } from "./outcome.js";
-import { project, tryParse } from "./intercept.js";
+import { project, shapeReply, tryParse } from "./intercept.js";
 
 /**
  * Run the tier's request (or its chain of `sources`) through the host and
@@ -25,33 +26,33 @@ export async function runHttp(
   if (!io.httpFetch) {
     return { kind: "miss", observed: "host cannot perform http requests" };
   }
+  // `sources` is the replies bound so far in a chain ({status, url, body},
+  // body after the source's `items`), undefined for a single request; it fills
+  // `{sources.…}` holes and `$sources` in bodies and headers.
   const fetchOne = async (
-    pattern: string,
-    holes: Record<string, unknown>,
+    request: RequestSpec,
+    sources: Record<string, unknown> | undefined,
     bodySpec?: HttpBody,
     credentials = r.credentials ?? false,
     sourceHeaders?: Record<string, string>
   ) => {
-    const space = pattern.indexOf(" ");
-    const method = space === -1 ? "GET" : pattern.slice(0, space).toUpperCase();
-    const url = expandUrl(
-      expandDottedHoles(space === -1 ? pattern : pattern.slice(space + 1), holes),
-      holes
-    );
+    const method = request.method.toUpperCase();
+    const url = expandUrl(request.url, params, sources);
+    const vars: ExprVars = sources ? { params, sources } : { params };
     const headers: Record<string, string> = r.headers
       ? Object.fromEntries(
-          Object.entries(r.headers).map(([name, value]) => [name, expandTemplate(value, holes)])
+          Object.entries(r.headers).map(([name, value]) => [name, expandTemplate(value, params)])
         )
       : {};
     for (const [name, expression] of Object.entries(sourceHeaders ?? {})) {
-      const value = await evaluate(expression, holes, holes, spec.helpers);
+      const value = await evaluate(expression, vars, spec.helpers);
       if (value === undefined || value === null || typeof value === "object") {
         throw new Error(`http header "${name}" must evaluate to a scalar`);
       }
       headers[name] = String(value);
     }
     const body = bodySpec
-      ? await materialiseBody(bodySpec, holes, spec.helpers)
+      ? await materialiseBody(bodySpec, vars, spec.helpers)
       : undefined;
     try {
       return await io.httpFetch!({
@@ -76,15 +77,14 @@ export async function runHttp(
 
   if (r.sources) {
     const bodies: Record<string, unknown> = {};
-    const metas: Record<string, unknown> = {};
-    // Scalars bound so far fill the next request's holes alongside params.
-    const holes: Record<string, unknown> = { ...params };
+    const metas: Record<string, { status: number; url: string; body: unknown }> = {};
+    const replies: Record<string, unknown> = {};
     for (const [name, source] of Object.entries(r.sources)) {
       let response;
       try {
         response = await fetchOne(
           source.request,
-          { ...holes, ...bodies },
+          { ...replies },
           source.body,
           source.credentials ?? r.credentials ?? false,
           source.headers
@@ -97,28 +97,28 @@ export async function runHttp(
       if (!response) return unsupported(r);
       metas[name] = { status: response.status, url: response.url, body: tryParse(response.body) };
       // Check the arriving response before requesting the next source.
-      const tier = await matchTierException(spec, r.exceptions, { ...params, ...metas }, { ...params, ...metas }, "http");
+      const tier = await matchTierException(
+        spec, r.exceptions, { ...params, ...metas }, { sources: { ...metas }, params }, "http"
+      );
       if (tier) return tier;
-      const page = await matchPageException(spec, metas[name], params, "http", r.exceptions);
+      const page = await matchPageException(spec, metas[name], { res: metas[name], params }, "http", r.exceptions);
       if (page) return page;
       if (response.status < 200 || response.status >= 300) {
         return { kind: "miss", observed: `HTTP ${response.status} from ${response.url}` };
       }
-      const parsed = tryParse(response.body);
       const bound = source.items
-        ? await evaluate(source.items, parsed, { ...params, ...bodies }, spec.helpers)
-        : parsed;
+        ? await evaluate(source.items, { res: metas[name], params, sources: { ...replies } }, spec.helpers)
+        : metas[name].body;
       if (bound === undefined || bound === null) {
         return { kind: "miss", observed: `no value from ${response.url}` };
       }
       bodies[name] = bound;
-      holes[name] = bound;
+      replies[name] = { ...metas[name], body: bound };
     }
-    const vars = { ...params, ...bodies };
     const sourceUrls = Object.values(metas)
-      .map((meta) => (meta as { url: string }).url)
+      .map((meta) => meta.url)
       .join(", ");
-    const value = r.map ? await project(r.map, vars, vars, spec.helpers) : bodies;
+    const value = r.map ? await project(r.map, { sources: replies, params }, spec.helpers) : bodies;
     if (value === undefined || value === null) {
       return { kind: "miss", observed: `no value from ${sourceUrls}` };
     }
@@ -127,9 +127,9 @@ export async function runHttp(
 
   let response;
   try {
-    response = await fetchOne(r.request ?? spec.url, params, r.body);
+    response = await fetchOne(r.request ?? { method: "GET", url: spec.url }, undefined, r.body);
   } catch (error) {
-    const fatal = requestFailure(error, r.request ?? spec.url, spec.effects.idempotent === true);
+    const fatal = requestFailure(error, r.request, spec.effects.idempotent === true);
     if (fatal) return fatal;
     // Read-only and explicitly idempotent requests may still miss into another tier.
     return { kind: "miss", observed: failure(error) };
@@ -137,41 +137,35 @@ export async function runHttp(
   if (!response) return unsupported(r);
 
   const context = { status: response.status, url: response.url, body: tryParse(response.body) };
-  const outcome = await matchTierException(spec, r.exceptions, context, params, "http")
-    ?? await matchPageException(spec, context, params, "http", r.exceptions);
+  const outcome = await matchTierException(spec, r.exceptions, context, { res: context, params }, "http")
+    ?? await matchPageException(spec, context, { res: context, params }, "http", r.exceptions);
   if (outcome) return outcome;
   if (response.status < 200 || response.status >= 300) {
     return { kind: "miss", observed: `HTTP ${response.status} from ${response.url}` };
   }
 
-  const working = r.items ? await evaluate(r.items, context.body, params, spec.helpers) : context.body;
+  const working = r.items
+    ? await evaluate(r.items, { res: context, params }, spec.helpers)
+    : context.body;
   const drew: ResolverMiss = { kind: "miss", observed: `no value from ${response.url}` };
   if (working === undefined || working === null) return drew;
-  let value: unknown;
-  if (r.map && Array.isArray(working)) {
-    value = [];
-    for (const item of working) (value as unknown[]).push(await project(r.map, item, params, spec.helpers));
-  } else if (r.map) {
-    value = await project(r.map, working, params, spec.helpers);
-  } else {
-    value = working;
-  }
+  const value = await shapeReply(r, context, working, params, spec.helpers);
   if (value === undefined || value === null) return drew;
   return { kind: "value", value, resolver: "http", observed: response.url };
 }
 
 async function materialiseBody(
   body: HttpBody,
-  values: Record<string, unknown>,
+  vars: ExprVars,
   helpers: Record<string, string> = {}
 ): Promise<HttpFetchBody> {
   if ("json" in body) {
-    const value = await evaluate(body.json, values, values, helpers);
+    const value = await evaluate(body.json, vars, helpers);
     if (value === undefined) throw new Error("json request body expression produced no result");
     return { kind: "json", value: JSON.stringify(value) };
   }
   if ("text" in body) {
-    const value = await evaluate(body.text, values, values, helpers);
+    const value = await evaluate(body.text, vars, helpers);
     if (value === undefined) throw new Error("text request body expression produced no result");
     return { kind: "text", value: String(value) };
   }
@@ -179,7 +173,7 @@ async function materialiseBody(
   const fields = "form" in body ? body.form : body.search;
   const entries: [string, string][] = [];
   for (const [name, expression] of Object.entries(fields)) {
-    const value = await evaluate(expression, values, values, helpers);
+    const value = await evaluate(expression, vars, helpers);
     if (value === undefined) throw new Error(`${kind} request body field "${name}" produced no result`);
     const valuesForField = Array.isArray(value) ? value : [value];
     for (const item of valuesForField) {
@@ -192,34 +186,13 @@ async function materialiseBody(
   return { kind, entries };
 }
 
-const DOTTED_HOLE = /\{([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z0-9_]+)+)\}/g;
-
-/**
- * Fill `{name.path.to.value}` holes from object-typed bindings, so a chained
- * request can address into an earlier response — `{orgs.0.uuid}` — without
- * that source having to reduce itself to one scalar.
- */
-function expandDottedHoles(template: string, holes: Record<string, unknown>): string {
-  return template.replace(DOTTED_HOLE, (_, path: string) => {
-    let value: unknown = holes;
-    for (const segment of path.split(".")) {
-      if (value === null || typeof value !== "object") value = undefined;
-      else value = (value as Record<string, unknown>)[segment];
-    }
-    if (value === undefined || value === null || typeof value === "object") {
-      throw new Error(`hole "{${path}}" did not resolve to a scalar`);
-    }
-    return encodeURIComponent(String(value));
-  });
-}
-
 function failure(error: unknown): string {
   return `http request failed: ${error instanceof Error ? error.message : String(error)}`;
 }
 
 function requestFailure(
   error: unknown,
-  request: string,
+  request: RequestSpec | undefined,
   idempotent: boolean
 ): Extract<LensResult, { kind: "error" }> | undefined {
   if (typeof error === "object" && error !== null && "code" in error &&
@@ -230,8 +203,7 @@ function requestFailure(
       message: error instanceof Error ? error.message : String(error),
     };
   }
-  const space = request.indexOf(" ");
-  const method = (space === -1 ? "GET" : request.slice(0, space)).toUpperCase();
+  const method = (request?.method ?? "GET").toUpperCase();
   const ambiguous = typeof error === "object" && error !== null &&
     "transmissionAmbiguous" in error && error.transmissionAmbiguous === true;
   if (!ambiguous || ["GET", "HEAD", "OPTIONS"].includes(method) || idempotent) return undefined;

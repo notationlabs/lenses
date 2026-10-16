@@ -16,20 +16,20 @@ Here is `@djgrant/claude/usage`, trimmed:
     "type": "object",
     "fields": { "plan": "string", "limits": { "type": "array", "items": { "name": "string", "percent": "string" } } }
   },
-  "exceptions": { "needs_auth": { "matches": "status = 401 or status = 403", "$lens": "@djgrant/claude/login" } },
+  "exceptions": { "needs_auth": { "matches": "$res.status = 401 or $res.status = 403", "$lens": "@djgrant/claude/login" } },
   "resolve": [
     { "kind": "http",
       "credentials": true,
       "sources": {
-        "orgs": { "request": "GET https://claude.ai/api/organizations" },
-        "usage": { "request": "GET https://claude.ai/api/organizations/{orgs.0.uuid}/usage" }
+        "orgs": { "request": { "method": "GET", "url": "https://claude.ai/api/organizations" } },
+        "usage": { "request": { "method": "GET", "url": "https://claude.ai/api/organizations/{sources.orgs.body.0.uuid}/usage" } }
       },
-      "exceptions": { "needs_auth": { "matches": "$orgs.status = 401 or $orgs.status = 403" } },
-      "map": { "plan": "$orgs[0].rate_limit_tier", "limits": "[$usage.limits.{ 'name': kind, 'percent': $string(percent) & '%' }]" } },
+      "exceptions": { "needs_auth": { "matches": "$sources.orgs.status = 401 or $sources.orgs.status = 403" } },
+      "map": { "plan": "$sources.orgs.body[0].rate_limit_tier", "limits": "[$sources.usage.body.limits.{ 'name': kind, 'percent': $string(percent) & '%' }]" } },
     { "kind": "intercept",
-      "request": "GET https://claude.ai/api/organizations/*/usage*",
-      "exceptions": { "needs_auth": { "matches": "status = 401 or status = 403" } },
-      "map": { "limits": "[limits.{ 'name': kind, 'percent': $string(percent) & '%' }]" } },
+      "request": { "method": "GET", "url": "https://claude.ai/api/organizations/*/usage*" },
+      "exceptions": { "needs_auth": { "matches": "$res.status = 401 or $res.status = 403" } },
+      "map": { "limits": "[$res.body.limits.{ 'name': kind, 'percent': $string(percent) & '%' }]" } },
     { "kind": "dom", "post": "…" },
     { "kind": "llm", "prompt": "Return {plan, limits} from this usage settings page…" }
   ]
@@ -159,7 +159,7 @@ lens call chatgpt/send --params '{"message":"hello"}' --allow-writes
 lens observe https://github.com/notifications --wait-ms 4000 --html
 lens schema hn/top
 lens gen ts-sdk -o src/lenses.gen.ts
-lens eval '[stories.{ "t": title }]' --input sample.json
+lens eval '[$res.body.stories.{ "t": title }]' --input sample.json
 lens status --wait-ms 5000
 lens skill > .claude/skills/lenses/SKILL.md
 ```
@@ -257,7 +257,7 @@ fields, detects a named outcome, or misses and falls through.
 When `returns` is an object, fields accumulate across tiers. The engine stops when all
 declared fields are present, so each tier only needs to supply its part of the result.
 
-Lens `map` and `matches` bodies are JSONata expressions. They cannot reach the network or DOM. Beyond an `http` tier's declared requests, lenses observe what a page already does; page actions and mutating HTTP methods run only when the caller opts in with `--allow-writes` (CLI) or `allowWrites` (client and MCP).
+Lens `map` and `matches` bodies are JSONata expressions with no implicit input: each reads named variables (`$res`, `$item`, `$sources`, `$params`, `$value`, `$page`) bound per site — see the table in [skill/SKILL.md](skill/SKILL.md#variables-in-scope-at-each-site). They cannot reach the network or DOM. Beyond an `http` tier's declared requests, lenses observe what a page already does; page actions and mutating HTTP methods run only when the caller opts in with `--allow-writes` (CLI) or `allowWrites` (client and MCP).
 `lens eval` runs the same sandboxed evaluator against a JSON file or stdin, so an
 expression can be iterated on offline before it goes into a lens document.
 
@@ -292,14 +292,14 @@ repository — or at a direct HTTP URL.
 
 - `name` — globally scoped name such as `@djgrant/hn/item`. The local catalog also
   resolves the shortname `hn/item`.
-- `url` — canonical page URL. Named holes are filled from declared parameters:
+- `url` — canonical page URL. `{params.name}` holes are filled from declared parameters:
 
   ```jsonc
-  "url": "https://x.com/{handle}/status/{id}"
+  "url": "https://x.com/{params.handle}/status/{params.id}"
   ```
 
-- `params` — inputs available to URL expansion and every resolver expression. A bare
-  type is required; an object may provide a default:
+- `params` — inputs, read as `{params.name}` in templates and `$params.name` in
+  expressions. A bare type is required; an object may provide a default:
 
   ```jsonc
   "params": {
@@ -313,11 +313,12 @@ repository — or at a direct HTTP URL.
   ```jsonc
   "next_page": {
     "$lens": "@djgrant/hn/top",
-    "params": { "p": "$number($substringAfter(next_page, 'p='))" }
+    "params": { "p": "$number($substringAfter($item.next_page, 'p='))" }
   }
   ```
 
-  The parameter values are JSONata expressions evaluated against the containing result.
+  The parameter values are JSONata expressions over `$item`, the object containing the
+  reference, and `$params`.
   Materialised results carry the lens name and evaluated parameters needed for a follow-up
   call.
 
@@ -325,8 +326,8 @@ repository — or at a direct HTTP URL.
   no resolver needs to emit the key. A row whose parameters do not bind gets
   `null`, and an explicit `null` from a resolver suppresses the reference.
 
-- `exceptions` — named non-happy paths with `matches` (JSONata), optional `hint`, `$lens`, and `params`. A `null` entry disables an inherited exception. A catalog `scopes` array shares entries by *-only URL glob matched against lens URL templates at load time.
-- `exceptions` on a resolver — tier-local matchers run first; inherited page/response matchers still run, including on each named response.
+- `exceptions` — named non-happy paths with `matches` (JSONata over `$page` `{url, title}` or `$res` `{status, url, body}`, and `$params`), optional `hint`, `$lens`, and `params`. A `null` entry disables an inherited exception. A catalog `scopes` array shares entries by *-only URL glob matched against lens URL templates at load time.
+- `exceptions` on a resolver — tier-local matchers run first (a dom tier's also see `$value`; a sources tier's see `$sources.name` envelopes); inherited page/response matchers still run, including on each named response.
 - `helpers` — named JSONata lambdas bound as `$name` in every expression the
   document evaluates:
 
@@ -336,15 +337,15 @@ repository — or at a direct HTTP URL.
 
   A `catalog.json` beside the documents may declare the same block for all of
   them, so fixing a helper is one edit rather than one per document. A
-  document's own entry overrides the catalogue's, and a declared param of the
-  same name shadows both.
+  document's own entry overrides the catalogue's. Helper names may not be
+  reserved variable names (`res`, `item`, `sources`, `params`, `value`, `page`).
 
 - `effects` — `{ "reads": [...], "writes": [...], "idempotent": true, "cache": 60 }`.
 - `perform` — an ordered list of write steps run once against the bound page, before the resolve tiers read the result back:
 
   ```jsonc
   "perform": [
-    { "fill": "#prompt-textarea", "value": "$message" },   // insertText, never value=
+    { "fill": "#prompt-textarea", "value": "$params.message" },   // insertText, never value=
     { "click": "[data-testid='send-button']" },
     { "press": "Enter" },
     { "drop": "#editor", "file": "path" },                  // the caller's file, dropped as if dragged in
@@ -366,25 +367,26 @@ responses. An LLM resolver declares the extraction prompt and optional snapshot 
 ### HTTP resolver
 
 An HTTP resolver fires its own requests instead of reading a page's. `request` is
-`"METHOD url-template"` (omitted, the tier GETs the lens `url`); `items` and `map`
-shape the parsed body exactly as in an intercept tier, and `matches` sees
-`{status, url, body}`. `headers` adds request headers, with the same `{param}` holes
-as URLs. `body` supports JSON, plain text, multipart form data, and URL-encoded
-search parameters; its values are JSONata expressions over the declared params
-and any earlier source bindings:
+`{ "method": "GET", "url": "https://…/{params.id}" }` (omitted, the tier GETs the lens
+`url`); `items` selects rows from the reply's body, `$res.body`, and `map` shapes
+each row `$item`, exactly as in an intercept tier; `$res` is `{status, url, body}`
+everywhere, so `matches` reads `$res.status`. `headers` adds request headers, with the same `{params.name}`
+holes as URLs. `body` supports JSON, plain text, multipart form data, and URL-encoded
+search parameters; its values are JSONata expressions over `$params` and, in a chain,
+the earlier `$sources`:
 
 ```jsonc
 {
   "kind": "http",
-  "request": "POST https://example.com/api/messages",
+  "request": { "method": "POST", "url": "https://example.com/api/messages" },
   "credentials": true,
-  "body": { "json": "{ 'message': $message }" }
+  "body": { "json": "{ 'message': $params.message }" }
 }
 
 // Other encodings:
-{ "body": { "text": "$message" } }
-{ "body": { "form": { "message": "$message", "tag": "['a', 'b']" } } }
-{ "body": { "search": { "message": "$message" } } }
+{ "body": { "text": "$params.message" } }
+{ "body": { "form": { "message": "$params.message", "tag": "['a', 'b']" } } }
+{ "body": { "search": { "message": "$params.message" } } }
 ```
 
 A body may be declared on a single request or on each entry in `sources`.
@@ -396,11 +398,11 @@ repeated fields.
   "kind": "http",
   "credentials": true,
   "sources": {
-    "orgs":  { "request": "GET https://claude.ai/api/organizations" },
-    "usage": { "request": "GET https://claude.ai/api/organizations/{orgs.0.uuid}/usage" }
+    "orgs":  { "request": { "method": "GET", "url": "https://claude.ai/api/organizations" } },
+    "usage": { "request": { "method": "GET", "url": "https://claude.ai/api/organizations/{sources.orgs.body.0.uuid}/usage" } }
   },
-  "exceptions": { "needs_auth": { "matches": "$orgs.status = 401 or $orgs.status = 403" } },
-  "map": { "plan": "$orgs[0].rate_limit_tier", "limits": "[$usage.limits]" }
+  "exceptions": { "needs_auth": { "matches": "$sources.orgs.status = 401 or $sources.orgs.status = 403" } },
+  "map": { "plan": "$sources.orgs.body[0].rate_limit_tier", "limits": "[$sources.usage.body.limits]" }
 }
 ```
 
@@ -415,13 +417,15 @@ repeated fields.
   page exists, the call fails before transmission with
   `code: "required_backend_unavailable"`.
 - A source may override the resolver's `credentials` and declare `headers` whose
-  JSONata values can reference earlier bindings (for example
-  `{ "X-CSRF-Token": "$confirmation.token" }`). Resolver-level headers remain
-  URL-style templates shared by every source.
-- `sources` chains requests in declaration order. Each binds its body as `$name`
-  for `map` and `matches`, and later request templates address earlier bodies with
-  dotted holes — `{orgs.0.uuid}` — which is how an id only another response knows
-  reaches a URL. A detected outcome or non-2xx status stops the chain.
+  JSONata values can reference earlier sources (for example
+  `{ "X-CSRF-Token": "$sources.confirmation.body.token" }`). Resolver-level headers remain
+  `{params.name}` templates shared by every source.
+- `sources` chains requests in declaration order. Each binds its reply,
+  `{status, url, body}`, as `$sources.name` for `map` and for later sources (its
+  `body` is what the source's `items` selected), and later request URLs address
+  earlier bodies with holes — `{sources.orgs.body.0.uuid}` — which is how an id only
+  another response knows reaches a URL. Tier `matches` see the same shape, with
+  the body as received. A detected outcome or non-2xx status stops the chain.
 - Read-only and explicitly idempotent request failures may miss into later tiers.
   An ambiguous failure from a non-idempotent mutation is a call error and is never
   resent through another resolver.
@@ -441,7 +445,7 @@ to that element; without it, fields are resolved once against the whole document
     "url": { "selector": ".titleline > a", "attr": "href" },
     "score": { "selector": ".score", "scope": "+" }
   },
-  "post": "[$.{ 'title': title, 'points': $number($substringBefore(score, ' ')) }]"
+  "post": "[$value.{ 'title': title, 'points': $number($substringBefore(score, ' ')) }]"
 }
 ```
 
@@ -461,11 +465,12 @@ Each field spec supports:
   the older spelling of `"scope": "+"` and still works.
 
 `url` and every selector — `item`, a field's `selector`, and its `scope` —
-expand `{name}` holes from declared params.
+expand `{params.name}` holes from declared params.
 
 A field that matches nothing is `null`. A tier that extracts nothing (or an empty
-item list) misses and falls through to the next tier. `matches` sees `{url, title}`,
-and `post` is a JSONata expression applied to the extracted value.
+item list) misses and falls through to the next tier. `matches` sees `$page`
+(`{url, title}`) and, for the tier's own exceptions, `$value`; `post` is a JSONata
+expression over `$value`, the extracted value.
 
 Run `pok lens validate` to validate every document under `examples/`.
 

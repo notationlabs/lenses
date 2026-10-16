@@ -63,7 +63,8 @@ async function runPerform(
   // cheapest way to read url/title.
   if (Object.values(spec.exceptions ?? {}).some((entry) => typeof entry?.matches === "string")) {
     const { url, title } = await io.domExtract({ kind: "dom" });
-    const outcome = await matchPageException(spec, { url, title }, params, "dom");
+    const page = { url, title };
+    const outcome = await matchPageException(spec, page, { page, params }, "dom");
     if (outcome) return outcome;
   }
   // Expressions are the document's trust boundary: they resolve here, so a
@@ -73,7 +74,7 @@ async function runPerform(
   // treats an empty source string as a syntax error. This applies equally to
   // fill values and native form fields.
   const performValue = (expr: string) =>
-    expr === "" ? Promise.resolve("") : evaluate(expr, params, params, spec.helpers);
+    expr === "" ? Promise.resolve("") : evaluate(expr, { params }, spec.helpers);
   for (const step of perform) {
     if ("fill" in step) {
       const value = await performValue(step.value);
@@ -136,12 +137,8 @@ async function runPerform(
   }
   // A wait that times out on a login wall is not a broken selector: the
   // document's exceptions name the landed page before perform_failed does.
-  const detected = await matchPageException(
-    spec,
-    { url: result.url, title: result.title },
-    params,
-    "dom"
-  );
+  const landed = { url: result.url, title: result.title };
+  const detected = await matchPageException(spec, landed, { page: landed, params }, "dom");
   if (detected) return detected;
   io.log?.(`perform failed at step ${result.failedStep}`);
   return {

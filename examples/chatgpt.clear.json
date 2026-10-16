@@ -34,7 +34,7 @@
           "selector": "[data-turn]"
         }
       },
-      "post": "{ 'cleared': composer != null and turn = null }"
+      "post": "{ 'cleared': $value.composer != null and $value.turn = null }"
     },
     {
       "kind": "llm",

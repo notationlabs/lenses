@@ -2,17 +2,35 @@
  * Canonical JSON lens spec. Every executable field (`map`, `matches`, `items`,
  * `post`) is a JSONata expression string, never JavaScript — the host can
  * therefore trust the `effects` declaration without parsing per-site code.
+ *
+ * Expressions are evaluated with no input context: every path starts at a
+ * named variable (`$res`, `$item`, `$sources`, `$params`, `$value`,
+ * `$page`), and which of them a site binds is fixed per site — see
+ * `checkExpressionsAndTemplates` in validate.ts and the table in skill/SKILL.md. Templates (`url`, request URLs,
+ * selectors) take rooted holes: `{params.id}`, and in chained http sources
+ * `{sources.orgs.0.uuid}`.
  */
 
 export type ExprString = string; // a JSONata expression
+
+/** An HTTP request (http tier) or request pattern (intercept tier). */
+export interface RequestSpec {
+  /** HTTP method, e.g. "GET" or "POST"; matched case-insensitively. */
+  method: string;
+  /**
+   * URL template with `{params.name}` holes (http sources also take
+   * `{sources.name.path}`); for intercept, a `*`-only glob.
+   */
+  url: string;
+}
 
 export interface LensSpec {
   /** Globally scoped name, e.g. "@djgrant/hn/top". */
   name: string;
   description?: string;
-  /** Canonical page URL. Named holes are expanded from call parameters. */
+  /** Canonical page URL. `{params.name}` holes are expanded from call parameters. */
   url: string;
-  /** Inputs available to URL expansion and every resolver expression. */
+  /** Inputs, read as `{params.name}` in templates and `$params.name` in expressions. */
   params?: Record<string, LensParam>;
   /** Maximum time to wait for the target page to finish loading, in milliseconds. */
   loadTimeoutMs?: number;
@@ -36,7 +54,8 @@ export interface LensSpec {
    */
   ready?: string;
   /** JSON-schema-ish shape of the return value. Fields whose value is
-   *  {"$lens": "<lens-name>", "params": {"key": "<jsonata expr>"}} are lens references. */
+   *  {"$lens": "<lens-name>", "params": {"key": "<jsonata expr>"}} are lens references;
+   *  their param expressions read the containing object as `$item`. */
   returns?: unknown;
   /** Named object schemas that `returns` can reference via {"$ref": <name>};
    *  a def may reference itself, which is how a recursive shape (a comment
@@ -49,7 +68,8 @@ export interface LensSpec {
    * evaluates — `"norm": "function($s) { ... }"` is called as `$norm(x)`.
    * A catalogue supplies these to all its documents, so a fix to one is a fix
    * everywhere rather than an edit per document; a document's own definition of
-   * the same name wins. Declared params shadow a helper of the same name.
+   * the same name wins. A helper may not take a reserved variable name
+   * (response, item, sources, params, value, page).
    */
   helpers?: Record<string, ExprString>;
   effects: LensEffects;
@@ -66,7 +86,11 @@ export interface LensSpec {
 /** A null entry disables an inherited exception. */
 export type ExceptionMap = Record<string, ExceptionEntry | null>;
 export interface ExceptionEntry {
-  /** JSONata predicate evaluated against a page, response, or tier context. */
+  /**
+   * JSONata predicate over the site's variables: `$page` ({url, title}) for a
+   * page, `$res` ({status, url, body}) for a response, plus `$value` in a
+   * dom tier's own exceptions and `$sources` in a sources tier's own exceptions.
+   */
   matches?: ExprString | null;
   hint?: string;
   $lens?: string;
@@ -89,9 +113,9 @@ export interface PerformWait {
 }
 
 export type PerformStep =
-  | { fill: string; value: string } // value is a JSONata expression over params
+  | { fill: string; value: string } // value is a JSONata expression over $params
   | { click: string }
-  | { submit: string; form?: Record<string, ExprString> } // values resolve before requestSubmit()
+  | { submit: string; form?: Record<string, ExprString> } // $params expressions, resolved before requestSubmit()
   | { press: string } // named key, e.g. "Enter"
   | { drop: string; file: string } // file names a string param; hosts receive its absolute path
   | { wait: PerformWait }
@@ -150,26 +174,26 @@ export type Resolver = HttpResolver | InterceptResolver | DomResolver | LlmResol
  */
 export interface HttpResolver {
   kind: "http";
-  /** "METHOD url-template" with named holes, e.g. "GET https://api.example.com/items/{id}".
+  /** e.g. {"method": "GET", "url": "https://api.example.com/items/{params.id}"}.
    *  Omitted (and without `sources`), the resolver GETs the lens's canonical `url`. */
-  request?: string;
-  /** Request body for the single-request form. Each value is JSONata over params. */
+  request?: RequestSpec;
+  /** Request body for the single-request form. Each value is JSONata over `$params`. */
   body?: HttpBody;
   /**
-   * Chain several requests, fired in declaration order. Each source binds its
-   * body (through its `items` expression) as a JSONata variable `$name` for
-   * `map` and `matches`; a source whose bound value is a scalar also fills
-   * `{name}` holes in the request templates of the sources after it — which is
-   * how an id only another response knows (an organisation UUID) reaches a URL.
+   * Chain several requests, fired in declaration order. Each source's body
+   * (through its `items` expression) is bound as `$sources.name` for `map`,
+   * and for the bodies, headers, `items` and `{sources.name…}` URL holes of
+   * the sources after it — which is how an id only another response knows (an
+   * organisation UUID) reaches a URL.
    */
   sources?: Record<string, HttpSource>;
-  /** extra request headers; values take the same named holes as `request` */
+  /** extra request headers; values are templates with `{params.name}` holes */
   headers?: Record<string, string>;
   /** Browser credential/context requirement, inherited by chained sources. */
   credentials?: HttpCredentials;
-  /** JSONata over the parsed response body producing the working value */
+  /** JSONata over `$res` (the parsed body) selecting the rows `map` shapes */
   items?: ExprString;
-  /** JSONata (or per-field object) over the working value */
+  /** JSONata (or object of them) over `$item` (with `items`) or `$res` */
   map?: MapSpec;
   /** Tier-specific exceptions, evaluated before document exceptions. */
   exceptions?: ExceptionMap;
@@ -184,13 +208,13 @@ export type HttpBody =
 
 /** One named direct request in an HTTP chain. */
 export interface HttpSource {
-  request: string;
+  request: RequestSpec;
   body?: HttpBody;
   /** Override the resolver's browser credential/context requirement for this request. */
   credentials?: HttpCredentials;
-  /** Header values are JSONata evaluated with earlier source bindings available. */
+  /** Header values are JSONata over `$params` and earlier `$sources`. */
   headers?: Record<string, ExprString>;
-  /** JSONata over the parsed response body producing this source's bound value */
+  /** JSONata over `$res` (this source's parsed body) producing its bound value */
   items?: ExprString;
 }
 
@@ -198,33 +222,37 @@ export type HttpCredentials = boolean | "same-origin-page";
 
 /** One named network response to capture within an intercept tier. */
 export interface InterceptSource {
-  /** "METHOD urlglob", e.g. "GET https://api.github.com/repos/*\/releases/latest" */
-  request: string;
-  /** JSONata over the parsed response body producing this source's bound value */
+  /** e.g. {"method": "GET", "url": "https://api.github.com/repos/*\/releases/latest"} */
+  request: RequestSpec;
+  /** JSONata over `$res` (this source's parsed body) producing its bound value */
   items?: ExprString;
 }
 
 /**
  * A map projection: either a single JSONata expression producing the whole
- * result, or an object whose values are per-field JSONata expressions. The
- * object form lets each field draw from a different source binding.
+ * result, or an object whose values are per-field JSONata expressions or,
+ * recursively, nested objects of them. Constants are JSONata literals
+ * (`"'base64'"`, `"true"`).
  */
-export type MapSpec = ExprString | Record<string, ExprString>;
+export type MapSpec = ExprString | MapObject;
+export interface MapObject {
+  [field: string]: MapSpec;
+}
 
 export interface InterceptResolver {
   kind: "intercept";
-  /** Single-source shorthand: "METHOD urlglob". Omit when using `sources`. */
-  request?: string;
+  /** Single-source form: {"method", "url": urlglob}. Omit when using `sources`. */
+  request?: RequestSpec;
   /**
-   * Compose several captured responses. Each key binds that source's body as a
-   * JSONata variable ($name), so `map` can join across responses:
-   * `"stars_per_day": "$repo.stars / $release.age_days"`. All sources must be
-   * captured, or the tier misses as a whole.
+   * Compose several captured responses. Each key binds that source's body as
+   * `$sources.name`, so `map` can join across responses:
+   * `"stars_per_day": "$sources.repo.stars / $sources.release.age_days"`. All
+   * sources must be captured, or the tier misses as a whole.
    */
   sources?: Record<string, InterceptSource>;
-  /** JSONata over the parsed response body producing the working value (single-source) */
+  /** JSONata over `$res` (the parsed body) selecting the rows `map` shapes */
   items?: ExprString;
-  /** JSONata (or per-field object) over the working value / source bindings */
+  /** JSONata (or object of them) over `$item`/`$res`, or `$sources` */
   map?: MapSpec;
   /** Tier-specific exceptions, evaluated before document exceptions. */
   exceptions?: ExceptionMap;
@@ -256,7 +284,7 @@ export interface DomResolver {
   /** if set, extract one object per matching element */
   item?: string;
   fields?: Record<string, DomFieldSpec>;
-  /** JSONata applied to the extracted value */
+  /** JSONata over `$value`, the extracted value */
   post?: ExprString;
 }
 

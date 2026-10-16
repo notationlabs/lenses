@@ -27,10 +27,10 @@
           "selector": "body"
         }
       },
-      "post": "$contains(page, 'All caught up!') ? [] : $lookup({}, 'missing')",
+      "post": "$contains($value.page, 'All caught up!') ? [] : $lookup({}, 'missing')",
       "exceptions": {
         "needs_auth": {
-          "matches": "$contains(url, '/login') or $contains(title, 'Sign in')"
+          "matches": "$contains($page.url, '/login') or $contains($page.title, 'Sign in')"
         }
       }
     },

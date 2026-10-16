@@ -30,7 +30,7 @@ describe("deriveJsonSchema", () => {
         fields: {
           title: "string",
           resets_at: { type: "string", nullable: true },
-          next_page: { $lens: "@example/web/page", params: { p: "p" } },
+          next_page: { $lens: "@example/web/page", params: { p: "$item.p" } },
         },
       })
     );

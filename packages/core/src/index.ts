@@ -1,7 +1,8 @@
 export * from "./types.js";
 export { executeLens, paramLensDefault, resolveParams } from "./engine.js";
 export { pageNeedsUser } from "./resolvers/outcome.js";
-export { evaluate, evaluateBool } from "./expr.js";
+export { evaluate, evaluateBool, type ExprVars } from "./expr.js";
+export { checkExpression, checkTemplate, RESERVED_VARIABLES, type ExprSite, type TemplateSite } from "./expr-check.js";
 export { materialiseLenses } from "./materialise.js";
 export { expandUrl, matchRequestPattern, matchUrlGlob, sameGatePlace, sameTarget, urlOrigin } from "./url-pattern.js";
 export type { AuthGate } from "./url-pattern.js";

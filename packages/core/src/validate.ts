@@ -1,8 +1,23 @@
 import * as z from "zod/v4";
 import { httpRequestMethod, httpResolverWrites } from "./http-request.js";
-import type { LensSpec } from "./types.js";
+import { checkExpression, checkTemplate, RESERVED_VARIABLES, type ExprSite, type ReservedVariable } from "./expr-check.js";
+import type { ExceptionMap, HttpBody, HttpSource, LensSpec, MapSpec } from "./types.js";
+import { HOLE } from "./url-pattern.js";
 
 const expression = z.string();
+const REQUEST_HINT =
+  'must be an object {"method": "GET", "url": "https://…/{params.id}"}; the "METHOD url" string form is removed';
+const requestSchema = z.strictObject(
+  {
+    method: z.string().regex(/^[A-Za-z]+$/, { message: 'must be an HTTP method such as "GET"' }),
+    url: z.string(),
+  },
+  { error: (issue) => (typeof issue.input === "string" ? REQUEST_HINT : undefined) }
+);
+/** A map: one expression, or an object of expressions and nested objects. */
+const mapSchema: z.ZodType<MapSpec> = z.lazy(() =>
+  z.union([expression, z.record(z.string(), mapSchema)])
+);
 export const exceptionEntrySchema = z.strictObject({
   matches: expression.nullable().optional(),
   hint: z.string().optional(),
@@ -15,7 +30,32 @@ export const exceptionsSchema = z.record(z.string(), exceptionEntrySchema.nullab
 export function validateExceptions(raw: unknown): LensSpec["exceptions"] {
   const result = exceptionsSchema.safeParse(raw);
   if (!result.success) throw new Error(`invalid scope exceptions: ${result.error.message}`);
+  for (const [name, entry] of Object.entries(result.data)) {
+    for (const [label, expr] of exceptionExpressions(name, entry)) {
+      const error = checkExpression(expr, { label, vars: DOCUMENT_EXCEPTION_VARS });
+      if (error) throw new Error(`invalid scope exceptions: ${error}`);
+    }
+  }
   return result.data;
+}
+
+/**
+ * A document (or catalog scope) exception runs against every page and every
+ * response, so it may read either; the one not being checked is undefined.
+ */
+const DOCUMENT_EXCEPTION_VARS: readonly ReservedVariable[] = ["page", "res", "params"];
+
+function exceptionExpressions(
+  name: string,
+  entry: NonNullable<ExceptionMap[string]> | null
+): [string, string][] {
+  if (!entry) return [];
+  return [
+    ...(typeof entry.matches === "string" ? [[`exceptions.${name}.matches`, entry.matches] as [string, string]] : []),
+    ...Object.entries(entry.params ?? {}).map(
+      ([key, expr]) => [`exceptions.${name}.params.${key}`, expr] as [string, string]
+    ),
+  ];
 }
 const bodyFields = z.record(z.string(), expression);
 const httpBodySchema = z.union([
@@ -26,7 +66,7 @@ const httpBodySchema = z.union([
 ]);
 const credentials = z.union([z.boolean(), z.literal("same-origin-page")]);
 const httpSourceSchema = z.strictObject({
-  request: z.string(),
+  request: requestSchema,
   body: httpBodySchema.optional(),
   credentials: credentials.optional(),
   headers: z.record(z.string(), expression).optional(),
@@ -36,14 +76,17 @@ const httpSourceSchema = z.strictObject({
 const httpSchema = z
   .strictObject({
     kind: z.literal("http"),
-    request: z.string().optional(),
+    request: requestSchema.optional(),
     body: httpBodySchema.optional(),
     sources: z.record(z.string(), httpSourceSchema).optional(),
     headers: z.record(z.string(), z.string()).optional(),
     credentials: credentials.optional(),
     items: expression.optional(),
-    map: z.union([expression, z.record(z.string(), expression)]).optional(),
+    map: mapSchema.optional(),
     exceptions: exceptionsSchema.optional(),
+  })
+  .refine((resolver) => !(resolver.items !== undefined && resolver.sources), {
+    message: 'http resolver "items" belongs on each source when "sources" is used',
   })
   .refine((resolver) => !(resolver.request && resolver.sources), {
     message: 'http resolver takes either "request" or "sources", not both',
@@ -56,17 +99,17 @@ const httpSchema = z
   });
 
 const sourceSchema = z.strictObject({
-  request: z.string(),
+  request: requestSchema,
   items: expression.optional(),
 });
 
 const interceptSchema = z
   .strictObject({
     kind: z.literal("intercept"),
-    request: z.string().optional(),
+    request: requestSchema.optional(),
     sources: z.record(z.string(), sourceSchema).optional(),
     items: expression.optional(),
-    map: z.union([expression, z.record(z.string(), expression)]).optional(),
+    map: mapSchema.optional(),
     exceptions: exceptionsSchema.optional(),
     reloadOnMiss: z.boolean().optional(),
     waitMs: z.number().int().nonnegative().optional(),
@@ -76,6 +119,9 @@ const interceptSchema = z
   })
   .refine((resolver) => !resolver.sources || Object.keys(resolver.sources).length > 0, {
     message: 'intercept resolver "sources" must not be empty',
+  })
+  .refine((resolver) => !(resolver.items !== undefined && resolver.sources), {
+    message: 'intercept resolver "items" belongs on each source when "sources" is used',
   });
 
 const domFieldSchema = z.strictObject({
@@ -317,84 +363,7 @@ export function validateSpec(raw: unknown): LensSpec {
       throw new Error(`invalid lens spec:\n  "$ref": "${ref}" names no entry in "$defs"`);
     }
   }
-  const holesIn = (template: string) =>
-    [...template.matchAll(/\{([a-zA-Z_][a-zA-Z0-9_]*)\}/g)].map((match) => match[1]);
-  for (const hole of holesIn(result.data.url)) {
-    if (!result.data.params?.[hole]) {
-      throw new Error(`invalid lens spec:\n  URL parameter "${hole}" is not declared`);
-    }
-  }
-  // http request templates and header values take the same holes; a chained
-  // source's request may also name any source declared before it.
-  for (const resolver of result.data.resolve) {
-    if (resolver.kind !== "http") continue;
-    const bindable = new Set(Object.keys(result.data.params ?? {}));
-    const check = (template: string) => {
-      const bases = [
-        ...holesIn(template),
-        // Dotted holes ({orgs.0.uuid}) bind from the named source's body.
-        ...[...template.matchAll(/\{([a-zA-Z_][a-zA-Z0-9_]*)(?:\.[a-zA-Z0-9_]+)+\}/g)].map(
-          (match) => match[1]
-        ),
-      ];
-      for (const hole of bases) {
-        if (!bindable.has(hole)) {
-          throw new Error(`invalid lens spec:\n  http parameter "${hole}" is not declared`);
-        }
-      }
-    };
-    for (const template of Object.values(resolver.headers ?? {})) check(template);
-    if (resolver.request) check(resolver.request);
-    for (const [name, source] of Object.entries(resolver.sources ?? {})) {
-      check(source.request);
-      bindable.add(name);
-    }
-  }
-  // Intercept request patterns take the same holes; an undeclared one would
-  // keep its braces and never match a capture.
-  for (const resolver of result.data.resolve) {
-    if (resolver.kind !== "intercept") continue;
-    const patterns = [
-      ...(resolver.request ? [resolver.request] : []),
-      ...Object.values(resolver.sources ?? {}).map((source) => source.request),
-    ];
-    for (const pattern of patterns) {
-      for (const hole of holesIn(pattern)) {
-        if (!result.data.params?.[hole]) {
-          throw new Error(`invalid lens spec:\n  intercept parameter "${hole}" is not declared`);
-        }
-      }
-    }
-  }
-  // DOM and perform selectors take the same holes. Catching an undeclared one
-  // here beats a selector that silently keeps its braces and misses at runtime.
-  const selectors: string[] = [];
-  for (const resolver of result.data.resolve) {
-    if (resolver.kind !== "dom") continue;
-    selectors.push(
-      ...(resolver.item ? [resolver.item] : []),
-      ...Object.values(resolver.fields ?? {}).flatMap((field) =>
-        field.scope ? [field.selector, field.scope] : [field.selector]
-      )
-    );
-  }
-  for (const step of result.data.perform ?? []) {
-    if ("fill" in step) selectors.push(step.fill);
-    else if ("click" in step) selectors.push(step.click);
-    else if ("submit" in step) selectors.push(step.submit);
-    else if ("drop" in step) selectors.push(step.drop);
-    else if ("wait" in step) {
-      const selector = step.wait.appears ?? step.wait.gone ?? step.wait.increases;
-      if (selector !== undefined) selectors.push(selector);
-    }
-  }
-  for (const selector of selectors) {
-    for (const hole of holesIn(selector)) {
-      if (!result.data.params?.[hole]) {
-        throw new Error(`invalid lens spec:\n  selector parameter "${hole}" is not declared`);
-      }
-    }
-  }
+  checkExpressionsAndTemplates(result.data);
   // A drop reads a local file into the page, so its path must come from the
   // caller: a declared string param with no default, never a document literal.
   for (const step of result.data.perform ?? []) {
@@ -486,11 +455,187 @@ export function validateSpec(raw: unknown): LensSpec {
       );
     }
   }
-  const checkUrl = result.data.url.replace(/\{[a-zA-Z_][a-zA-Z0-9_]*\}/g, "value");
+  const checkUrl = result.data.url.replace(HOLE, "value");
   try {
     new URL(checkUrl);
   } catch {
     throw new Error("invalid lens spec:\n  url must be an absolute URL template");
   }
   return result.data;
+}
+
+/**
+ * Every expression is checked against the variables its site binds, and every
+ * template against the holes its site can fill. Which variables a site binds
+ * is the language's contract; SKILL.md's variable table mirrors this function.
+ */
+function checkExpressionsAndTemplates(spec: LensSpec): void {
+  const params = Object.keys(spec.params ?? {});
+  const helpers = Object.keys(spec.helpers ?? {});
+  const fail = (message: string): never => {
+    throw new Error(`invalid lens spec:\n  ${message}`);
+  };
+  const expr = (
+    source: string | null | undefined,
+    site: Omit<ExprSite, "helpers" | "params">
+  ) => {
+    if (typeof source !== "string") return;
+    const error = checkExpression(source, { ...site, helpers, params });
+    if (error) fail(error);
+  };
+  const map = (
+    spec: MapSpec | undefined,
+    label: string,
+    site: Omit<ExprSite, "helpers" | "params" | "label">
+  ) => {
+    if (spec === undefined) return;
+    if (typeof spec === "string") return expr(spec, { ...site, label });
+    for (const [field, inner] of Object.entries(spec)) map(inner, `${label}.${field}`, site);
+  };
+  const template = (source: string | undefined, label: string, sources?: string[], allSources?: string[]) => {
+    if (source === undefined) return;
+    const error = checkTemplate(source, { label, params, sources, allSources });
+    if (error) fail(error);
+  };
+
+  for (const name of helpers) {
+    if ((RESERVED_VARIABLES as readonly string[]).includes(name)) {
+      fail(`helper "${name}" takes a reserved variable name ($${name})`);
+    }
+    // Helper bodies are lambdas compiled on their own: they read only their arguments.
+    const error = checkExpression(spec.helpers![name], { label: `helpers.${name}`, vars: [] });
+    if (error) fail(error);
+  }
+
+  template(spec.url, "url");
+
+  const tierVars = (resolver: LensSpec["resolve"][number]): readonly ReservedVariable[] =>
+    resolver.kind === "dom"
+      ? ["page", "value", "params"]
+      : "sources" in resolver && resolver.sources
+        ? ["sources", "params"]
+        : ["res", "params"];
+  const exceptions = (
+    entries: ExceptionMap | undefined,
+    prefix: string,
+    vars: readonly ReservedVariable[],
+    sources?: string[]
+  ) => {
+    for (const [name, entry] of Object.entries(entries ?? {})) {
+      if (!entry) continue;
+      // A tier entry without its own predicate lends its params to the
+      // inherited one, which runs against a page or response.
+      const ownMatches = typeof entry.matches === "string";
+      for (const [label, source] of exceptionExpressions(name, entry)) {
+        const isParams = !label.endsWith(".matches");
+        const siteVars = isParams && !ownMatches
+          ? [...new Set([...vars, ...DOCUMENT_EXCEPTION_VARS])]
+          : vars;
+        expr(source, { label: `${prefix}${label}`, vars: siteVars, sources, allSources: sources });
+      }
+    }
+  };
+  exceptions(spec.exceptions, "", DOCUMENT_EXCEPTION_VARS);
+
+  // $lens reference params read the object the reference sits in, as $item.
+  const refs = (schema: unknown, path: string): void => {
+    if (schema === null || typeof schema !== "object") return;
+    if (Array.isArray(schema)) return schema.forEach((inner, index) => refs(inner, `${path}/${index}`));
+    const record = schema as Record<string, unknown>;
+    if (typeof record.$lens === "string" && record.params && typeof record.params === "object") {
+      for (const [key, source] of Object.entries(record.params as Record<string, string>)) {
+        expr(source, { label: `${path} $lens params.${key}`, vars: ["item", "params"] });
+      }
+      return;
+    }
+    for (const [key, inner] of Object.entries(record)) refs(inner, `${path}/${key}`);
+  };
+  refs(spec.returns, "returns");
+  refs(spec.$defs, "$defs");
+
+  spec.perform?.forEach((step, index) => {
+    const at = `perform[${index}]`;
+    if ("fill" in step) {
+      template(step.fill, `${at}.fill`);
+      if (step.value !== "") expr(step.value, { label: `${at}.value`, vars: ["params"] });
+    } else if ("click" in step) template(step.click, `${at}.click`);
+    else if ("submit" in step) {
+      template(step.submit, `${at}.submit`);
+      for (const [field, source] of Object.entries(step.form ?? {})) {
+        if (source !== "") expr(source, { label: `${at}.form.${field}`, vars: ["params"] });
+      }
+    } else if ("drop" in step) template(step.drop, `${at}.drop`);
+    else if ("wait" in step) {
+      template(step.wait.appears ?? step.wait.gone ?? step.wait.increases, `${at}.wait`);
+    }
+  });
+
+  spec.resolve.forEach((resolver, index) => {
+    const at = `resolve[${index}]`;
+    if (resolver.kind === "llm") return;
+    const sourceNames = "sources" in resolver && resolver.sources ? Object.keys(resolver.sources) : undefined;
+    exceptions(resolver.exceptions, `${at}.`, tierVars(resolver), sourceNames);
+    if (resolver.kind === "dom") {
+      template(resolver.item, `${at}.item`);
+      for (const [name, field] of Object.entries(resolver.fields ?? {})) {
+        template(field.selector, `${at}.fields.${name}.selector`);
+        template(field.scope, `${at}.fields.${name}.scope`);
+      }
+      expr(resolver.post, { label: `${at}.post`, vars: ["value", "params"] });
+      return;
+    }
+    if (resolver.kind === "http") {
+      for (const [name, value] of Object.entries(resolver.headers ?? {})) {
+        template(value, `${at}.headers.${name}`);
+      }
+    }
+    if (sourceNames) {
+      const earlier: string[] = [];
+      for (const name of sourceNames) {
+        const source = (resolver.sources as Record<string, HttpSource>)[name];
+        const sat = `${at}.sources.${name}`;
+        if (resolver.kind === "http") {
+          template(source.request.url, `${sat}.request.url`, [...earlier], sourceNames);
+          const site = { vars: ["sources", "params"] as ReservedVariable[], sources: [...earlier], allSources: sourceNames };
+          for (const [header, value] of Object.entries(source.headers ?? {})) {
+            expr(value, { ...site, label: `${sat}.headers.${header}` });
+          }
+          bodyExpressions(source.body).forEach(([label, value]) =>
+            expr(value, { ...site, label: `${sat}.body.${label}` })
+          );
+          expr(source.items, {
+            label: `${sat}.items`,
+            vars: ["res", "sources", "params"],
+            sources: [...earlier],
+            allSources: sourceNames,
+          });
+        } else {
+          template(source.request.url, `${sat}.request.url`);
+          expr(source.items, { label: `${sat}.items`, vars: ["res", "params"] });
+        }
+        earlier.push(name);
+      }
+      map(resolver.map, `${at}.map`, { vars: ["sources", "params"], sources: sourceNames, allSources: sourceNames });
+      return;
+    }
+    template(resolver.request?.url, `${at}.request.url`);
+    if (resolver.kind === "http") {
+      bodyExpressions(resolver.body).forEach(([label, source]) =>
+        expr(source, { label: `${at}.body.${label}`, vars: ["params"] })
+      );
+    }
+    expr(resolver.items, { label: `${at}.items`, vars: ["res", "params"] });
+    map(resolver.map, `${at}.map`, {
+      vars: resolver.items !== undefined ? ["item", "res", "params"] : ["res", "params"],
+    });
+  });
+}
+
+function bodyExpressions(body: HttpBody | undefined): [string, string][] {
+  if (!body) return [];
+  if ("json" in body) return [["json", body.json]];
+  if ("text" in body) return [["text", body.text]];
+  const fields = "form" in body ? body.form : body.search;
+  const kind = "form" in body ? "form" : "search";
+  return Object.entries(fields).map(([name, source]) => [`${kind}.${name}`, source]);
 }

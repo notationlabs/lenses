@@ -11,7 +11,7 @@ const globalHelp = `Usage:
   lens call <lens> [--params <json>] [--tab <id>] [--timeout-ms <number>] [--auth-lease-ms <number>] [--no-cache] [--lax] [--allow-writes]
   lens schema <lens>
   lens gen ts-sdk [<catalog> ...] [--out <file>]
-  lens eval <expression> [--input <file>] [--params <json>]
+  lens eval <expression> [--input <file>] [--as <variable>] [--params <json>]
   lens observe [<target>] [--tab <id>] [--request <index|pattern>] [--wait-ms <number>] [--timeout-ms <number>] [--html]
   lens status [--wait-ms <number>]
   lens broker <status|release|acquire|shutdown>
@@ -126,21 +126,27 @@ Example:
   eval: `Usage: lens eval <expression> [options]
 
 Evaluate a JSONata expression against local JSON, in the same sandbox a lens's
-map, post, and detect bodies run in. No browser or catalog needed — the offline
-way to iterate on an expression before putting it in a lens document.
+map, post, and matches expressions run in. No browser or catalog needed — the
+offline way to iterate on an expression before putting it in a lens document.
+
+As in a lens, the expression has no implicit input. By default the JSON is
+bound as a reply body, $res.body, as an http or intercept map sees it; --as
+binds it to another variable instead (--as value to test a dom post, --as item
+for a per-row map).
 
 Arguments:
   expression              A JSONata expression
 
 Options:
-  --input <file>          JSON file to evaluate against; reads stdin when piped
-  --params <json>         Lens parameters, bound as JSONata variables ($name)
+  --input <file>          JSON to bind; reads stdin when piped
+  --as <variable>         Variable the JSON is bound to (default: $res.body)
+  --params <json>         Lens parameters, bound as $params
   --help, -h              Show this help
 
 An expression that produces no result prints null and a stderr note.
 
 Example:
-  lens call hn/top | jq .value | lens eval '[stories.{ "t": title }]'
+  lens call hn/top | jq .value | lens eval --as value '[$value.stories.{ "t": title }]'
 `,
   observe: `Usage: lens observe [<target>] [options]
 
@@ -315,6 +321,7 @@ async function main(): Promise<void> {
       "no-cache": { type: "boolean" },
       "allow-writes": { type: "boolean" },
       input: { type: "string" },
+      as: { type: "string" },
       out: { type: "string", short: "o" },
       listen: { type: "string" },
       "max-calls": { type: "string" },
@@ -357,7 +364,13 @@ async function main(): Promise<void> {
         ? undefined
         : await readStdin();
     const data = source === undefined || source.trim() === "" ? undefined : JSON.parse(source);
-    const result = await evaluate(operands[0], data, params);
+    const name = values.as ?? "res";
+    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name) || name === "params") {
+      throw new Error(`--as must name a variable other than params, e.g. "value" or "item"`);
+    }
+    // Without --as the JSON is a reply body, bound where a lens map finds it.
+    const bound = values.as === undefined ? { body: data } : data;
+    const result = await evaluate(operands[0], { [name]: bound, params });
     if (result === undefined) {
       process.stderr.write("expression produced no result\n");
     }

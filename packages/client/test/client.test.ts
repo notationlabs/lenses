@@ -62,7 +62,7 @@ async function fixtureDirectory(
     join(directory, "example.json"),
     JSON.stringify({
       name: "@example/web/page",
-      url: parameterised ? "https://example.com/{page}" : "https://example.com/home",
+      url: parameterised ? "https://example.com/{params.page}" : "https://example.com/home",
       ...(parameterised ? { params: { page: "string" } } : {}),
       ...(returns !== undefined ? { returns } : {}),
       ...(exceptions !== undefined ? { exceptions } : {}),
@@ -115,7 +115,7 @@ describe("LensClient", () => {
         name: "@example/web/page",
         url: "https://example.com/home",
         effects: { reads: ["example.com"], writes: [] },
-        exceptions: { needs_auth: { matches: "$contains(url, '/sign-in')" } },
+        exceptions: { needs_auth: { matches: "$contains($page.url, '/sign-in')" } },
         resolve: [{ kind: "dom", fields: { title: { selector: "title" } } }],
       })
     );
@@ -453,7 +453,7 @@ describe("LensClient", () => {
 
     const vatSpec = (param: unknown) => ({
       name: "@example/hmrc/vat",
-      url: "https://example.com/vat/{vrn}",
+      url: "https://example.com/vat/{params.vrn}",
       params: { vrn: param },
       returns: { type: "object", fields: { total: "number" } },
       effects: { reads: ["example.com"], writes: [] },
@@ -602,7 +602,7 @@ describe("LensClient", () => {
     it("rejects a lens whose default chain re-enters itself", async () => {
       const selfSpec = {
         name: "@example/web/self",
-        url: "https://example.com/{x}",
+        url: "https://example.com/{params.x}",
         params: { x: { type: "string", default: { $lens: "@example/web/self", field: "x" } } },
         returns: { type: "object", fields: { x: "string" } },
         effects: { reads: ["example.com"], writes: [] },
@@ -619,7 +619,7 @@ describe("LensClient", () => {
     it("caps how deep a default chain may recurse", async () => {
       const chain = [0, 1, 2, 3, 4, 5].map((step) => ({
         name: `@example/web/step${step}`,
-        url: `https://example.com/step${step}/{x}`,
+        url: `https://example.com/step${step}/{params.x}`,
         params: {
           x:
             step === 5

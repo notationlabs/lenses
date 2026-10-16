@@ -1,16 +1,55 @@
-const HOLE = /\{([a-zA-Z_][a-zA-Z0-9_]*)\}/g;
+/** A template hole: `{params.id}`, `{sources.orgs.0.uuid}`. */
+export const HOLE = /\{([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z0-9_]+)*)\}/g;
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/** Expand a lens's canonical URL from its validated parameters. */
-export function expandUrl(template: string, params: Record<string, unknown>): string {
-  return template.replace(HOLE, (_, name: string) => {
-    const value = params[name];
-    if (value === undefined) throw new Error(`missing URL parameter "${name}"`);
-    return encodeURIComponent(String(value));
-  });
+/**
+ * What a template hole may read: `{params.name}` from the call parameters and,
+ * in a chained http source, `{sources.name.path}` from an earlier source.
+ */
+export interface HoleScope {
+  params: Record<string, unknown>;
+  sources?: Record<string, unknown>;
+}
+
+/** Resolve one hole's path to a scalar, or throw naming the hole. */
+function holeValue(path: string, scope: HoleScope, missing: string): string {
+  const [root, ...rest] = path.split(".");
+  if (rest.length === 0 || (root !== "params" && root !== "sources")) {
+    throw new Error(`template hole "{${path}}" must start with "params." or "sources."`);
+  }
+  if (root === "params" && !Object.hasOwn(scope.params, rest[0])) {
+    throw new Error(`${missing} "${rest[0]}"`);
+  }
+  let value: unknown = root === "params" ? scope.params : scope.sources;
+  for (const segment of rest) {
+    if (value === null || typeof value !== "object") value = undefined;
+    else value = (value as Record<string, unknown>)[segment];
+  }
+  if (value === undefined || value === null || typeof value === "object") {
+    throw new Error(`hole "{${path}}" did not resolve to a scalar`);
+  }
+  return String(value);
+}
+
+function fill(
+  template: string,
+  scope: HoleScope,
+  encode: (value: string) => string,
+  missing = "missing parameter"
+): string {
+  return template.replace(HOLE, (_, path: string) => encode(holeValue(path, scope, missing)));
+}
+
+/** Expand a URL template's `{params.name}` (and `{sources.…}`) holes, percent-encoded. */
+export function expandUrl(
+  template: string,
+  params: Record<string, unknown>,
+  sources?: Record<string, unknown>
+): string {
+  return fill(template, { params, sources }, encodeURIComponent, "missing URL parameter");
 }
 
 /**
@@ -19,29 +58,20 @@ export function expandUrl(template: string, params: Record<string, unknown>): st
  * another account's (or item's) requests.
  */
 export function expandRequestPattern(template: string, params: Record<string, unknown>): string {
-  return template.replace(HOLE, (_, name: string) => {
-    const value = params[name];
-    if (value === undefined) throw new Error(`missing parameter "${name}"`);
-    return encodeURIComponent(String(value)).replace(/\*/g, "%2A");
-  });
+  return fill(template, { params }, (value) => encodeURIComponent(value).replace(/\*/g, "%2A"));
 }
 
 /**
- * Expand the same named holes outside a URL, substituting the value verbatim.
+ * Expand the same holes outside a URL, substituting the value verbatim.
  * Percent-encoding is a URL's escape and means nothing to a CSS selector:
- * `#row-{year}` wants `#row-2024`, not `#row-2024` via encodeURIComponent's
- * rules for a different grammar. There is no one correct escape for a selector
- * either — an identifier position and a quoted attribute position want
- * different things — so the value goes in as written, and a lens that
- * interpolates a caller-supplied string should declare it as an integer where
- * it can.
+ * `#row-{params.year}` wants `#row-2024`, not encodeURIComponent's rules for a
+ * different grammar. There is no one correct escape for a selector either —
+ * an identifier position and a quoted attribute position want different
+ * things — so the value goes in as written, and a lens that interpolates a
+ * caller-supplied string should declare it as an integer where it can.
  */
 export function expandTemplate(template: string, params: Record<string, unknown>): string {
-  return template.replace(HOLE, (_, name: string) => {
-    const value = params[name];
-    if (value === undefined) throw new Error(`missing parameter "${name}"`);
-    return String(value);
-  });
+  return fill(template, { params }, (value) => value);
 }
 
 /**
@@ -91,11 +121,12 @@ export function matchUrlGlob(glob: string, url: string): boolean {
   return new RegExp("^" + glob.split("*").map(escapeRegex).join(".*") + "$").test(url);
 }
 
-/** Match "METHOD urlglob" request patterns against a captured response. */
-export function matchRequestPattern(pattern: string, method: string, url: string): boolean {
-  const space = pattern.indexOf(" ");
-  const pMethod = space === -1 ? "GET" : pattern.slice(0, space).toUpperCase();
-  const pUrl = space === -1 ? pattern : pattern.slice(space + 1);
-  if (pMethod !== method.toUpperCase()) return false;
-  return matchUrlGlob(pUrl, url);
+/** Match a {method, url-glob} request pattern against a captured response. */
+export function matchRequestPattern(
+  pattern: { method: string; url: string },
+  method: string,
+  url: string
+): boolean {
+  if (pattern.method.toUpperCase() !== method.toUpperCase()) return false;
+  return matchUrlGlob(pattern.url, url);
 }

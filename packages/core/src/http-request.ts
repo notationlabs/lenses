@@ -1,10 +1,8 @@
-import type { HttpResolver, LensSpec } from "./types.js";
+import type { HttpResolver, LensSpec, RequestSpec } from "./types.js";
 
-/** Extract the declared method; request strings without one are GETs. */
-export function httpRequestMethod(request?: string): string {
-  if (!request) return "GET";
-  const space = request.indexOf(" ");
-  return space === -1 ? "GET" : request.slice(0, space).toUpperCase();
+/** The request's declared method, upper-cased; an omitted request is a GET of the lens URL. */
+export function httpRequestMethod(request?: RequestSpec): string {
+  return request ? request.method.toUpperCase() : "GET";
 }
 
 /** Methods with defined read-only semantics. Unknown methods fail closed as writes. */
