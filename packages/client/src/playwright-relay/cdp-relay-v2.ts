@@ -36,10 +36,6 @@ export class ExtensionProtocolV2 {
     return this._model.tabLink(tabId);
   }
 
-  reattachTab(tabId: number): Promise<TabLink | undefined> {
-    return this._model.reattachTab(tabId);
-  }
-
   onTabLinkChange(listener: (tabId: number, link: TabLink) => void): void {
     this._model.onTabLinkChange(listener);
   }

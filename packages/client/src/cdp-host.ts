@@ -111,8 +111,6 @@ export interface CdpTransport {
    * transport's group, out of the group, or closed. Undefined when unknown.
    */
   tabLink?(key: string): TabLink | undefined;
-  /** One attempt to re-attach a detached tab still in the group; never one outside it. */
-  reattach?(key: string): Promise<TabLink | undefined>;
   onTabLinkChange?(listener: (key: string, link: TabLink) => void): () => void;
   /** Transport cleanup before a session or temporary page is released. */
   preparePageRelease?(
@@ -409,10 +407,12 @@ export function createCdpBackend(
 
   /**
    * The live page for a keyed tab. A tab the debugger lost while it stays in
-   * the group (see TabDisconnected) is never forgotten: it gets one re-attach
-   * attempt, and if that fails it throws TabDisconnected and is recorded as a
-   * sign-in gate, so the auth wait watches it instead of opening another tab.
-   * Undefined means the tab is closed or out of the group.
+   * the group (see TabDisconnected) is never forgotten: it throws
+   * TabDisconnected and is recorded as a sign-in gate, so the auth wait
+   * watches it instead of opening another tab. Only the extension re-attaches
+   * it (after a detach, or when its URL changes): the extension groups any
+   * tab it attaches, so an attach from here could pull a tab the user dragged
+   * out back in. Undefined means the tab is closed or out of the group.
    */
   async function recoverTab(
     current: Browser,
@@ -423,20 +423,19 @@ export function createCdpBackend(
     const live = await pageForKey(current, key);
     if (live) return live;
     const link = transport.tabLink?.(key);
-    if (link?.state !== "disconnected") return undefined;
-    const after = (await transport.reattach?.(key)) ?? link;
-    if (after.state === "connected") {
+    if (link?.state === "connected") {
+      // Attached a moment ago; Puppeteer has not heard yet.
       const page = await awaitPageForKey(current, key);
       if (page) return page;
-    } else if (after.state !== "disconnected") {
+    } else if (link?.state !== "disconnected") {
       return undefined;
     }
     const id = `t${key}`;
     const kept = keptGates.get(key);
     const url = kept?.page?.url() ?? lastPage?.url() ?? target ?? "about:blank";
     if (!kept) keptGates.set(key, { page: lastPage, target: target ?? url, keptUrl: url, detached: true });
-    log(`tab ${id} is detached from the debugger: ${after.lastError ?? "waiting for it to re-attach"}`);
-    throw new TabDisconnected(id, url, after.lastError);
+    log(`tab ${id} is detached from the debugger: ${link.lastError ?? "waiting for it to re-attach"}`);
+    throw new TabDisconnected(id, url, link.lastError);
   }
 
   /** Puppeteer hears of a re-attached tab over the relay socket, a moment after the relay attaches it. */
@@ -925,8 +924,8 @@ export function createCdpBackend(
         throw error;
       }
       if (await findPage(browser, target)) return true;
-      // A kept sign-in tab the debugger lost gets its one re-attach attempt
-      // per check too; TabDisconnected reports it still detached.
+      // A kept sign-in tab the debugger lost is reported as still detached
+      // (TabDisconnected), with the extension's last re-attach error.
       for (const [key, kept] of keptGates) {
         if (urlOrigin(kept.target) !== urlOrigin(target)) continue;
         if (await gatePage(browser, key, kept) !== "detached") continue;
@@ -946,7 +945,7 @@ export function createCdpBackend(
         }
         if (urlOrigin(kept.target) !== origin) continue;
         // A detached tab blocks the site only while a call waits on it; a
-        // fresh call should instead try to re-attach it.
+        // fresh call reports it detached itself, with the latest error.
         if (page === "detached" || kept.detached) {
           if (watched) return { url: page === "detached" ? kept.page?.url() ?? kept.keptUrl : page.url(), target: kept.target };
           continue;

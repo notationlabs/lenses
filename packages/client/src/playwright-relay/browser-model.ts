@@ -51,6 +51,8 @@ type TabState = {
   inGroup?: boolean;
   /** The debugger let go and the extension never asked for it back: the user dragged it out. */
   removed?: boolean;
+  /** When the debugger last let go of the tab. */
+  lastDetachAt?: number;
   /** Why the last attach failed, verbatim from Chrome. */
   lastError?: string;
   removalTimer?: ReturnType<typeof setTimeout>;
@@ -62,7 +64,14 @@ type TabState = {
  * password manager's fill menu) and refuses to re-attach until the frame is
  * gone; the extension asks for the tab back (chrome.tabs.onCreated) about
  * 150ms after the detach and again whenever the tab's URL changes. A detach
- * with no such request means the user took the tab out of the group.
+ * with no such request means the user took the tab out of the group, unless
+ * the tab also detached shortly before: the extension skips its retry for a
+ * tab that re-detaches within REATTACH_COOLDOWN_MS (each sign-in field focus
+ * reopens the password manager's frame), so that tab stays disconnected.
+ *
+ * The relay attaches only when the extension asks. The extension adds any
+ * tab it attaches to its group, and it says nothing when a detached tab is
+ * dragged out, so an attach the relay started could pull that tab back in.
  */
 export type TabLink = {
   state: "connected" | "disconnected" | "removed" | "closed";
@@ -72,6 +81,8 @@ export type TabLink = {
 
 /** How long the extension has to ask for a detached tab back before it counts as dragged out. */
 const REATTACH_GRACE_MS = 2_000;
+/** The extension's own window: it does not retry a tab that re-detaches within this long. */
+const REATTACH_COOLDOWN_MS = 3_000;
 
 export class BrowserModel {
   private _sendToExtension: SendCommand;
@@ -102,18 +113,6 @@ export class BrowserModel {
     if (state.session) return { state: "connected" };
     const lastError = state.lastError !== undefined ? { lastError: state.lastError } : {};
     return { state: state.removed ? "removed" : "disconnected", ...lastError };
-  }
-
-  /**
-   * One attempt to attach a detached tab the extension still holds in its
-   * group. A tab outside the group is never pulled back in.
-   */
-  async reattachTab(tabId: number): Promise<TabLink | undefined> {
-    const state = this._tabs.get(tabId);
-    if (state && !state.session && state.inGroup && !state.removed) {
-      await this._reattach(tabId, state, "lenses retry");
-    }
-    return this.tabLink(tabId);
   }
 
   private async _reattach(tabId: number, state: TabState, why: string): Promise<void> {
@@ -150,7 +149,7 @@ export class BrowserModel {
     }
     // After a detach this is the extension asking for the tab back (or the
     // user returning a tab they dragged out).
-    const detached = state.session === undefined && (state.removalTimer !== undefined || !!state.removed);
+    const detached = state.session === undefined && state.lastDetachAt !== undefined;
     clearTimeout(state.removalTimer);
     state.removalTimer = undefined;
     state.inGroup = true;
@@ -367,14 +366,20 @@ export class BrowserModel {
     state.session = undefined;
     state.inGroup = false;
     clearTimeout(state.removalTimer);
-    state.removalTimer = setTimeout(() => {
+    state.removalTimer = undefined;
+    const now = Date.now();
+    const recent = state.lastDetachAt !== undefined && now - state.lastDetachAt < REATTACH_COOLDOWN_MS;
+    state.lastDetachAt = now;
+    if (recent) {
+      this._log(`tab ${tabId} detached again within ${REATTACH_COOLDOWN_MS}ms; waiting for the extension to ask for it back`);
+    } else state.removalTimer = setTimeout(() => {
       state.removalTimer = undefined;
       if (state.inGroup || state.session || this._tabs.get(tabId) !== state) return;
       state.removed = true;
       this._log(`tab ${tabId} left the Lenses group`);
       this._notifyTabLink(tabId);
     }, REATTACH_GRACE_MS);
-    state.removalTimer.unref?.();
+    state.removalTimer?.unref?.();
     // Recorded before Puppeteer hears of the detach, so the host can tell a
     // lost debugger from a closed tab when the page object goes away.
     this._notifyTabLink(tabId);

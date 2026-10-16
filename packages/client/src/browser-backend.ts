@@ -63,7 +63,7 @@ export class TabDisconnected extends Error {
     readonly tab: string,
     /** Where the tab was last seen. */
     readonly url: string,
-    /** The last re-attach failure, verbatim from the browser. */
+    /** Why the extension's last re-attach failed, verbatim from the browser. */
     readonly detail?: string
   ) {
     super(`tab ${tab} is open but the browser debugger cannot reach it${detail ? `: ${detail}` : ""}`);

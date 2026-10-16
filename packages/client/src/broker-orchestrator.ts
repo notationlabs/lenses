@@ -906,8 +906,9 @@ const disconnectedResults = new WeakSet<LensResult>();
 /**
  * The result for a call whose tab is open but detached from the debugger
  * (see TabDisconnected). Reported as the sign-in outcome, because that is
- * what the user is doing there, so the auth wait keeps re-attaching it. The
- * browser's own reason is passed through verbatim as `detail`.
+ * what the user is doing there, so the auth wait keeps watching it until the
+ * extension re-attaches it. The browser's own reason for refusing the last
+ * re-attach is passed through verbatim as `detail`.
  */
 function disconnectedOutcome(spec: LensSpec | undefined, error: TabDisconnected): LensResult {
   const base = spec ? gateOutcome(spec, error.url) : undefined;

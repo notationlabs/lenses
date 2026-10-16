@@ -447,7 +447,6 @@ describe("tabs the debugger loses", () => {
     const listeners = new Set<(key: string, link: TabLink) => void>();
     const visible = new Set<SpaPage>();
     let nextId = 100;
-    let reattachError: string | undefined = passwordManager;
     const setLink = (key: string, link: TabLink) => {
       links.set(key, link);
       for (const listener of listeners) listener(key, link);
@@ -483,12 +482,6 @@ describe("tabs the debugger loses", () => {
       connectHint: () => "test", staleHint: () => "test",
       tabKey: (page: SpaPage) => keys.get(page),
       tabLink: (key: string) => links.get(key),
-      reattach: vi.fn(async (key: string) => {
-        if (links.get(key)?.state !== "disconnected") return links.get(key);
-        if (reattachError) setLink(key, { state: "disconnected", lastError: reattachError });
-        else reconnect(key);
-        return links.get(key);
-      }),
       onTabLinkChange(listener: (key: string, link: TabLink) => void) {
         listeners.add(listener);
         return () => listeners.delete(listener);
@@ -507,12 +500,13 @@ describe("tabs the debugger loses", () => {
         page.closed = true;
         page.emit("close");
       },
+      /** The extension asks for the tab back, and Chrome refuses while the frame is there. */
+      retryFails(key: string) {
+        setLink(key, { state: "disconnected", lastError: passwordManager });
+      },
       /** A detach the extension never asked to undo: the user dragged the tab out. */
       dragOut(key: string) {
         setLink(key, { state: "removed" });
-      },
-      frameGone() {
-        reattachError = undefined;
       },
     };
   }
@@ -528,18 +522,17 @@ describe("tabs the debugger loses", () => {
     await host.finish(first, "close-if-created");
 
     chrome.detach("100");
+    chrome.retryFails("100");
     const failure = await host.bind(reuse()).catch((error: unknown) => error);
     expect(failure).toBeInstanceOf(TabDisconnected);
     expect(failure).toMatchObject({ tab: "t100", url: `${origin}/login`, detail: passwordManager });
-    expect(chrome.transport.reattach).toHaveBeenCalledTimes(1);
     expect(chrome.browser.newPage).toHaveBeenCalledTimes(1);
 
-    // The frame goes; the next call's one attempt succeeds and runs in the same tab.
-    chrome.frameGone();
+    // The frame goes and the tab's URL changes; the extension re-attaches it.
+    chrome.reconnect("100");
     const again = await host.bind(reuse());
     expect(again.tab).toBe("t100");
     expect(again.created).toBe(false);
-    expect(chrome.transport.reattach).toHaveBeenCalledTimes(2);
     expect(chrome.browser.newPage).toHaveBeenCalledTimes(1);
   });
 
@@ -553,7 +546,6 @@ describe("tabs the debugger loses", () => {
 
     const again = await host.bind({ tab: first.tab, navigation: "reuse", loadTimeoutMs: 100 });
     expect(again.tab).toBe("t100");
-    expect(chrome.transport.reattach).not.toHaveBeenCalled();
     expect(chrome.browser.newPage).toHaveBeenCalledTimes(1);
   });
 
@@ -570,8 +562,6 @@ describe("tabs the debugger loses", () => {
     const next = await host.bind(reuse());
     expect(next.tab).toBe("t101");
     expect(next.created).toBe(true);
-    // Never pulled back into the group.
-    expect(chrome.transport.reattach).not.toHaveBeenCalled();
     expect(chrome.tabs.get("100")!.loads).toEqual([`${origin}/account-summary`]);
   });
 
@@ -605,22 +595,23 @@ describe("tabs the debugger loses", () => {
 
     // The user focuses the password field; the password manager's frame detaches the tab.
     chrome.detach("100");
+    chrome.retryFails("100");
     expect(await waiting).toBe("poll");
     expect(await host.findAuthGate(origin)).toMatchObject({ url: `${origin}/login`, target });
 
-    // Each poll tick makes one re-attach attempt; failure is still signing in.
+    // Each poll tick's retry finds it still detached: still signing in.
     await expect(host.hasOpenTarget!(target, { reuse: true })).rejects.toMatchObject({
       tab: "t100", detail: passwordManager,
     });
-    expect(chrome.transport.reattach).toHaveBeenCalledTimes(1);
     expect(await host.openAuthGate!(origin, target)).toBe(true);
     expect(chrome.browser.newPage).toHaveBeenCalledTimes(1);
 
-    // Re-attached: the wait ends as a move, and the retry reads the same tab.
+    // The extension re-attaches it: the wait ends as a move, and the retry reads the same tab.
     const next = leases.wait(origin, target, Date.now() + 10_000);
-    chrome.frameGone();
-    expect(await host.hasOpenTarget!(target, { reuse: true })).toBe(true);
+    await vi.waitFor(async () => expect(await host.findAuthGate(origin)).toBeDefined());
+    chrome.reconnect("100");
     expect(await next).toBe("moved");
+    expect(await host.hasOpenTarget!(target, { reuse: true })).toBe(true);
     expect(chrome.browser.newPage).toHaveBeenCalledTimes(1);
     leases.close(origin);
   });
