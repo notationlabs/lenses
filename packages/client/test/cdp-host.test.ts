@@ -19,6 +19,7 @@ vi.mock("puppeteer-core", () => ({
 
 vi.mock("../src/auth-banner.js", () => ({
   showAuthBanner: async () => ({ update: () => {}, dispose: () => {} }),
+  clearAuthBanners: async () => {},
 }));
 vi.mock("../src/launch-browser.js", () => ({ raiseChrome: async () => {} }));
 

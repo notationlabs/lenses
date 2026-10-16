@@ -1,11 +1,16 @@
 import type { Page } from "puppeteer-core";
 
-/** Render a non-interactive banner without exposing broker callbacks to the page. */
+/**
+ * Render a banner without exposing broker callbacks to the page; its only
+ * control, a close button, acts on the page alone. `key` names the banner element; one key per tab means a banner left
+ * behind (its removal can fail while the debugger is detached) is updated in
+ * place rather than duplicated.
+ */
 export async function showAuthBanner(
   page: Page,
-  site: string
+  site: string,
+  key = `__lens_auth_${Math.random().toString(36).slice(2)}`
 ): Promise<{ update(expiresAt: number, count: number): void; dispose(): void }> {
-  const key = `__lens_auth_${Math.random().toString(36).slice(2)}`;
   let script: string | undefined;
   let disposed = false;
   let generation = 0;
@@ -42,11 +47,19 @@ export async function showAuthBanner(
   };
 }
 
+/** Remove every Lenses sign-in banner from the page, including ones a detached debugger left behind. */
+export async function clearAuthBanners(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    for (const node of document.querySelectorAll("[data-lenses-auth]")) node.remove();
+  }).catch(() => {});
+}
+
 function paintAuthBanner({ key, site, expiresAt, count }: {
   key: string; site: string; expiresAt: number; count: number;
 }): void {
   type BannerHost = HTMLDivElement & { updateAuth?: (deadline: number, waiting: number) => void };
   const mount = () => {
+    for (const node of document.querySelectorAll("[data-lenses-auth]")) if (node.id !== key) node.remove();
     const existing = document.getElementById(key) as BannerHost | null;
     if (existing?.updateAuth) {
       existing.updateAuth(expiresAt, count);
@@ -59,7 +72,7 @@ function paintAuthBanner({ key, site, expiresAt, count }: {
     document.body.prepend(host);
     const shadow = host.attachShadow({ mode: "closed" });
     const sheet = new CSSStyleSheet();
-    sheet.replaceSync(":host { display: block; position: relative; z-index: 2147483647; width: 100%; box-sizing: border-box; color: #fff; font: 14px system-ui; } section { display: flex; align-items: center; gap: 16px; padding: 14px 24px; background: #000; border-bottom: 3px solid #fff; box-shadow: 0 4px 24px #0008; } strong { color: #fff; letter-spacing: .04em; } span { flex: 1; } time { width: 8ch; flex: none; text-align: right; font-variant-numeric: tabular-nums; } ");
+    sheet.replaceSync(":host { display: block; position: relative; z-index: 2147483647; width: 100%; box-sizing: border-box; color: #fff; font: 14px system-ui; } section { display: flex; align-items: center; gap: 16px; padding: 14px 24px; background: #000; border-bottom: 3px solid #fff; box-shadow: 0 4px 24px #0008; } strong { color: #fff; letter-spacing: .04em; } span { flex: 1; } time { width: 8ch; flex: none; text-align: right; font-variant-numeric: tabular-nums; } button { flex: none; margin: 0; padding: 0 4px; border: 0; background: none; color: inherit; font: 20px/1 system-ui; cursor: pointer; opacity: .7; } button:hover { opacity: 1; } ");
     shadow.adoptedStyleSheets = [sheet];
     const box = document.createElement("section");
     box.setAttribute("role", "status");
@@ -67,7 +80,14 @@ function paintAuthBanner({ key, site, expiresAt, count }: {
     brand.textContent = "Lenses";
     const label = document.createElement("span");
     const timer = document.createElement("time");
-    box.append(brand, label, timer);
+    // Lenses cannot remove a banner from a tab taken out of the group, so
+    // the user can. Closing it only hides it; the wait is unaffected.
+    const close = document.createElement("button");
+    close.type = "button";
+    close.textContent = "×";
+    close.setAttribute("aria-label", "Close");
+    close.addEventListener("click", () => host.remove());
+    box.append(brand, label, timer, close);
     shadow.replaceChildren(box);
     let deadline = expiresAt;
     let waiting = count;

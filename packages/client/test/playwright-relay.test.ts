@@ -182,6 +182,45 @@ describe("Playwright CDP relay", () => {
     expect(logs).toContain("reattached tab 1");
   });
 
+  it("re-attaches a blocked tab on a sign-in wait's retry, never a tab out of the group", async () => {
+    const { model, blocked, commands, logs, tab } = detachableModel();
+    await model.enableAutoAttach();
+    await model.createTarget("https://bank.example/login");
+    model.onDebuggerDetach({ tabId: 1 });
+    model.onTabCreated(tab);
+    await vi.waitFor(() => expect(model.tabLink(1)?.lastError).toBeDefined());
+
+    // Still blocked: the retry fails and the tab stays disconnected.
+    expect((await model.retryAttach(1))?.state).toBe("disconnected");
+    expect(attachCount(commands)).toBe(3);
+
+    // The frame goes without a URL change; only the retry notices.
+    blocked.frame = false;
+    expect(await model.retryAttach(1)).toEqual({ state: "connected" });
+    expect(logs).toContain("reattach tab 1 (sign-in wait retry)");
+
+    // Attached or unknown tabs are left alone.
+    expect(await model.retryAttach(1)).toEqual({ state: "connected" });
+    expect(await model.retryAttach(99)).toBeUndefined();
+    expect(attachCount(commands)).toBe(4);
+  });
+
+  it("does not retry a tab that left the group", async () => {
+    vi.useFakeTimers();
+    try {
+      const { model, commands } = detachableModel();
+      await model.enableAutoAttach();
+      await model.createTarget("https://bank.example/login");
+      model.onDebuggerDetach({ tabId: 1 });
+      vi.advanceTimersByTime(2_000);
+      expect(model.tabLink(1)).toEqual({ state: "removed" });
+      expect(await model.retryAttach(1)).toEqual({ state: "removed" });
+      expect(attachCount(commands)).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   describe("a detach the extension never asks back for", () => {
     afterEach(() => {
       vi.useRealTimers();
