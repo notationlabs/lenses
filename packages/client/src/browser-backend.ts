@@ -52,6 +52,24 @@ export class TabClosed extends Error {
   readonly code = "tab_closed";
 }
 
+/**
+ * The tab is still open in the group, but the debugger cannot reach it yet:
+ * Chrome detaches a whole tab while another extension's frame (a password
+ * manager's) is in the page. The user is most likely signing in there.
+ */
+export class TabDisconnected extends Error {
+  constructor(
+    /** Broker id of the tab. */
+    readonly tab: string,
+    /** Where the tab was last seen. */
+    readonly url: string,
+    /** The last re-attach failure, verbatim from the browser. */
+    readonly detail?: string
+  ) {
+    super(`tab ${tab} is open but the browser debugger cannot reach it${detail ? `: ${detail}` : ""}`);
+  }
+}
+
 /** How a call picks its tab; shared by bind and the auth-retry presence check. */
 export interface TabChoice {
   /** An explicit broker tab id from an earlier result. */

@@ -43,7 +43,8 @@ import type {
   BackendInfo,
   TabChoice,
 } from "./browser-backend.js";
-import { AuthPageUnavailable, TabClosed } from "./browser-backend.js";
+import { AuthPageUnavailable, TabClosed, TabDisconnected } from "./browser-backend.js";
+import type { TabLink } from "./playwright-relay/browser-model.js";
 
 /** A lens `ready` selector, plus the call's needs-the-user test that also ends the wait. */
 interface ReadyCheck {
@@ -105,6 +106,14 @@ export interface CdpTransport {
    * target id), when the transport can name one.
    */
   tabKey?(page: Page): string | undefined;
+  /**
+   * Where a keyed tab stands: attached, detached but still in the
+   * transport's group, out of the group, or closed. Undefined when unknown.
+   */
+  tabLink?(key: string): TabLink | undefined;
+  /** One attempt to re-attach a detached tab still in the group; never one outside it. */
+  reattach?(key: string): Promise<TabLink | undefined>;
+  onTabLinkChange?(listener: (key: string, link: TabLink) => void): () => void;
   /** Transport cleanup before a session or temporary page is released. */
   preparePageRelease?(
     browser: Browser,
@@ -129,6 +138,19 @@ export interface CdpBackend extends BrowserBackend {
   acquire(progress?: (message: string) => void): Promise<void>;
   start(): void;
   stop(): void;
+}
+
+interface KeptGate {
+  /** The tab's latest page object, replaced when the debugger re-attaches the tab. */
+  page?: Page;
+  target: string;
+  keptUrl: string;
+  lastMoveUrl?: string;
+  /**
+   * Recorded because a call found the tab detached, not because a lens
+   * reported needs_*: it blocks the site only while a call waits on it.
+   */
+  detached?: boolean;
 }
 
 interface CdpSession extends BrowserSession {
@@ -160,10 +182,14 @@ export function createCdpBackend(
   const statusListeners = new Set<() => void>();
   const leaseReleaseListeners = new Set<() => void>();
   /**
-   * Pages kept by a needs_* outcome, and where they were kept. The map dies
-   * with the process: neither CDP transport has durable tab leases.
+   * Tabs kept by a needs_* outcome, and where they were kept, by tab key
+   * (gateKeyOf): a tab's page object is replaced when the debugger
+   * re-attaches it. The map dies with the process: neither CDP transport has
+   * durable tab leases.
    */
-  const keptGates = new Map<Page, { target: string; keptUrl: string; lastMoveUrl?: string }>();
+  const keptGates = new Map<string, KeptGate>();
+  const pageGateKeys = new WeakMap<Page, string>();
+  let pageGateSequence = 0;
   const watchedGateOrigins = new Set<string>();
   /** Broker tab ids: issued on first bind, valid while the page stays open. */
   const tabIds = new WeakMap<Page, string>();
@@ -352,6 +378,85 @@ export function createCdpBackend(
     return !!page && !page.isClosed() && page.browser() === current;
   }
 
+  /** A keptGates key: the transport's tab key, or a per-page stand-in when it has none. */
+  function gateKeyOf(page: Page): string {
+    const key = transport.tabKey?.(page);
+    if (key !== undefined) return key;
+    let local = pageGateKeys.get(page);
+    if (!local) {
+      local = `page-${++pageGateSequence}`;
+      pageGateKeys.set(page, local);
+    }
+    return local;
+  }
+
+  /** The sign-in gate a needs_* outcome kept on this page's tab. */
+  function keptGate(page: Page): KeptGate | undefined {
+    const kept = keptGates.get(gateKeyOf(page));
+    return kept && !kept.detached ? kept : undefined;
+  }
+
+  /** A kept gate's tab: its live page, "detached" while the group still holds it, or undefined once gone. */
+  async function gatePage(current: Browser, key: string, kept: KeptGate): Promise<Page | "detached" | undefined> {
+    if (kept.page && !kept.page.isClosed()) return kept.page;
+    const found = await pageForKey(current, key);
+    if (found) {
+      kept.page = found;
+      return found;
+    }
+    return transport.tabLink?.(key)?.state === "disconnected" ? "detached" : undefined;
+  }
+
+  /**
+   * The live page for a keyed tab. A tab the debugger lost while it stays in
+   * the group (see TabDisconnected) is never forgotten: it gets one re-attach
+   * attempt, and if that fails it throws TabDisconnected and is recorded as a
+   * sign-in gate, so the auth wait watches it instead of opening another tab.
+   * Undefined means the tab is closed or out of the group.
+   */
+  async function recoverTab(
+    current: Browser,
+    key: string,
+    target: string | undefined,
+    lastPage?: Page
+  ): Promise<Page | undefined> {
+    const live = await pageForKey(current, key);
+    if (live) return live;
+    const link = transport.tabLink?.(key);
+    if (link?.state !== "disconnected") return undefined;
+    const after = (await transport.reattach?.(key)) ?? link;
+    if (after.state === "connected") {
+      const page = await awaitPageForKey(current, key);
+      if (page) return page;
+    } else if (after.state !== "disconnected") {
+      return undefined;
+    }
+    const id = `t${key}`;
+    const kept = keptGates.get(key);
+    const url = kept?.page?.url() ?? lastPage?.url() ?? target ?? "about:blank";
+    if (!kept) keptGates.set(key, { page: lastPage, target: target ?? url, keptUrl: url, detached: true });
+    log(`tab ${id} is detached from the debugger: ${after.lastError ?? "waiting for it to re-attach"}`);
+    throw new TabDisconnected(id, url, after.lastError);
+  }
+
+  /** Puppeteer hears of a re-attached tab over the relay socket, a moment after the relay attaches it. */
+  async function awaitPageForKey(current: Browser, key: string, timeoutMs = 5_000): Promise<Page | undefined> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const page = await pageForKey(current, key);
+      if (page || Date.now() >= deadline) return page;
+      await delay(50);
+    }
+  }
+
+  function closedMessage(id: string, key: string | undefined): string {
+    if (!transport.tabLink) return `tab ${id} is closed`;
+    const state = key === undefined ? undefined : transport.tabLink(key)?.state;
+    if (state === "closed") return `tab ${id} was closed`;
+    if (state === "removed") return `tab ${id} is no longer in the Lenses tab group`;
+    return `tab ${id} is closed or no longer in the Lenses tab group`;
+  }
+
   function rememberReuse(origin: string, page: Page): void {
     reuseTabs.set(origin, page);
     const key = transport.tabKey?.(page);
@@ -382,12 +487,13 @@ export function createCdpBackend(
       const known = tabsById.get(request.tab);
       if (usable(known, current)) return known;
       tabsById.delete(request.tab);
-      const found = request.tab.startsWith("t") ? await pageForKey(current, request.tab.slice(1)) : undefined;
+      const key = request.tab.startsWith("t") ? request.tab.slice(1) : undefined;
+      const found = key !== undefined ? await recoverTab(current, key, request.target, known) : undefined;
       if (found) {
         registerTab(found, request.tab);
         return found;
       }
-      throw new TabClosed(`tab ${request.tab} is closed`);
+      throw new TabClosed(closedMessage(request.tab, key));
     }
     if (!request.reuse || request.target === undefined) return undefined;
     const origin = urlOrigin(request.target);
@@ -395,7 +501,7 @@ export function createCdpBackend(
     if (usable(last, current) && sameSite(last.url(), origin)) return last;
     const recorded = reuseKeys.get(origin);
     if (recorded !== undefined) {
-      const found = await pageForKey(current, recorded);
+      const found = await recoverTab(current, recorded, request.target, last);
       // A sign-out moves the tab to the site's own logout page on a sibling
       // host; that is still this site's tab, and loading the lens URL in it
       // beats leaving it behind and opening another.
@@ -405,7 +511,8 @@ export function createCdpBackend(
         return found;
       }
       log(`reuse ${origin}: tab ${recorded} ${found ? `left the site (${found.url()})` : "is gone"}; forgetting it`);
-      // The tab is gone or the user took it elsewhere: forget it rather than hijack it.
+      // The tab is closed, out of the group, or the user took it elsewhere:
+      // forget it rather than hijack it.
       reuseKeys.delete(origin);
     }
     // Adopt an open tab on the origin, preferring the user's sign-in tab.
@@ -413,7 +520,7 @@ export function createCdpBackend(
       (page) => !page.isClosed() && urlOrigin(page.url()) === origin
     );
     const found =
-      candidates.find((page) => keptGates.has(page)) ??
+      candidates.find((page) => keptGate(page) !== undefined) ??
       candidates.find((page) => sameTarget(page.url(), request.target!)) ??
       candidates[0];
     if (found) {
@@ -674,15 +781,23 @@ export function createCdpBackend(
       if (!browser?.connected || urlOrigin(target) !== origin) return false;
       const existing = await this.findAuthGate(origin);
       if (existing) return true;
+      // A sign-in tab the debugger lost is still the user's sign-in tab.
+      for (const [key, kept] of keptGates) {
+        if (urlOrigin(kept.target) === origin && await gatePage(browser, key, kept) === "detached") return true;
+      }
       // An origin with a reused tab signs in there: it is the tab later calls
       // will run in.
       const recorded = reuseKeys.get(origin);
       if (recorded !== undefined) {
         const reused = await pageForKey(browser, recorded);
         if (reused && sameSite(reused.url(), origin)) {
-          keptGates.set(reused, { target, keptUrl: reused.url() });
+          keptGates.set(recorded, { page: reused, target, keptUrl: reused.url() });
           await reused.bringToFront().catch(() => {});
           await raiseChrome();
+          return true;
+        }
+        if (!reused && transport.tabLink?.(recorded)?.state === "disconnected") {
+          keptGates.set(recorded, { page: reuseTabs.get(origin), target, keptUrl: target, detached: true });
           return true;
         }
       }
@@ -690,7 +805,7 @@ export function createCdpBackend(
       try {
         page = await browser.newPage({ background: true });
         await settle(page.goto(target, { waitUntil: "load", timeout: 15_000 }));
-        keptGates.set(page, { target, keptUrl: page.url() });
+        keptGates.set(gateKeyOf(page), { page, target, keptUrl: page.url() });
         await page.bringToFront();
         await raiseChrome();
         return true;
@@ -700,57 +815,104 @@ export function createCdpBackend(
       }
     },
     async watchAuthGate(origin, onExit, resume = false) {
-      if (!browser?.connected) return undefined;
-      const entry = [...keptGates].find(([page, kept]) =>
-        !page.isClosed() && urlOrigin(kept.target) === origin &&
-        (resume || sameGatePlace(page.url(), kept.keptUrl))
-      );
-      if (!entry) return undefined;
-      const [page, kept] = entry;
       const currentBrowser = browser;
-      // Track movement from this watch's starting page, not the original gate.
-      // The latter must remain fixed so a completed login stops matching.
-      const watchUrl = page.url();
+      if (!currentBrowser?.connected) return undefined;
+      let entry: { key: string; kept: KeptGate; page: Page | "detached" } | undefined;
+      for (const [key, kept] of keptGates) {
+        if (urlOrigin(kept.target) !== origin) continue;
+        const page = await gatePage(currentBrowser, key, kept);
+        if (page && (page === "detached" || resume || sameGatePlace(page.url(), kept.keptUrl))) {
+          entry = { key, kept, page };
+          break;
+        }
+      }
+      if (!entry) return undefined;
+      const { key, kept } = entry;
       watchedGateOrigins.add(origin);
       let disposed = false;
       let moveTimer: ReturnType<typeof setTimeout> | undefined;
-      // A move only asks for another lens attempt; an intermediate sign-in
-      // step may still return needs_auth and must keep using this same tab.
-      const moved = (frame: { url(): string }) => {
-        if (frame !== page.mainFrame() || disposed) return;
-        clearTimeout(moveTimer);
-        if (urlOrigin(page.url()) !== origin || sameGatePlace(page.url(), watchUrl)) return;
-        moveTimer = setTimeout(() => {
-          if (disposed || urlOrigin(page.url()) !== origin ||
-              sameGatePlace(page.url(), watchUrl)) return;
-          kept.lastMoveUrl = page.url();
-          onExit("moved");
-        }, 750);
+      let mounted: { page: Page; prompt?: { update(expiresAt: number, count: number): void; dispose(): void }; unmount(): void } | undefined;
+      const exit = (reason: "moved" | "closed") => { if (!disposed) onExit(reason); };
+      // Chrome detaches the debugger from a tab while a password manager's
+      // frame is in it (see TabDisconnected); the tab is still open in the
+      // group, so the user is still signing in. Only a closed tab, or one
+      // taken out of the group, ends the wait. A re-attached tab is retried
+      // like any other move.
+      const closed = () => {
+        const state = transport.tabLink?.(key)?.state;
+        mounted?.unmount();
+        if (state === "disconnected") {
+          log(`sign-in tab t${key} detached from the debugger; still waiting`);
+          return;
+        }
+        exit(state === "connected" ? "moved" : "closed");
       };
-      const closed = () => { if (!disposed) onExit("closed"); };
-      page.on("framenavigated", moved);
-      page.on("close", closed);
-      currentBrowser.on("disconnected", closed);
-      const prompt = await showAuthBanner(page, new URL(origin).hostname);
-      // Navigation may have continued while a previous attempt was running.
-      // Retry that new location rather than waiting for a second navigation.
-      const movedWhileRetrying = urlOrigin(page.url()) === origin && (
-        !sameGatePlace(page.url(), watchUrl) ||
-        (kept.lastMoveUrl !== undefined && !sameGatePlace(page.url(), kept.lastMoveUrl))
-      );
-      if (movedWhileRetrying) queueMicrotask(() => {
-        if (!disposed) { kept.lastMoveUrl = page.url(); onExit("moved"); }
+      const unlisten = transport.onTabLinkChange?.((changed, link) => {
+        if (changed !== key) return;
+        if (link.state === "removed" || link.state === "closed") exit("closed");
+        else if (link.state === "connected" && (!mounted || mounted.page.isClosed())) exit("moved");
       });
+      const browserGone = () => exit("closed");
+      currentBrowser.on("disconnected", browserGone);
+      if (entry.page !== "detached") {
+        const page = entry.page;
+        // Track movement from this watch's starting page, not the original gate.
+        // The latter must remain fixed so a completed login stops matching.
+        const watchUrl = page.url();
+        // A move only asks for another lens attempt; an intermediate sign-in
+        // step may still return needs_auth and must keep using this same tab.
+        const moved = (frame: { url(): string }) => {
+          if (frame !== page.mainFrame() || disposed) return;
+          clearTimeout(moveTimer);
+          if (urlOrigin(page.url()) !== origin || sameGatePlace(page.url(), watchUrl)) return;
+          moveTimer = setTimeout(() => {
+            if (disposed || urlOrigin(page.url()) !== origin ||
+                sameGatePlace(page.url(), watchUrl)) return;
+            kept.lastMoveUrl = page.url();
+            onExit("moved");
+          }, 750);
+        };
+        page.on("framenavigated", moved);
+        page.on("close", closed);
+        const current: NonNullable<typeof mounted> = {
+          page,
+          unmount() {
+            clearTimeout(moveTimer);
+            page.off("framenavigated", moved);
+            page.off("close", closed);
+            current.prompt?.dispose();
+            if (mounted === current) mounted = undefined;
+          },
+        };
+        mounted = current;
+        const prompt = await showAuthBanner(page, new URL(origin).hostname);
+        if (mounted === current) current.prompt = prompt;
+        else prompt.dispose();
+        // Navigation may have continued while a previous attempt was running.
+        // Retry that new location rather than waiting for a second navigation.
+        const movedWhileRetrying = urlOrigin(page.url()) === origin && (
+          !sameGatePlace(page.url(), watchUrl) ||
+          (kept.lastMoveUrl !== undefined && !sameGatePlace(page.url(), kept.lastMoveUrl))
+        );
+        if (movedWhileRetrying) queueMicrotask(() => {
+          if (!disposed) { kept.lastMoveUrl = page.url(); onExit("moved"); }
+        });
+      } else {
+        // The link may have changed while this watch was being set up.
+        const state = transport.tabLink?.(key)?.state;
+        if (state !== "disconnected") queueMicrotask(() => exit(state === "connected" ? "moved" : "closed"));
+      }
       return {
-        update: prompt.update,
+        update(expiresAt, count) {
+          mounted?.prompt?.update(expiresAt, count);
+        },
         dispose() {
           disposed = true;
           clearTimeout(moveTimer);
           watchedGateOrigins.delete(origin);
-          page.off("framenavigated", moved);
-          page.off("close", closed);
-          currentBrowser.off("disconnected", closed);
-          prompt.dispose();
+          mounted?.unmount();
+          unlisten?.();
+          currentBrowser.off("disconnected", browserGone);
         },
       };
     },
@@ -762,17 +924,34 @@ export function createCdpBackend(
         if (error instanceof TabClosed) return false;
         throw error;
       }
-      return !!await findPage(browser, target);
+      if (await findPage(browser, target)) return true;
+      // A kept sign-in tab the debugger lost gets its one re-attach attempt
+      // per check too; TabDisconnected reports it still detached.
+      for (const [key, kept] of keptGates) {
+        if (urlOrigin(kept.target) !== urlOrigin(target)) continue;
+        if (await gatePage(browser, key, kept) !== "detached") continue;
+        await recoverTab(browser, key, kept.target, kept.page);
+        return !!await findPage(browser, target);
+      }
+      return false;
     },
     async findAuthGate(origin: string): Promise<AuthGate | undefined> {
       if (!browser?.connected) return undefined;
-      for (const [page, kept] of keptGates) {
-        if (page.isClosed()) {
-          keptGates.delete(page);
+      const watched = watchedGateOrigins.has(origin);
+      for (const [key, kept] of keptGates) {
+        const page = await gatePage(browser, key, kept);
+        if (!page) {
+          keptGates.delete(key);
           continue;
         }
         if (urlOrigin(kept.target) !== origin) continue;
-        if (sameGatePlace(page.url(), kept.keptUrl) || watchedGateOrigins.has(origin)) {
+        // A detached tab blocks the site only while a call waits on it; a
+        // fresh call should instead try to re-attach it.
+        if (page === "detached" || kept.detached) {
+          if (watched) return { url: page === "detached" ? kept.page?.url() ?? kept.keptUrl : page.url(), target: kept.target };
+          continue;
+        }
+        if (sameGatePlace(page.url(), kept.keptUrl) || watched) {
           return { url: page.url(), target: kept.target };
         }
       }
@@ -881,7 +1060,7 @@ export function createCdpBackend(
       const current = await ensureBrowser(() => {});
       const chosen = await chooseTab(current, request);
       if (chosen) {
-        const kept = keptGates.get(chosen);
+        const kept = keptGate(chosen);
         const atAuthGate = request.existingOnly
           ? !kept || sameGatePlace(chosen.url(), kept.keptUrl)
           : undefined;
@@ -919,7 +1098,7 @@ export function createCdpBackend(
       if (request.target === undefined) throw new Error("bind needs a target or a tab");
       const existing = await findPage(current, request.target);
       if (existing) {
-        const kept = keptGates.get(existing);
+        const kept = keptGate(existing);
         // A retry that has left the original sign-in place must not resolve
         // against responses captured before login (even if they match first).
         const atAuthGate = request.existingOnly
@@ -973,7 +1152,7 @@ export function createCdpBackend(
       // A retry can still land on another login step. Keep the user's original
       // sign-in tab, not an extra tab created just to check authentication.
       if (disposition === "keep" && cdpSession.created && !cdpSession.pinned && [...keptGates].some(
-        ([page, kept]) => page !== cdpSession.page && !page.isClosed() &&
+        ([key, kept]) => key !== gateKeyOf(cdpSession.page) && !!kept.page && !kept.page.isClosed() &&
           urlOrigin(kept.target) === urlOrigin(cdpSession.target)
       )) disposition = "close-if-created";
       // A pinned tab (named by id, or an origin's reused tab) outlives every call.
@@ -992,7 +1171,8 @@ export function createCdpBackend(
       }
       if (disposition === "keep" && !cdpSession.page.isClosed()) {
         transport.recordEvent?.("Tab kept");
-        keptGates.set(cdpSession.page, {
+        keptGates.set(gateKeyOf(cdpSession.page), {
+          page: cdpSession.page,
           target: cdpSession.target,
           keptUrl: cdpSession.page.url(),
         });

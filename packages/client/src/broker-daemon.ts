@@ -448,7 +448,10 @@ function onClientMessage(client: WebSocket, raw: string): void {
       });
       if (expiryTimer) clearTimeout(expiryTimer);
       if (!result || message.type !== "call") return;
-      authOutcome ??= result;
+      // Keep the lens's own outcome, unless the latest word is about a tab
+      // the debugger lost (or has just re-gained): it names the tab and the
+      // browser's last reason, which is what expiry must report.
+      if (!authOutcome || result.tabDisconnected || authOutcome.tabDisconnected) authOutcome = result;
       let target: string;
       try { target = expandUrl(message.spec.url, message.params); }
       catch { send(client, result); return; }

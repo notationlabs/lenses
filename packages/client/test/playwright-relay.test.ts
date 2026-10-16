@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import puppeteer from "puppeteer-core";
 import { WebSocket } from "ws";
 import { BrowserModel } from "../src/playwright-relay/browser-model.js";
@@ -115,6 +115,94 @@ describe("Playwright CDP relay", () => {
     expect(await model.createTarget("https://example.com")).toEqual({ targetId: "target-7" });
     expect(model.tabIdForTarget("target-7")).toBe(7);
     expect(model.tabIdForTarget("target-99")).toBeUndefined();
+  });
+
+  /** A model whose tab 1 Chrome refuses to re-attach while a password manager's frame is in it. */
+  function detachableModel() {
+    const blocked = { frame: true };
+    const commands: string[] = [];
+    const emitted: { method?: string; params?: any }[] = [];
+    const logs: string[] = [];
+    const links: string[] = [];
+    let attaches = 0;
+    const model = new BrowserModel(async (method, params) => {
+      commands.push(method);
+      if (method === "chrome.tabs.create") return { id: 1, index: 0, windowId: 1, active: true, pinned: false };
+      if (method === "chrome.debugger.attach") {
+        if (attaches++ > 0 && blocked.frame) {
+          throw new Error("Cannot access a chrome-extension:// URL of different extension");
+        }
+        return undefined;
+      }
+      if (method === "chrome.debugger.sendCommand" && params[1] === "Target.getTargetInfo") {
+        return { targetInfo: { targetId: "target-1", type: "page" } };
+      }
+      return undefined;
+    }, (message) => logs.push(message));
+    model.connectOverCDP((message) => emitted.push(message));
+    model.onTabLinkChange((tabId, link) => links.push(`${tabId}:${link.state}`));
+    const tab = { id: 1, index: 0, windowId: 1, active: true, pinned: false };
+    return { model, blocked, commands, emitted, logs, links, tab };
+  }
+
+  it("keeps a detached tab the extension asks back for, and re-attaches it once asked", async () => {
+    const { model, blocked, commands, emitted, logs, links, tab } = detachableModel();
+    await model.enableAutoAttach();
+    await model.createTarget("https://bank.example/login");
+
+    model.onDebuggerDetach({ tabId: 1 });
+    expect(model.tabLink(1)).toEqual({ state: "disconnected" });
+    expect(emitted.map((row) => row.method)).toContain("Target.detachedFromTarget");
+    // The page object is gone, but the tab is still nameable.
+    expect(model.tabIdForTarget("target-1")).toBe(1);
+
+    // The extension's own retry (chrome.tabs.onCreated) fails while the frame is there.
+    model.onTabCreated(tab);
+    await vi.waitFor(() => expect(model.tabLink(1)?.lastError).toBeDefined());
+    expect(model.tabLink(1)).toEqual({
+      state: "disconnected",
+      lastError: "Cannot access a chrome-extension:// URL of different extension",
+    });
+
+    // One attempt per call: still blocked, then the frame goes.
+    const attempts = () => commands.filter((method) => method === "chrome.debugger.attach").length;
+    expect(attempts()).toBe(2);
+    expect((await model.reattachTab(1))?.state).toBe("disconnected");
+    expect(attempts()).toBe(3);
+    blocked.frame = false;
+    expect(await model.reattachTab(1)).toEqual({ state: "connected" });
+    expect(attempts()).toBe(4);
+    expect(emitted.filter((row) => row.method === "Target.attachedToTarget")).toHaveLength(2);
+    expect(links).toEqual(["1:connected", "1:disconnected", "1:connected"]);
+    expect(logs).toContain("reattach tab 1 (extension retry)");
+    expect(logs).toContain(
+      "reattach tab 1 failed: Cannot access a chrome-extension:// URL of different extension"
+    );
+    expect(logs).toContain("reattached tab 1");
+  });
+
+  it("counts a detach the extension never asks back for as leaving the group", async () => {
+    vi.useFakeTimers();
+    try {
+      const { model, commands, links } = detachableModel();
+      await model.enableAutoAttach();
+      await model.createTarget("https://bank.example/login");
+      model.onDebuggerDetach({ tabId: 1 });
+      // Not yet asked back for: still disconnected, but never pulled back in.
+      await model.reattachTab(1);
+      expect(commands.filter((method) => method === "chrome.debugger.attach")).toHaveLength(1);
+
+      vi.advanceTimersByTime(2_000);
+      expect(model.tabLink(1)).toEqual({ state: "removed" });
+      expect((await model.reattachTab(1))?.state).toBe("removed");
+      expect(commands.filter((method) => method === "chrome.debugger.attach")).toHaveLength(1);
+
+      model.onTabRemoved(1);
+      expect(model.tabLink(1)).toEqual({ state: "closed" });
+      expect(links).toEqual(["1:connected", "1:disconnected", "1:removed", "1:closed"]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("accepts a real Puppeteer connection", async () => {

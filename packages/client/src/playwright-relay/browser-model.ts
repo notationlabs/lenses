@@ -43,18 +43,93 @@ type TabState = {
   attachment?: Promise<TabSession>;
   /** Set while the relay removes the tab, so its beforeunload prompt is accepted. */
   closing?: boolean;
+  /**
+   * The extension has put the tab in its group since the debugger last let
+   * go of it: it announced the tab (chrome.tabs.onCreated), or the relay
+   * created it.
+   */
+  inGroup?: boolean;
+  /** The debugger let go and the extension never asked for it back: the user dragged it out. */
+  removed?: boolean;
+  /** Why the last attach failed, verbatim from Chrome. */
+  lastError?: string;
+  removalTimer?: ReturnType<typeof setTimeout>;
 };
+
+/**
+ * Where a Chrome tab stands with this relay. Chrome detaches the debugger
+ * from a whole tab when another extension frames itself into the page (a
+ * password manager's fill menu) and refuses to re-attach until the frame is
+ * gone; the extension asks for the tab back (chrome.tabs.onCreated) about
+ * 150ms after the detach and again whenever the tab's URL changes. A detach
+ * with no such request means the user took the tab out of the group.
+ */
+export type TabLink = {
+  state: "connected" | "disconnected" | "removed" | "closed";
+  /** The last re-attach failure, verbatim. */
+  lastError?: string;
+};
+
+/** How long the extension has to ask for a detached tab back before it counts as dragged out. */
+const REATTACH_GRACE_MS = 2_000;
 
 export class BrowserModel {
   private _sendToExtension: SendCommand;
   private _sendToCDPClient: SendToCDPClient | null = null;
   /** One lifecycle record per Chrome tab; session and attachment cannot drift into separate maps. */
   private _tabs = new Map<number, TabState>();
+  /** A tab keeps its target id for life; kept after detach and close so its pages stay nameable. */
+  private _targetTabs = new Map<string, number>();
+  private _closedTabs = new Set<number>();
   private _autoAttach = false;
   private _nextSessionId = 1;
+  private _log: (message: string) => void;
+  private _onTabLink: (tabId: number, link: TabLink) => void = () => {};
 
-  constructor(sendToExtension: SendCommand) {
+  constructor(sendToExtension: SendCommand, log: (message: string) => void = () => {}) {
     this._sendToExtension = sendToExtension;
+    this._log = log;
+  }
+
+  onTabLinkChange(listener: (tabId: number, link: TabLink) => void): void {
+    this._onTabLink = listener;
+  }
+
+  tabLink(tabId: number): TabLink | undefined {
+    if (this._closedTabs.has(tabId)) return { state: "closed" };
+    const state = this._tabs.get(tabId);
+    if (!state) return undefined;
+    if (state.session) return { state: "connected" };
+    const lastError = state.lastError !== undefined ? { lastError: state.lastError } : {};
+    return { state: state.removed ? "removed" : "disconnected", ...lastError };
+  }
+
+  /**
+   * One attempt to attach a detached tab the extension still holds in its
+   * group. A tab outside the group is never pulled back in.
+   */
+  async reattachTab(tabId: number): Promise<TabLink | undefined> {
+    const state = this._tabs.get(tabId);
+    if (state && !state.session && state.inGroup && !state.removed) {
+      await this._reattach(tabId, state, "lenses retry");
+    }
+    return this.tabLink(tabId);
+  }
+
+  private async _reattach(tabId: number, state: TabState, why: string): Promise<void> {
+    this._log(`reattach tab ${tabId} (${why})`);
+    try {
+      await this._attachTab(tabId);
+      this._log(`reattached tab ${tabId}`);
+    } catch (error) {
+      state.lastError = error instanceof Error ? error.message : String(error);
+      this._log(`reattach tab ${tabId} failed: ${state.lastError}`);
+    }
+  }
+
+  private _notifyTabLink(tabId: number): void {
+    const link = this.tabLink(tabId);
+    if (link) this._onTabLink(tabId, link);
   }
 
   connectOverCDP(sendToCDPClient: SendToCDPClient): void {
@@ -67,16 +142,40 @@ export class BrowserModel {
 
   onTabCreated(tab: Tab): void {
     if (tab.id === undefined) return;
-    if (!this._tabs.has(tab.id)) this._tabs.set(tab.id, {});
-    if (this._autoAttach) {
-      void this._attachTab(tab.id).catch((error) => console.error(error));
+    const tabId = tab.id;
+    let state = this._tabs.get(tabId);
+    if (!state) {
+      state = {};
+      this._tabs.set(tabId, state);
+    }
+    // After a detach this is the extension asking for the tab back (or the
+    // user returning a tab they dragged out).
+    const detached = state.session === undefined && (state.removalTimer !== undefined || !!state.removed);
+    clearTimeout(state.removalTimer);
+    state.removalTimer = undefined;
+    state.inGroup = true;
+    if (state.removed) {
+      state.removed = false;
+      this._notifyTabLink(tabId);
+    }
+    if (!this._autoAttach || state.session || state.attachment) return;
+    if (detached || state.lastError !== undefined) {
+      void this._reattach(tabId, state, "extension retry");
+    } else {
+      void this._attachTab(tabId).catch((error) => {
+        state.lastError = error instanceof Error ? error.message : String(error);
+        console.error(error);
+      });
     }
   }
 
   onTabRemoved(tabId: number): void {
     const state = this._tabs.get(tabId);
     if (!state) return;
+    clearTimeout(state.removalTimer);
     this._tabs.delete(tabId);
+    this._closedTabs.add(tabId);
+    this._notifyTabLink(tabId);
     if (state.session) this._emitDetached(state.session);
   }
 
@@ -128,13 +227,14 @@ export class BrowserModel {
     ]);
     if (tab?.id === undefined) throw new Error("Failed to create tab");
     if (!this._tabs.has(tab.id)) this._tabs.set(tab.id, {});
+    this._tabs.get(tab.id)!.inGroup = true;
     const tabSession = await this._attachTab(tab.id);
     return { targetId: tabSession.targetInfo?.targetId };
   }
 
   /** The Chrome tab id behind an attached target, if this model attached it. */
   tabIdForTarget(targetId: string): number | undefined {
-    return this._findTabSession((session) => session.targetInfo?.targetId === targetId)?.tabId;
+    return this._targetTabs.get(targetId);
   }
 
   async closeTarget(targetId: string | undefined): Promise<{ success: boolean }> {
@@ -216,6 +316,10 @@ export class BrowserModel {
         childSessions: new Set(),
       };
       state.session = tabSession;
+      state.lastError = undefined;
+      const targetId = tabSession.targetInfo?.targetId;
+      if (typeof targetId === "string") this._targetTabs.set(targetId, tabId);
+      this._notifyTabLink(tabId);
       this._emit({
         method: "Target.attachedToTarget",
         params: {
@@ -261,6 +365,19 @@ export class BrowserModel {
     if (!state?.session) return;
     const session = state.session;
     state.session = undefined;
+    state.inGroup = false;
+    clearTimeout(state.removalTimer);
+    state.removalTimer = setTimeout(() => {
+      state.removalTimer = undefined;
+      if (state.inGroup || state.session || this._tabs.get(tabId) !== state) return;
+      state.removed = true;
+      this._log(`tab ${tabId} left the Lenses group`);
+      this._notifyTabLink(tabId);
+    }, REATTACH_GRACE_MS);
+    state.removalTimer.unref?.();
+    // Recorded before Puppeteer hears of the detach, so the host can tell a
+    // lost debugger from a closed tab when the page object goes away.
+    this._notifyTabLink(tabId);
     this._emitDetached(session);
   }
 
