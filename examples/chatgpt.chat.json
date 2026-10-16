@@ -39,7 +39,7 @@
           "selector": "[data-message-author-role]"
         }
       },
-      "post": "($t := [$.{ 'role': role, 'text': text }]; $a := [$t[role = 'assistant']]; { 'turns': $t, 'response': $count($a) > 0 ? $a[-1].text : null })"
+      "post": "($t := [$value.{ 'role': role, 'text': text }]; $a := [$t[role = 'assistant']]; { 'turns': $t, 'response': $count($a) > 0 ? $a[-1].text : null })"
     },
     {
       "kind": "dom",

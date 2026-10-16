@@ -50,7 +50,7 @@ describe.skipIf(!existsSync(chrome))("real browser sign-in lease", () => {
         type: "call", id: "auth-e2e", params: {}, timeoutMs: 10_000,
         spec: {
           name: "@test/protected", url: `${origin}/protected`, effects: { reads: [origin], writes: [] },
-          exceptions: { needs_auth: { matches: "$contains(url, '/login')" } },
+          exceptions: { needs_auth: { matches: "$contains($page.url, '/login')" } },
           resolve: [{ kind: "dom", fields: { heading: { selector: "h1" } } }],
         },
       };

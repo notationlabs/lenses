@@ -203,7 +203,7 @@ describe("broker orchestration", () => {
     backend.session.atAuthGate = true;
     const orchestrator = createBrokerOrchestrator([backend]);
     const spec = domSpec({
-      resolve: [{ kind: "intercept", request: "GET https://example.com/api/*", reloadOnMiss: true, waitMs: 0 }],
+      resolve: [{ kind: "intercept", request: { method: "GET", url: "https://example.com/api/*" }, reloadOnMiss: true, waitMs: 0 }],
     });
     const frames: BrokerFrame[] = [];
     await orchestrator.handle({ type: "call", id: "retry", spec, params: {}, timeoutMs: 500 },
@@ -263,7 +263,7 @@ describe("broker orchestration", () => {
       session.reads.push({ captures: [response], nextCursor: 1, truncated: false });
     };
     const spec = domSpec({
-      resolve: [{ kind: "intercept", request: "GET https://example.com/api/*", reloadOnMiss: true, waitMs: 100 }],
+      resolve: [{ kind: "intercept", request: { method: "GET", url: "https://example.com/api/*" }, reloadOnMiss: true, waitMs: 100 }],
     });
     const frames: BrokerFrame[] = [];
     await createBrokerOrchestrator([backend]).handle(
@@ -347,7 +347,7 @@ describe("broker orchestration", () => {
       resolve: [
         {
           kind: "dom",
-          exceptions: { needs_auth: { matches: "title = 'Login'" } },
+          exceptions: { needs_auth: { matches: "$page.title = 'Login'" } },
           fields: { title: { selector: "h1" } },
         },
       ],
@@ -374,7 +374,7 @@ describe("broker orchestration", () => {
       type: "call", id: "write-auth", params: {}, timeoutMs: 1000, allowWrites: true,
       spec: domSpec({
         effects: { reads: [], writes: ["example.com"] },
-        exceptions: { needs_auth: { matches: "title = 'Login'" } },
+        exceptions: { needs_auth: { matches: "$page.title = 'Login'" } },
         perform: [{ click: "button" }],
       }),
     }, (frame) => frames.push(frame));
@@ -391,7 +391,7 @@ describe("broker orchestration", () => {
       type: "call", id: "write-auth-late", params: {}, timeoutMs: 1000, allowWrites: true,
       spec: domSpec({
         effects: { reads: [], writes: ["example.com"] },
-        exceptions: { needs_auth: { matches: "title = 'Login'" } },
+        exceptions: { needs_auth: { matches: "$page.title = 'Login'" } },
         perform: [{ wait: { appears: "button", timeoutMs: 1 } }],
       }),
     }, (frame) => frames.push(frame));
@@ -415,7 +415,7 @@ describe("broker orchestration", () => {
       type: "call", id: `idempotent-auth-${stage}`, params: {}, timeoutMs: 1000, allowWrites: true,
       spec: domSpec({
         effects: { reads: [], writes: ["example.com"], idempotent: true },
-        exceptions: { needs_auth: { matches: "title = 'Login'" } },
+        exceptions: { needs_auth: { matches: "$page.title = 'Login'" } },
         perform: [{ navigate: "https://example.com/next" }],
       }),
     }, (frame) => frames.push(frame));
@@ -439,7 +439,7 @@ describe("broker orchestration", () => {
         resolve: [
           {
             kind: "dom",
-            exceptions: { needs_auth: { matches: "title = 'Login'" } },
+            exceptions: { needs_auth: { matches: "$page.title = 'Login'" } },
             fields: { title: { selector: "h1" } },
           },
         ],
@@ -512,7 +512,7 @@ describe("broker orchestration", () => {
         resolve: [
           {
             kind: "dom",
-            exceptions: { needs_auth: { matches: "title = 'Login'" } },
+            exceptions: { needs_auth: { matches: "$page.title = 'Login'" } },
             fields: { title: { selector: "h1" } },
           },
         ],
@@ -832,7 +832,7 @@ describe("write consent and execution", () => {
         name: "@example/api/update",
         url: "https://example.com/api",
         effects: { reads: ["example.com"], writes: ["example.com"] },
-        resolve: [{ kind: "http", credentials: true, request: "PATCH https://example.com/api", body: { json: "{}" } }],
+        resolve: [{ kind: "http", credentials: true, request: { method: "PATCH", url: "https://example.com/api" }, body: { json: "{}" } }],
       },
       params: {},
       timeoutMs: 1000,
@@ -854,7 +854,7 @@ describe("write consent and execution", () => {
       name: "@example/api/update",
       url: "https://example.com/api",
       effects: { reads: ["example.com"], writes: ["example.com"], cache: 60 },
-      resolve: [{ kind: "http", credentials: true, request: "PUT https://example.com/api", body: { search: { value: "$value" } } }],
+      resolve: [{ kind: "http", credentials: true, request: { method: "PUT", url: "https://example.com/api" }, body: { search: { value: "$params.value" } } }],
       params: { value: "string" },
     };
     const orchestrator = createBrokerOrchestrator([backend]);
@@ -909,7 +909,7 @@ describe("write consent and execution", () => {
         resolve: [{
           kind: "http",
           credentials: true,
-          request: "POST https://example.com/api",
+          request: { method: "POST", url: "https://example.com/api" },
           body: { json: "{}" },
         }],
       },
@@ -963,11 +963,11 @@ describe("write consent and execution", () => {
           kind: "http",
           credentials: true,
           sources: {
-            confirmation: { request: "GET https://example.com/items/1/confirm" },
+            confirmation: { request: { method: "GET", url: "https://example.com/items/1/confirm" } },
             deleted: {
-              request: "POST https://example.com/items/1",
+              request: { method: "POST", url: "https://example.com/items/1" },
               credentials: "same-origin-page",
-              headers: { "X-CSRF-Token": "$confirmation.token" },
+              headers: { "X-CSRF-Token": "$sources.confirmation.body.token" },
               body: { search: { _method: "'delete'" } },
             },
           },
@@ -1016,7 +1016,7 @@ describe("write consent and execution", () => {
         resolve: [{
           kind: "http",
           credentials: "same-origin-page",
-          request: "DELETE https://example.com/items/1",
+          request: { method: "DELETE", url: "https://example.com/items/1" },
         }],
       },
       params: {},
@@ -1043,7 +1043,7 @@ describe("write consent and execution", () => {
         resolve: [{
           kind: "http",
           credentials: "same-origin-page",
-          request: "DELETE https://example.com/items/1",
+          request: { method: "DELETE", url: "https://example.com/items/1" },
         }],
       },
       params: {},
@@ -1076,7 +1076,7 @@ describe("write consent and execution", () => {
         resolve: [{
           kind: "http",
           credentials: true,
-          request: "POST https://example.com/api",
+          request: { method: "POST", url: "https://example.com/api" },
           body: { json: "{}" },
         }],
       },
@@ -1103,7 +1103,7 @@ describe("write consent and execution", () => {
         // An intercept tier alone would force a fresh bind; perform must win,
         // so a send never reloads the page out from under itself.
         resolve: [
-          { kind: "intercept", request: "GET https://example.com/api/*", waitMs: 0 },
+          { kind: "intercept", request: { method: "GET", url: "https://example.com/api/*" }, waitMs: 0 },
           { kind: "dom", fields: { title: { selector: "h1" } } },
         ],
       }),
@@ -1126,7 +1126,7 @@ describe("write consent and execution", () => {
       id: "progress",
       spec: performSpec({
         perform: [
-          { fill: '[data-token="do-not-log"] textarea', value: "$message" },
+          { fill: '[data-token="do-not-log"] textarea', value: "$params.message" },
           { click: "#send" },
         ],
         params: { message: "string" },
@@ -1160,7 +1160,7 @@ describe("write consent and execution", () => {
     const result = await request(createBrokerOrchestrator([backend]), {
       type: "call",
       id: "ambiguous",
-      spec: performSpec({ perform: [{ fill: "textarea", value: "$message" }, { click: "#send" }], params: { message: "string" } }),
+      spec: performSpec({ perform: [{ fill: "textarea", value: "$params.message" }, { click: "#send" }], params: { message: "string" } }),
       params: { message: "hello" },
       timeoutMs: 20,
       deadline: Date.now() + 20,
@@ -1292,7 +1292,7 @@ describe("http tiers", () => {
   function httpSpec(overrides: Partial<LensSpec> = {}): LensSpec {
     return domSpec({
       resolve: [
-        { kind: "http", request: "GET https://api.example.com/things", items: "things" },
+        { kind: "http", request: { method: "GET", url: "https://api.example.com/things" }, items: "$res.body.things" },
       ],
       ...overrides,
     });
@@ -1350,9 +1350,9 @@ describe("http tiers", () => {
         resolve: [
           {
             kind: "http",
-            request: "GET https://api.example.com/things",
+            request: { method: "GET", url: "https://api.example.com/things" },
             credentials: true,
-            items: "things",
+            items: "$res.body.things",
           },
         ],
       }),
@@ -1375,9 +1375,9 @@ describe("http tiers", () => {
         resolve: [
           {
             kind: "http",
-            request: "GET https://api.example.com/things",
+            request: { method: "GET", url: "https://api.example.com/things" },
             credentials: true,
-            items: "things",
+            items: "$res.body.things",
           },
           { kind: "dom", fields: { title: { selector: "h1" } } },
         ],

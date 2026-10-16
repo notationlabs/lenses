@@ -1,7 +1,7 @@
 {
   "name": "@djgrant/hn/comment",
   "description": "One Hacker News comment subtree: the comment addressed by id plus its replies as a tree. A comment permalink is the same item?id= endpoint HN uses for stories, so any id found in hn/item's comments can be fetched directly.",
-  "url": "https://news.ycombinator.com/item?id={id}",
+  "url": "https://news.ycombinator.com/item?id={params.id}",
   "params": {
     "id": "string"
   },
@@ -56,7 +56,7 @@
           "attr": "indent"
         }
       },
-      "post": "($all := [$[text != null]]; $build := function($rows) { ($n := $count($rows); $n = 0 ? [] : ($top := $number($rows[0].indent); $starts := [$filter([0..$n-1], function($j) { $number($rows[$j].indent) = $top })]; $map($starts, function($s, $k) { ($next := $k < $count($starts) - 1 ? $starts[$k + 1] : $n; $row := $rows[$s]; { \"id\": $row.id, \"author\": $row.author, \"age\": $row.age, \"text\": $row.text, \"replies\": [$build([$rows#$j[$j > $s and $j < $next]])] }) }))) }; { \"replies\": [$build($all)] })"
+      "post": "($all := [$value[text != null]]; $build := function($rows) { ($n := $count($rows); $n = 0 ? [] : ($top := $number($rows[0].indent); $starts := [$filter([0..$n-1], function($j) { $number($rows[$j].indent) = $top })]; $map($starts, function($s, $k) { ($next := $k < $count($starts) - 1 ? $starts[$k + 1] : $n; $row := $rows[$s]; { \"id\": $row.id, \"author\": $row.author, \"age\": $row.age, \"text\": $row.text, \"replies\": [$build([$rows#$j[$j > $s and $j < $next]])] }) }))) }; { \"replies\": [$build($all)] })"
     },
     {
       "kind": "dom",
@@ -71,7 +71,7 @@
           "selector": ".fatitem .commtext"
         }
       },
-      "post": "{ \"id\": $id, \"author\": author, \"age\": age, \"text\": text, \"replies\": [] }"
+      "post": "{ \"id\": $params.id, \"author\": $value.author, \"age\": $value.age, \"text\": $value.text, \"replies\": [] }"
     },
     {
       "kind": "llm",

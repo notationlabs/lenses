@@ -112,7 +112,7 @@ describe.skipIf(!existsSync(chrome))("broker WebSocket auth lease", () => {
         deadline: Date.now() + 8000, params: {},
         spec: {
           name: "@test/protected", url: `${origin}/protected`, effects: { reads: [origin], writes: [] },
-          exceptions: { needs_auth: { matches: "$contains(url, '/login')" } },
+          exceptions: { needs_auth: { matches: "$contains($page.url, '/login')" } },
           resolve: [{ kind: "dom", fields: { heading: { selector: "h1" } } }],
         },
       }));

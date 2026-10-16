@@ -1,11 +1,15 @@
 import type { ExceptionEntry, ExceptionMap, LensResult, LensSpec, Resolver } from "../types.js";
-import { evaluate, evaluateBool } from "../expr.js";
+import { evaluate, evaluateBool, type ExprVars } from "../expr.js";
 
-/** Evaluate a response/page on its own, independent of the tier's named sources. */
+/**
+ * Evaluate a page or one response on its own, independent of the tier's named
+ * sources. `ctx` is the outcome's value when an entry matches; `vars` binds
+ * `$page` ({url, title}) or `$res` ({status, url, body}) plus `$params`.
+ */
 export async function matchPageException(
   spec: LensSpec,
   ctx: unknown,
-  params: Record<string, unknown>,
+  vars: ExprVars,
   resolver: Resolver["kind"],
   tier?: ExceptionMap
 ): Promise<LensResult | null> {
@@ -14,15 +18,19 @@ export async function matchPageException(
     if (entry === null) entries[name] = null;
     else if (entries[name]) entries[name] = { ...entries[name], ...entry, matches: entries[name].matches };
   }
-  return matchExceptions(entries, ctx, params, resolver, spec.helpers);
+  return matchExceptions(entries, ctx, vars, resolver, spec.helpers);
 }
 
-/** Tier entries run first; inherited entries remain active unless nullified. */
+/**
+ * Tier entries run first; inherited entries remain active unless nullified.
+ * `vars` is the tier's own scope: `$page` and `$value` for dom, `$res`
+ * for a single request, `$sources` (response envelopes so far) for sources.
+ */
 export async function matchTierException(
   spec: LensSpec,
   tier: ExceptionMap | undefined,
   ctx: unknown,
-  params: Record<string, unknown>,
+  vars: ExprVars,
   resolver: Resolver["kind"]
 ): Promise<LensResult | null> {
   const merged: ExceptionMap = { ...spec.exceptions };
@@ -31,29 +39,29 @@ export async function matchTierException(
     merged[name] = entry === null ? null : { ...(parent ?? {}), ...entry };
   }
   // Only tier-local predicates run here. A page predicate must never run against
-  // a named-source context (where `url` and `status` do not exist).
+  // a named-source scope (where `$page` and `$res` do not exist).
   const local: ExceptionMap = {};
   for (const [name, entry] of Object.entries(tier ?? {})) {
     if (entry !== null && typeof entry.matches === "string") local[name] = merged[name];
   }
-  return matchExceptions(local, ctx, params, resolver, spec.helpers);
+  return matchExceptions(local, ctx, vars, resolver, spec.helpers);
 }
 
 async function matchExceptions(
   entries: ExceptionMap | undefined,
   ctx: unknown,
-  params: Record<string, unknown>,
+  vars: ExprVars,
   resolver: Resolver["kind"],
   helpers?: Record<string, string>
 ): Promise<LensResult | null> {
   for (const [name, entry] of Object.entries(entries ?? {})) {
     if (!entry || typeof entry.matches !== "string") continue;
-    if (!(await evaluateBool(entry.matches, ctx, params, helpers))) continue;
+    if (!(await evaluateBool(entry.matches, vars, helpers))) continue;
     let value: unknown = ctx;
     if (entry.$lens) {
       const bound: Record<string, unknown> = {};
       for (const [key, expression] of Object.entries(entry.params ?? {})) {
-        bound[key] = await evaluate(expression, ctx, params, helpers);
+        bound[key] = await evaluate(expression, vars, helpers);
       }
       value = Object.keys(bound).length ? { $lens: entry.$lens, params: bound, ...(entry.hint ? { hint: entry.hint } : {}) }
         : { $lens: entry.$lens, ...(entry.hint ? { hint: entry.hint } : {}) };
@@ -74,6 +82,6 @@ export async function pageNeedsUser(
   page: { url: string; title: string },
   params: Record<string, unknown>
 ): Promise<boolean> {
-  const outcome = await matchPageException(spec, page, params, "dom");
+  const outcome = await matchPageException(spec, page, { page, params }, "dom");
   return outcome?.kind === "outcome" && outcome.name.startsWith("needs_");
 }

@@ -77,7 +77,7 @@ describe("catalog settings", () => {
       join(directory, "a.json"),
       JSON.stringify({
         name: "@one/web/page",
-        url: "https://{account}.example.com/{page}",
+        url: "https://{params.account}.example.com/{params.page}",
         params: { page: { type: "integer", default: 1 } },
         effects: { reads: ["example.com"], writes: [] },
         resolve: [{ kind: "dom", fields: { title: { selector: "title" } } }],
@@ -122,7 +122,7 @@ describe("catalog settings", () => {
       join(directory, "a.json"),
       JSON.stringify({
         name: "@one/web/page",
-        url: "https://{account}.example.com/home",
+        url: "https://{params.account}.example.com/home",
         effects: { reads: ["example.com"], writes: [] },
         resolve: [{ kind: "dom", fields: { title: { selector: "title" } } }],
       })

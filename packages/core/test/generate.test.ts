@@ -56,7 +56,7 @@ describe("generateTsSdk", () => {
           fields: {
             title: "string",
             resets_at: { type: "string", nullable: true },
-            next_page: { $lens: "@example/web/page", params: { p: "p" } },
+            next_page: { $lens: "@example/web/page", params: { p: "$item.p" } },
             elsewhere: { $lens: "@other/site/page" },
             rows: { type: "array", items: { id: "string" } },
           },

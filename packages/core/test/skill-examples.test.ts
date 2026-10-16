@@ -19,6 +19,52 @@ function io(rows: unknown, fields: unknown): EngineIO {
 }
 
 describe("SKILL.md authoring examples", () => {
+  it("validates the example document as written", () => {
+    expect(() => validateSpec({
+      name: "@scope/site/thing",
+      url: "https://site.com/{params.id}",
+      params: { id: "string" },
+      returns: { type: "object", fields: { title: "string" } },
+      exceptions: { needs_auth: { matches: "$res.status = 401", $lens: "@scope/site/login" } },
+      effects: { reads: ["site.com"], writes: [], idempotent: true },
+      resolve: [
+        { kind: "intercept",
+          request: { method: "GET", url: "https://site.com/api/thing/{params.id}" },
+          map: { title: "$res.body.data.title" } },
+      ],
+    })).not.toThrow();
+  });
+
+  it("shapes rows with the nested object map shown under Maps", async () => {
+    const spec = validateSpec({
+      name: "@scope/site/statement",
+      url: "https://site.com/statement",
+      effects: { reads: ["site.com"], writes: [] },
+      resolve: [{
+        kind: "intercept",
+        request: { method: "GET", url: "https://site.com/api/statement" },
+        items: "$res.body.statement",
+        map: {
+          date: "$item.date",
+          posted: "$item.postedFlag = 'Y'",
+          encoding: "'base64'",
+          balance: { value: "$item.runningBalance.value", currency: "$item.runningBalance.currency" },
+        },
+      }],
+    });
+    const result = await executeLens(spec, {}, {
+      ...io(null, null),
+      getIntercepted: async () => [{
+        url: "https://site.com/api/statement", method: "GET", status: 200, timestamp: 0,
+        body: JSON.stringify({ statement: [{ date: "2026-01-01", postedFlag: "Y", runningBalance: { value: 5, currency: "GBP" } }] }),
+      }],
+    });
+    expect(result).toMatchObject({
+      kind: "value",
+      value: [{ date: "2026-01-01", posted: true, encoding: "base64", balance: { value: 5, currency: "GBP" } }],
+    });
+  });
+
   it("composes a summary tier and a list tier into one object", async () => {
     const spec = validateSpec({
       name: "@scope/site/thing",
@@ -32,13 +78,13 @@ describe("SKILL.md authoring examples", () => {
         {
           kind: "dom",
           fields: { total: { selector: ".total" } },
-          post: "{ 'total': $number(total) }",
+          post: "{ 'total': $number($value.total) }",
         },
         {
           kind: "dom",
           item: ".row",
           fields: { period: { selector: ".period" } },
-          post: "{ 'rows': $ }",
+          post: "{ 'rows': $value }",
         },
       ],
     });
@@ -57,7 +103,7 @@ describe("SKILL.md authoring examples", () => {
       name: "@scope/site/thing",
       url: "https://site.com/thing",
       effects: { reads: ["site.com"], writes: [] },
-      exceptions: { needs_auth: { matches: "$contains(url, '/sign-in') or status = 401", hint: "Sign in at https://site.com, then retry." } },
+      exceptions: { needs_auth: { matches: "$contains($page.url, '/sign-in') or $res.status = 401", hint: "Sign in at https://site.com, then retry." } },
       resolve: [{ kind: "dom", fields: { total: { selector: ".total" } } }],
     });
 
@@ -82,7 +128,7 @@ describe("SKILL.md authoring examples", () => {
         {
           kind: "dom",
           fields: { raw: { selector: ".total" } },
-          post: "{ 'amount': $money(raw) }",
+          post: "{ 'amount': $money($value.raw) }",
         },
       ],
     });
@@ -100,7 +146,7 @@ describe("SKILL.md authoring examples", () => {
       resolve: [
         {
           kind: "dom",
-          item: "#past-payments-{year} .row",
+          item: "#past-payments-{params.year} .row",
           fields: { amount: { selector: ".amount" } },
         },
       ],
@@ -129,7 +175,7 @@ describe("SKILL.md authoring examples", () => {
         type: "array",
         items: {
           period: { type: "string", nullable: true },
-          detail: { $lens: "@scope/site/detail", params: { period: "period" } },
+          detail: { $lens: "@scope/site/detail", params: { period: "$item.period" } },
         },
       },
       resolve: [
@@ -137,7 +183,7 @@ describe("SKILL.md authoring examples", () => {
           kind: "dom",
           item: ".row",
           fields: { period: { selector: ".period" } },
-          post: "$.{ 'period': period, 'detail': period ? {} : null }",
+          post: "$value.{ 'period': period, 'detail': period ? {} : null }",
         },
       ],
     });
@@ -166,7 +212,7 @@ describe("SKILL.md authoring examples", () => {
         type: "array",
         items: {
           period: "string",
-          detail: { $lens: "@scope/site/detail", params: { period: "period" } },
+          detail: { $lens: "@scope/site/detail", params: { period: "$item.period" } },
         },
       },
       resolve: [
@@ -194,7 +240,7 @@ describe("SKILL.md authoring examples", () => {
         type: "array",
         items: {
           period: { type: "string", nullable: true },
-          detail: { $lens: "@scope/site/detail", params: { period: "period" } },
+          detail: { $lens: "@scope/site/detail", params: { period: "$item.period" } },
         },
       },
       resolve: [{ kind: "dom", item: ".row", fields: { period: { selector: ".period" } } }],
@@ -208,7 +254,7 @@ describe("SKILL.md authoring examples", () => {
   it("accepts a param default drawn from another lens, as written", () => {
     const spec = validateSpec({
       name: "@scope/site/vat",
-      url: "https://site.com/vat/{vrn}",
+      url: "https://site.com/vat/{params.vrn}",
       params: {
         vrn: { type: "string", default: { $lens: "@scope/site/summary", field: "vrn" } },
       },

@@ -7,8 +7,8 @@ describe("pageNeedsUser", () => {
     name: "@example/bank/summary",
     url: "https://bank.example/summary",
     exceptions: {
-      needs_auth: { matches: "$contains(url, '/login')" },
-      rate_limited: { matches: "title = 'Slow down'" },
+      needs_auth: { matches: "$contains($page.url, '/login')" },
+      rate_limited: { matches: "$page.title = 'Slow down'" },
     },
     effects: { reads: ["bank.example"], writes: [] },
     resolve: [{ kind: "dom", fields: { h: { selector: "h1" } } }],

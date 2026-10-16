@@ -20,18 +20,23 @@ function compileHelper(source: string): Promise<unknown> {
 }
 
 /**
- * Evaluate sandboxed JSONata with call arguments exposed as `$name` and
- * `$params`, over any helper lambdas the document carries.
+ * The variables an expression site binds, by name without the `$`:
+ * `{ response, params }`, `{ value, params }`, and so on.
+ */
+export type ExprVars = Record<string, unknown>;
+
+/**
+ * Evaluate sandboxed JSONata with NO input context: every expression reads
+ * named variables (`$res`, `$item`, `$params`, …), so a bare path such as
+ * `title` yields nothing at runtime. Validation rejects bare paths before an
+ * expression gets here; see expr-check.ts.
  *
- * Params are bound after helpers, so a declared param shadows a helper of the
- * same name: the document's own declaration is the more local one, and a
- * catalogue must not be able to change what an expression means by adding a
- * helper whose name a document was already using.
+ * Helper lambdas are bound first and the site variables over them, though
+ * validation already forbids a helper from taking a reserved variable name.
  */
 export async function evaluate(
   expr: string,
-  data: unknown,
-  params: Record<string, unknown> = {},
+  vars: ExprVars = {},
   helpers: Record<string, string> = {}
 ): Promise<unknown> {
   const compiled = jsonata(expr);
@@ -39,19 +44,18 @@ export async function evaluate(
   for (const [name, source] of Object.entries(helpers)) {
     if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name)) bindings[name] = await compileHelper(source);
   }
-  bindings.params = params;
-  for (const [k, v] of Object.entries(params)) {
-    if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(k)) bindings[k] = v;
+  for (const [name, value] of Object.entries(vars)) {
+    // An absent variable stays unbound, so `$item` outside a row is undefined.
+    if (value !== undefined) bindings[name] = value;
   }
-  return compiled.evaluate(data, bindings);
+  return compiled.evaluate(undefined, bindings);
 }
 
 /** Evaluate detection and let authoring errors propagate. */
 export async function evaluateBool(
   expr: string,
-  data: unknown,
-  params: Record<string, unknown> = {},
+  vars: ExprVars = {},
   helpers: Record<string, string> = {}
 ): Promise<boolean> {
-  return Boolean(await evaluate(expr, data, params, helpers));
+  return Boolean(await evaluate(expr, vars, helpers));
 }

@@ -47,29 +47,53 @@
       "credentials": true,
       "sources": {
         "orgs": {
-          "request": "GET https://claude.ai/api/organizations"
+          "request": {
+            "method": "GET",
+            "url": "https://claude.ai/api/organizations"
+          }
         },
         "usage": {
-          "request": "GET https://claude.ai/api/organizations/{orgs.0.uuid}/usage"
+          "request": {
+            "method": "GET",
+            "url": "https://claude.ai/api/organizations/{sources.orgs.body.0.uuid}/usage"
+          }
         },
         "credits": {
-          "request": "GET https://claude.ai/api/organizations/{orgs.0.uuid}/overage_spend_limit"
+          "request": {
+            "method": "GET",
+            "url": "https://claude.ai/api/organizations/{sources.orgs.body.0.uuid}/overage_spend_limit"
+          }
         },
         "balance": {
-          "request": "GET https://claude.ai/api/organizations/{orgs.0.uuid}/prepaid/credits"
+          "request": {
+            "method": "GET",
+            "url": "https://claude.ai/api/organizations/{sources.orgs.body.0.uuid}/prepaid/credits"
+          }
         },
         "bundles": {
-          "request": "GET https://claude.ai/api/organizations/{orgs.0.uuid}/prepaid/bundles"
+          "request": {
+            "method": "GET",
+            "url": "https://claude.ai/api/organizations/{sources.orgs.body.0.uuid}/prepaid/bundles"
+          }
         }
       },
       "map": {
-        "plan": "$orgs[0].rate_limit_tier",
-        "limits": "[$usage.limits.{ 'name': kind = 'session' ? 'Current session' : kind = 'weekly_all' ? 'Weekly limit' : kind = 'weekly_scoped' ? ((scope.model.display_name ? scope.model.display_name & ' ' : '') & 'weekly limit') : kind, 'percent': $string(percent) & '%', 'resets_at': resets_at }]",
-        "usage_credits": "{ 'enabled': $credits.is_enabled = true, 'spent_minor': $credits.used_credits, 'monthly_limit_minor': $credits.monthly_credit_limit, 'balance_minor': $balance.amount, 'currency': $credits.currency, 'percent': $credits.monthly_credit_limit > 0 ? $string($round($credits.used_credits * 100 / $credits.monthly_credit_limit)) & '%' : '', 'resets_at': $bundles.purchases_reset_at, 'auto_reload': $balance.auto_reload_settings ? true : false }"
+        "plan": "$sources.orgs.body[0].rate_limit_tier",
+        "limits": "[$sources.usage.body.limits.{ 'name': kind = 'session' ? 'Current session' : kind = 'weekly_all' ? 'Weekly limit' : kind = 'weekly_scoped' ? ((scope.model.display_name ? scope.model.display_name & ' ' : '') & 'weekly limit') : kind, 'percent': $string(percent) & '%', 'resets_at': resets_at }]",
+        "usage_credits": {
+          "enabled": "$sources.credits.body.is_enabled = true",
+          "spent_minor": "$sources.credits.body.used_credits",
+          "monthly_limit_minor": "$sources.credits.body.monthly_credit_limit",
+          "balance_minor": "$sources.balance.body.amount",
+          "currency": "$sources.credits.body.currency",
+          "percent": "$sources.credits.body.monthly_credit_limit > 0 ? $string($round($sources.credits.body.used_credits * 100 / $sources.credits.body.monthly_credit_limit)) & '%' : ''",
+          "resets_at": "$sources.bundles.body.purchases_reset_at",
+          "auto_reload": "$sources.balance.body.auto_reload_settings ? true : false"
+        }
       },
       "exceptions": {
         "needs_auth": {
-          "matches": "$orgs.status = 401 or $orgs.status = 403 or $usage.status = 401 or $usage.status = 403"
+          "matches": "$sources.orgs.status = 401 or $sources.orgs.status = 403 or $sources.usage.status = 401 or $sources.usage.status = 403"
         }
       }
     },
@@ -77,27 +101,48 @@
       "kind": "intercept",
       "sources": {
         "usage": {
-          "request": "GET https://claude.ai/api/organizations/*/usage*"
+          "request": {
+            "method": "GET",
+            "url": "https://claude.ai/api/organizations/*/usage*"
+          }
         },
         "credits": {
-          "request": "GET https://claude.ai/api/organizations/*/overage_spend_limit*"
+          "request": {
+            "method": "GET",
+            "url": "https://claude.ai/api/organizations/*/overage_spend_limit*"
+          }
         },
         "balance": {
-          "request": "GET https://claude.ai/api/organizations/*/prepaid/credits*"
+          "request": {
+            "method": "GET",
+            "url": "https://claude.ai/api/organizations/*/prepaid/credits*"
+          }
         },
         "bundles": {
-          "request": "GET https://claude.ai/api/organizations/*/prepaid/bundles*"
+          "request": {
+            "method": "GET",
+            "url": "https://claude.ai/api/organizations/*/prepaid/bundles*"
+          }
         }
       },
       "reloadOnMiss": true,
       "waitMs": 8000,
       "map": {
-        "limits": "[$usage.limits.{ 'name': kind = 'session' ? 'Current session' : kind = 'weekly_all' ? 'Weekly limit' : kind = 'weekly_scoped' ? ((scope.model.display_name ? scope.model.display_name & ' ' : '') & 'weekly limit') : kind, 'percent': $string(percent) & '%', 'resets_at': resets_at }]",
-        "usage_credits": "{ 'enabled': $credits.is_enabled = true, 'spent_minor': $credits.used_credits, 'monthly_limit_minor': $credits.monthly_credit_limit, 'balance_minor': $balance.amount, 'currency': $credits.currency, 'percent': $credits.monthly_credit_limit > 0 ? $string($round($credits.used_credits * 100 / $credits.monthly_credit_limit)) & '%' : '', 'resets_at': $bundles.purchases_reset_at, 'auto_reload': $balance.auto_reload_settings ? true : false }"
+        "limits": "[$sources.usage.body.limits.{ 'name': kind = 'session' ? 'Current session' : kind = 'weekly_all' ? 'Weekly limit' : kind = 'weekly_scoped' ? ((scope.model.display_name ? scope.model.display_name & ' ' : '') & 'weekly limit') : kind, 'percent': $string(percent) & '%', 'resets_at': resets_at }]",
+        "usage_credits": {
+          "enabled": "$sources.credits.body.is_enabled = true",
+          "spent_minor": "$sources.credits.body.used_credits",
+          "monthly_limit_minor": "$sources.credits.body.monthly_credit_limit",
+          "balance_minor": "$sources.balance.body.amount",
+          "currency": "$sources.credits.body.currency",
+          "percent": "$sources.credits.body.monthly_credit_limit > 0 ? $string($round($sources.credits.body.used_credits * 100 / $sources.credits.body.monthly_credit_limit)) & '%' : ''",
+          "resets_at": "$sources.bundles.body.purchases_reset_at",
+          "auto_reload": "$sources.balance.body.auto_reload_settings ? true : false"
+        }
       },
       "exceptions": {
         "needs_auth": {
-          "matches": "$usage.status = 401 or $usage.status = 403 or $credits.status = 401 or $credits.status = 403"
+          "matches": "$sources.usage.status = 401 or $sources.usage.status = 403 or $sources.credits.status = 401 or $sources.credits.status = 403"
         }
       }
     },
@@ -108,10 +153,10 @@
           "selector": "[role='dialog']"
         }
       },
-      "post": "(dialog and $contains(dialog, 'Plan usage limits')) ? ($a := $substringAfter(dialog, 'Plan usage limits'); $contains($a, 'Current session') ? { 'plan': $trim($substringBefore($a, 'Current session')) } : {}) : {}",
+      "post": "($value.dialog and $contains($value.dialog, 'Plan usage limits')) ? ($a := $substringAfter($value.dialog, 'Plan usage limits'); $contains($a, 'Current session') ? { 'plan': $trim($substringBefore($a, 'Current session')) } : {}) : {}",
       "exceptions": {
         "needs_auth": {
-          "matches": "$contains(url, '/login') or $contains(url, '/logout') or $contains(title, 'Log in')"
+          "matches": "$contains($page.url, '/login') or $contains($page.url, '/logout') or $contains($page.title, 'Log in')"
         }
       }
     },

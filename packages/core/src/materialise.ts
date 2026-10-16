@@ -48,7 +48,7 @@ async function applyFieldMap(
   for (const [field, fieldSchema] of Object.entries(fieldMap)) {
     if (!(field in out)) {
       // A declared $lens ref needs nothing from the page: its params are
-      // expressions over the sibling fields, so the row alone can build it.
+      // expressions over the sibling fields ($item), so the row alone can build it.
       // Skipping it made a purely declarative ref silently never materialise,
       // surfacing as "no resolver produced field /0/detail" — which reads as a
       // broken selector for a field no selector was ever meant to fill.
@@ -112,7 +112,7 @@ async function materialiseRef(
   let bound = true;
   for (const [key, expression] of Object.entries(schema.params ?? {})) {
     try {
-      params[key] = await evaluate(expression, contextObj, ctx.callParams, ctx.helpers);
+      params[key] = await evaluate(expression, { item: contextObj, params: ctx.callParams }, ctx.helpers);
     } catch {
       bound = false;
       break;

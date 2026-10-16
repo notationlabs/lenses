@@ -25,7 +25,7 @@ const topSpec: LensSpec = {
         items: {
           title: "string",
           score: "integer",
-          item_url: { $lens: "@example/hn/item", params: { id: "id" } },
+          item_url: { $lens: "@example/hn/item", params: { id: "$item.id" } },
         },
       },
     },

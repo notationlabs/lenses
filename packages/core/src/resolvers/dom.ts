@@ -37,10 +37,12 @@ export async function runDom(
 ): Promise<LensResult | ResolverMiss> {
   const extracted = await io.domExtract(expandSelectors(r, params));
   const page = { url: extracted.url, title: extracted.title };
-  // A tier's own predicates also see what it extracted: an app can render an
-  // error or sign-in screen at the requested URL, under an unchanged title.
-  const outcome = await matchTierException(spec, r.exceptions, { ...page, value: extracted.value }, params, "dom")
-    ?? await matchPageException(spec, page, params, "dom", r.exceptions);
+  // A tier's own predicates also see what it extracted, as `$value`: an app
+  // can render an error or sign-in screen at the requested URL, under an
+  // unchanged title.
+  const outcome = await matchTierException(
+    spec, r.exceptions, { ...page, value: extracted.value }, { page, value: extracted.value, params }, "dom"
+  ) ?? await matchPageException(spec, page, { page, params }, "dom", r.exceptions);
   if (outcome) return outcome;
 
   // The landed URL is the one piece of evidence the tier holds; carry it into
@@ -57,7 +59,7 @@ export async function runDom(
     value.length === 0 &&
     (spec.returns === undefined || !satisfiesReturns(value, spec.returns, spec.$defs))
   ) return miss;
-  if (r.post) value = await evaluate(r.post, value, params, spec.helpers);
+  if (r.post) value = await evaluate(r.post, { value, params }, spec.helpers);
   if (value === undefined || value === null) return miss;
   return { kind: "value", value, resolver: "dom", observed: extracted.url };
 }

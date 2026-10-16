@@ -51,7 +51,7 @@ lens call chatgpt/clear --allow-writes                                  # naviga
 lens call chatgpt/chat                                                  # plain read; no flag needed
 ```
 
-Authoring one: every write requires non-empty `effects.writes` and `cache` 0 or absent; `perform` permits `idempotent: true` only when every step is a navigate. A drop attaches a local file the way a drag from the desktop would: `{ "drop": "#editor", "file": "path" }` names a declared string param with no default, the caller passes an absolute path, and the host drops that file onto the first visible match. HTTP request bodies are declared as `{ "json": expr }`, `{ "text": expr }`, `{ "form": { field: expr } }`, or `{ "search": { field: expr } }`. A native form action is `{ "submit": "#form", "form": { "field[name]": expr } }`; its field expressions become literal named controls before `requestSubmit()`. The expressions run over params and earlier HTTP source bindings. Keep a page read as its own lens (like `chatgpt/chat`) and give a perform lens the same tiers as its readback.
+Authoring one: every write requires non-empty `effects.writes` and `cache` 0 or absent; `perform` permits `idempotent: true` only when every step is a navigate. A drop attaches a local file the way a drag from the desktop would: `{ "drop": "#editor", "file": "path" }` names a declared string param with no default, the caller passes an absolute path, and the host drops that file onto the first visible match. HTTP request bodies are declared as `{ "json": expr }`, `{ "text": expr }`, `{ "form": { field: expr } }`, or `{ "search": { field: expr } }`. A native form action is `{ "submit": "#form", "form": { "field[name]": expr } }`; its field expressions become literal named controls before `requestSubmit()`. These expressions read `$params`, and a chained source's body and headers also read the sources before it as `$sources` (see [Expressions](#expressions-and-templates)). Keep a page read as its own lens (like `chatgpt/chat`) and give a perform lens the same tiers as its readback.
 
 ## Authoring a lens for an unmapped page
 
@@ -65,10 +65,12 @@ Authoring one: every write requires non-empty `effects.writes` and `cache` 0 or 
    `--html`) stripped body markup for writing CSS selectors.
 
 2. Iterate JSONata offline against a captured response before it goes in a
-   document:
+   document. The JSON is bound as the reply body, `$res.body`, exactly where a
+   lens `map` finds it (`--as value` binds `$value` to try a dom `post`,
+   `--as item` a per-row `map`):
 
    ```sh
-   lens eval '[stories.{ "t": title }]' --input sample.json
+   lens eval '[$res.body.stories.{ "t": title }]' --input sample.json
    ```
 
 3. Write a JSON lens document into the catalog. Every field below is required
@@ -77,32 +79,35 @@ Authoring one: every write requires non-empty `effects.writes` and `cache` 0 or 
    satisfied:
    - `http` — direct requests to a JSON API, no page bound (preferred when a
      public or cookie-authenticated endpoint exists). `request` is
-     `"METHOD url-template"` (defaults to `GET` of the lens `url`); `items`/`map`
-     shape the body; `credentials: true` sends browser cookies through any
-     capable backend, while `credentials: "same-origin-page"` requires execution
-     in an already-open page matching the request origin. Sources may override
-     credentials and define JSONata headers using earlier bindings. `sources`
-     chains requests: each binds `$name` for `map`/`matches`, and later templates address
-     earlier bodies with dotted holes — `{orgs.0.uuid}` — which is how an id
-     only another response knows reaches a URL.
+     `{ "method": "GET", "url": "https://…/{params.id}" }` (omitted, the tier
+     GETs the lens `url`); `items` selects rows from the reply, `$res.body`,
+     and `map` shapes each row `$item`; `credentials: true` sends browser cookies
+     through any capable backend, while `credentials: "same-origin-page"`
+     requires execution in an already-open page matching the request origin.
+     Sources may override credentials and define JSONata headers. `sources`
+     chains requests: each binds `$sources.name` for `map` and for the sources
+     after it, whose URLs address earlier bodies with holes —
+     `{sources.orgs.body.0.uuid}` — which is how an id only another response
+     knows reaches a URL.
    - `intercept` — map a JSON response the page already fetched. The
-     `request` pattern takes `{param}` holes, so a per-account lens matches
-     only that account's response.
+     `request` is a `{method, url}` pattern whose `url` is a `*` glob taking
+     `{params.name}` holes, so a per-account lens matches only that account's
+     response.
    - `dom` — CSS selectors, optionally a repeating `item` selector.
    - `llm` — last resort; returns the snapshot and prompt to you.
 
    ```jsonc
    {
      "name": "@scope/site/thing",
-     "url": "https://site.com/{id}",
+     "url": "https://site.com/{params.id}",
      "params": { "id": "string" },
      "returns": { "type": "object", "fields": { "title": "string" } },
-     "exceptions": { "needs_auth": { "matches": "status = 401", "$lens": "@scope/site/login" } },
+     "exceptions": { "needs_auth": { "matches": "$res.status = 401", "$lens": "@scope/site/login" } },
      "effects": { "reads": ["site.com"], "writes": [], "idempotent": true },
      "resolve": [
        { "kind": "intercept",
-         "request": "GET https://site.com/api/thing/*",
-         "map": { "title": "data.title" } }
+         "request": { "method": "GET", "url": "https://site.com/api/thing/{params.id}" },
+         "map": { "title": "$res.body.data.title" } }
      ]
    }
    ```
@@ -132,8 +137,8 @@ Authoring one: every write requires non-empty `effects.writes` and `cache` 0 or 
    ```
 
    A `dom` tier reads the rendered page. It takes `fields` (selector specs)
-   and optionally `post` (JSONata over the extracted value) — there is no
-   `map` key; `map` belongs to `intercept` tiers. With a repeating `item` selector it
+   and optionally `post` (JSONata over `$value`, the extracted value) — there
+   is no `map` key; `map` belongs to `http` and `intercept` tiers. With a repeating `item` selector it
    yields one object per match, each `fields` selector scoped to that element:
 
    ```jsonc
@@ -143,7 +148,7 @@ Authoring one: every write requires non-empty `effects.writes` and `cache` 0 or 
        "title": { "selector": ".titleline > a" },
        "url": { "selector": ".titleline > a", "attr": "href" },
        "score": { "selector": ".score", "scope": "+" } },
-     "post": "$[[0..$limit - 1]]" }
+     "post": "$value[[0..$params.limit - 1]]" }
    ```
 
    Field specs: `selector` (first match wins; `":self"` reads the item
@@ -185,9 +190,9 @@ Authoring one: every write requires non-empty `effects.writes` and `cache` 0 or 
      "rows": { "type": "array", "items": { "period": "string" } } } },
    "resolve": [
      { "kind": "dom", "fields": { "total": { "selector": ".total" } },
-       "post": "{ 'total': $number(total) }" },
+       "post": "{ 'total': $number($value.total) }" },
      { "kind": "dom", "item": ".row", "fields": { "period": { "selector": ".period" } },
-       "post": "{ 'rows': $ }" }
+       "post": "{ 'rows': $value }" }
    ]
    ```
 
@@ -198,28 +203,31 @@ Authoring one: every write requires non-empty `effects.writes` and `cache` 0 or 
    ```jsonc
    { "scopes": [{ "url": "https://*.site.com/*", "exceptions": {
      "needs_auth": {
-       "matches": "$contains(url, '/sign-in') or status = 401",
+       "matches": "$contains($page.url, '/sign-in') or $res.status = 401",
        "hint": "Sign in, then retry."
      }
    } }] }
    ```
 
-   The shared matcher checks each page (`{url, title}`) and each response
-   (`{status, url, body}`), even each named source before the next request.
-   A lens can merge additional fields into the inherited entry or set the
-   entire key to `null` to disable it. Resolver `exceptions` add tier-local
-   matching over named `$source` contexts and run before inherited matchers;
-   they do not replace them. `matches: null` disables only an inherited
-   predicate. Legacy `detect` and `outcomes` fields are rejected.
+   The shared matcher checks each page as `$page` (`{url, title}`) and each
+   response as `$res` (`{status, url, body}`), even each named source
+   before the next request; whichever is not being checked is undefined, so
+   name both when a sign-in redirect can reach either. A lens can merge
+   additional fields into the inherited entry or set the entire key to `null`
+   to disable it. Resolver `exceptions` add tier-local matching — over
+   `$sources.name` replies in a sources tier — and run before inherited
+   matchers; they do not replace them. `matches: null` disables only an
+   inherited predicate. Legacy `detect` and `outcomes` fields are rejected.
 
    A `returns` field may itself declare a `$lens` reference, so a row carries a
    ready-made follow-up call. Declaring it is enough — no resolver needs to emit
-   the key, because the reference is built from the row's other fields:
+   the key, because the reference is built from the row's other fields, which
+   its `params` read as `$item`:
 
    ```jsonc
    "returns": { "type": "array", "items": {
      "period": "string",
-     "detail": { "$lens": "@scope/site/detail", "params": { "period": "period" } } } },
+     "detail": { "$lens": "@scope/site/detail", "params": { "period": "$item.period" } } } },
    // the tier extracts `period` only; `detail` materialises from it
    ```
 
@@ -230,12 +238,12 @@ Authoring one: every write requires non-empty `effects.writes` and `cache` 0 or 
    written.
 
    Return only what the caller needs — a lens that emits every row bloats every
-   call. Declare a `limit` param and slice in `post` (or `map`), since params
-   are JSONata variables:
+   call. Declare a `limit` param and slice in `post` (or `map`), reading it as
+   `$params.limit`:
 
    ```jsonc
    "params": { "limit": { "type": "integer", "default": 5 } },
-   // in a resolver: "post": "$[[0..$limit - 1]]"
+   // in a dom tier: "post": "$value[[0..$params.limit - 1]]"
    ```
 
    A default may also come from another lens: `{"$lens": ..., "field": ...,
@@ -255,12 +263,13 @@ Authoring one: every write requires non-empty `effects.writes` and `cache` 0 or 
    lens call whenever the caller omits the key. This form is a parameter
    default only; `field` is not valid on a `returns` reference.
 
-   Selectors take the same `{name}` holes as `url`, so a page that keys its
-   markup by a parameter needs no post-hoc recovery of that value from row text:
+   Selectors take the same `{params.name}` holes as `url`, so a page that keys
+   its markup by a parameter needs no post-hoc recovery of that value from row
+   text:
 
    ```jsonc
    "params": { "year": "integer" },
-   // in a dom tier: "item": "#past-payments-{year} .row"
+   // in a dom tier: "item": "#past-payments-{params.year} .row"
    ```
 
    The value is substituted verbatim — a selector is not a URL and must not be
@@ -272,14 +281,16 @@ Authoring one: every write requires non-empty `effects.writes` and `cache` 0 or 
 
    ```jsonc
    "helpers": { "money": "function($s) { $number($replace($s, /[^0-9.]/, \"\")) }" },
-   // in a tier: "post": "{ 'amount': $money(raw) }"
+   // in a dom tier: "post": "{ 'amount': $money($value.raw) }"
    ```
 
    Put the same block in a `catalog.json` beside your documents and every
    document in that directory gets it. That is the point: a helper pasted into
    thirteen documents has to be fixed thirteen times and re-checked against
    thirteen live pages. A document's own `helpers` entry overrides the
-   catalogue's, and a declared param of the same name shadows both.
+   catalogue's. A helper reads only its own arguments, and may not take a
+   reserved variable name (`res`, `item`, `sources`, `params`, `value`,
+   `page`).
 
    Some sites hold their session in the open tab rather than in cookies: any
    fresh load or reload lands on the login page. Give their scope two
@@ -289,7 +300,7 @@ Authoring one: every write requires non-empty `effects.writes` and `cache` 0 or 
    { "scopes": [{ "url": "https://bank.example/*",
      "tab": "reuse",          // run in the tab this origin used last; never close it
      "navigate": "in-page",   // reach the lens URL with pushState + popstate, never a load or reload
-     "exceptions": { "needs_auth": { "matches": "$contains(url, '/login')" } } }] }
+     "exceptions": { "needs_auth": { "matches": "$contains($page.url, '/login')" } } }] }
    ```
 
    The first call opens a tab, `needs_auth` holds it while the user signs in,
@@ -311,18 +322,100 @@ Authoring one: every write requires non-empty `effects.writes` and `cache` 0 or 
 
    An app can render an error or sign-in screen at the requested URL under an
    unchanged title. A dom tier's own exceptions also see what it extracted, as
-   `value`: `"exceptions": { "needs_auth": { "matches": "$contains($string(value.heading), 'unable to continue')" } }`. Author against it with
+   `$value`: `"exceptions": { "needs_auth": { "matches": "$contains($string($value.heading), 'unable to continue')" } }`. Author against it with
    `lens observe --tab <id>`, never a bare `lens observe <url>`, which loads a
    fresh document and signs the session out.
 
 4. Call it by file path to test: `lens call ./my-lens.json --catalog .`
 
-`map`, `post`, and `matches` are sandboxed JSONata: no network or DOM
-access. Declared params are available as variables (`$id`) in every
-expression, and as `{name}` holes in `url` and in selectors.
-
 The broker logs to `~/.cache/lenses/broker.log` (connections, tab reuse,
 debugger detaches); read it when a call behaves unexpectedly.
+
+## Expressions and templates
+
+`items`, `map`, `post`, `matches`, request bodies and the rest are sandboxed
+JSONata: no network or DOM access. **An expression has no implicit input.**
+Every piece of data it reads is a named variable, and each site binds a fixed
+set of them. A path at the top level of an expression must start at a
+variable; `title`, `$.title` and `$` are validation errors. Inside a step,
+paths are relative to that step's own items as usual, so after a
+variable-rooted step you write plain field names:
+
+```jsonc
+"$value[$has(date)].{ 'date': date, 'amount': $money(amount) }"  // ok: date, amount are relative to each row
+"$map($res.body.rows, function($r) { $r.id })"                   // ok: lambda arguments are variables
+"date"                                                            // error: path "date" must start at a variable
+"$[0]"                                                            // error: "$" has no input to refer to here
+"$id"                                                             // error: read the call parameter as $params.id
+```
+
+### Variables in scope at each site
+
+| Site | Variables | Example |
+| --- | --- | --- |
+| `items` (http/intercept, one request) | `$res` — the reply; `$params` | `"items": "$res.body.statementCycles"` |
+| `map` when the tier has `items` (once per row) | `$item` — the row; `$res`; `$params` | `"map": { "id": "$item.id" }` |
+| `map` without `items` (once) | `$res`; `$params` | `"map": { "total": "$res.body.total" }` |
+| http source `items` | `$res` — this source's reply; `$sources` — the sources declared before it; `$params` | `"items": "$match($res.body, /token=(\\w+)/).groups[0]"` |
+| intercept source `items` | `$res` — this source's reply; `$params` | `"items": "$res.body.limits"` |
+| `map` with `sources` | `$sources` — each source's reply, by name; `$params` | `"plan": "$sources.orgs.body[0].plan"` |
+| http source `headers` and `body` | `$sources` (earlier sources); `$params` | `"X-CSRF-Token": "$sources.csrf.body"` |
+| http `body` (one request) | `$params` | `{ "json": "{ 'id': $params.id }" }` |
+| dom `post` | `$value` — what the fields extracted; `$params` | `"post": "$value[[0..$params.limit - 1]]"` |
+| perform `value`, submit `form` values | `$params` | `"value": "$params.message"` |
+| document and catalog-scope exception `matches`, `params` | `$page` — `{url, title}` when a page is checked; `$res` when a response is checked (the other is undefined); `$params` | `"$contains($page.url, '/login') or $res.status = 401"` |
+| a dom tier's own exceptions | `$page`; `$value`; `$params` | `"$contains($value.heading, 'unable to continue')"` |
+| an http/intercept tier's own exceptions (one request) | `$res`; `$params` | `"$res.status = 404"` |
+| a sources tier's own exceptions | `$sources` — the replies arrived so far; `$params` | `"$sources.csrf.status = 401"` |
+| `returns` `$lens` reference `params` | `$item` — the object holding the reference; `$params` | `"params": { "id": "$item.id" }` |
+| `helpers` | the lambda's own arguments only | `"money": "function($s) { $number($s) }"` |
+
+A reply is always `{status, url, body}`: `$res`, and each `$sources.name`,
+everywhere they appear, so a body field is `$res.body.error` and a status is
+`$res.status`. In `map`, `headers`, `body` and later sources, a source's `body`
+is what its `items` selected; in a sources tier's own exceptions it is the
+body as received, since they run before `items`. `$item` exists only in a
+`map` whose tier declares `items` (and in `$lens` params). Helpers and
+JSONata's built-ins (`$count`, `$match`, …) are callable everywhere; `$x := …`
+and lambda arguments work as usual. Validation rejects a variable a site does
+not bind, `$params.x` for an undeclared `x`, and `$sources.x` for a source that
+is not declared (or, in a chain, not declared earlier). `lens eval` runs the
+same evaluator.
+
+### Maps
+
+A `map` is either one expression producing the whole value, or an object whose
+values are expressions — or, recursively, nested objects of them. Prefer the
+object form whenever the result is a plain object; keep one expression when
+building it needs logic (conditionals, filters, `$x := …`). Constants are
+JSONata literals, so strings keep their quotes:
+
+```jsonc
+"items": "$res.body.statement",
+"map": {
+  "date": "$item.date",
+  "posted": "$item.postedFlag = 'Y'",
+  "encoding": "'base64'",
+  "balance": { "value": "$item.runningBalance.value", "currency": "$item.runningBalance.currency" }
+}
+```
+
+A field whose expression yields nothing is left out, as in a JSONata object.
+
+### Templates
+
+`url`, request URLs, selectors and http `headers` are templates, not
+expressions. A hole names its root:
+
+| Template | Holes |
+| --- | --- |
+| lens `url`; dom `item`, `selector`, `scope`; perform selectors; intercept `request.url`; http `request.url` and `headers` | `{params.name}` |
+| an http source's `request.url` | `{params.name}`, and `{sources.name.body}` or `{sources.name.body.path.0.to}` for a source declared earlier |
+
+URL holes are percent-encoded (a request pattern also encodes `*`, so a value
+never widens the glob); selector and header holes go in verbatim. A hole
+without a root (`{id}`), an undeclared parameter, or a source not yet fetched
+is a validation error.
 
 ## Result types
 

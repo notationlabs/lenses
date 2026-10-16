@@ -1,15 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { applyCatalogSettings } from "../src/catalog.js";
 
-const doc = { name: "@test/site/read", url: "https://foo.example.com/a/{id}", params: { id: "string" }, effects: { reads: [], writes: [] }, resolve: [{ kind: "dom" }] };
+const doc = { name: "@test/site/read", url: "https://foo.example.com/a/{params.id}", params: { id: "string" }, effects: { reads: [], writes: [] }, resolve: [{ kind: "dom" }] };
 const catalog = { scopes: [{ url: "https://*.example.com/*", exceptions: {
-  needs_auth: { matches: "status = 401", hint: "Sign in" },
+  needs_auth: { matches: "$res.status = 401", hint: "Sign in" },
 } }] };
 
 describe("catalog exceptions", () => {
   it("matches URL templates and merges fields", () => {
-    expect(applyCatalogSettings({ ...doc, exceptions: { needs_auth: { matches: "status = 403" } } }, catalog).exceptions)
-      .toEqual({ needs_auth: { matches: "status = 403", hint: "Sign in" } });
+    expect(applyCatalogSettings({ ...doc, exceptions: { needs_auth: { matches: "$res.status = 403" } } }, catalog).exceptions)
+      .toEqual({ needs_auth: { matches: "$res.status = 403", hint: "Sign in" } });
   });
   it("nullifies a whole inherited entry", () => {
     expect(applyCatalogSettings({ ...doc, exceptions: { needs_auth: null } }, catalog).exceptions)
@@ -20,7 +20,7 @@ describe("catalog exceptions", () => {
       .toEqual({ needs_auth: { matches: null, hint: "Sign in" } });
   });
   it("does not match another host", () => {
-    expect(applyCatalogSettings({ ...doc, url: "https://elsewhere.test/a/{id}" }, catalog).exceptions).toBeUndefined();
+    expect(applyCatalogSettings({ ...doc, url: "https://elsewhere.test/a/{params.id}" }, catalog).exceptions).toBeUndefined();
   });
 });
 
@@ -30,7 +30,7 @@ describe("catalog tab settings", () => {
     expect(applyCatalogSettings(doc, tabbed)).toMatchObject({ tab: "reuse", navigate: "in-page" });
   });
   it("leaves other hosts alone", () => {
-    const spec = applyCatalogSettings({ ...doc, url: "https://elsewhere.test/a/{id}" }, tabbed);
+    const spec = applyCatalogSettings({ ...doc, url: "https://elsewhere.test/a/{params.id}" }, tabbed);
     expect(spec.tab).toBeUndefined();
     expect(spec.navigate).toBeUndefined();
   });

@@ -10,7 +10,7 @@ describe("materialiseLenses", () => {
   it("binds a $lens field using declared parameter expressions", async () => {
     const returns = {
       type: "object",
-      fields: { next: { $lens: "@djgrant/hn/top", params: { p: "next" } } },
+      fields: { next: { $lens: "@djgrant/hn/top", params: { p: "$item.next" } } },
     };
     const r = await materialiseLenses({ next: 2 }, returns);
     expect(r).toEqual({ next: { $lens: "@djgrant/hn/top", params: { p: 2 } } });
@@ -24,7 +24,7 @@ describe("materialiseLenses", () => {
           type: "array",
           items: {
             id: "string",
-            item_url: { $lens: "@djgrant/hn/item", params: { id: "id" } },
+            item_url: { $lens: "@djgrant/hn/item", params: { id: "$item.id" } },
           },
         },
       },
@@ -47,7 +47,7 @@ describe("materialiseLenses", () => {
       type: "array",
       items: {
         id: "string",
-        item_url: { $lens: "@djgrant/hn/item", params: { id: "id", page: "$page" } },
+        item_url: { $lens: "@djgrant/hn/item", params: { id: "$item.id", page: "$params.page" } },
       },
     };
     const r = (await materialiseLenses([{ id: "9", item_url: "9" }], returns, { page: 2 })) as Array<{ item_url: unknown }>;
@@ -74,7 +74,7 @@ describe("materialiseLenses", () => {
         type: "object",
         fields: {
           id: "string",
-          permalink: { $lens: "@djgrant/hn/comment", params: { id: "id" } },
+          permalink: { $lens: "@djgrant/hn/comment", params: { id: "$item.id" } },
           replies: { type: "array", items: { $ref: "comment" } },
         },
       },
