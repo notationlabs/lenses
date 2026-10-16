@@ -123,6 +123,11 @@ export class CDPRelayServer {
     return this._handler.tabLink(tabId);
   }
 
+  /** One attach attempt for a detached tab a sign-in wait is watching. */
+  retryAttach(tabId: number): Promise<TabLink | undefined> {
+    return this._handler.retryAttach(tabId);
+  }
+
   onTabLinkChange(listener: (tabId: number, link: TabLink) => void): void {
     this._handler.onTabLinkChange(listener);
   }

@@ -115,6 +115,21 @@ export class BrowserModel {
     return { state: state.removed ? "removed" : "disconnected", ...lastError };
   }
 
+  /**
+   * One attach attempt for a tab the debugger lost, while a sign-in wait
+   * watches it. The extension asks for a blocked tab back only when its URL
+   * changes, and a signed-in single-page app may never change it. This can
+   * pull a tab the user dragged out while detached back into the group, so
+   * it runs only during a sign-in wait.
+   */
+  async retryAttach(tabId: number): Promise<TabLink | undefined> {
+    const state = this._tabs.get(tabId);
+    if (state && !state.session && !state.attachment && !state.removed && state.lastDetachAt !== undefined) {
+      await this._reattach(tabId, state, "sign-in wait retry");
+    }
+    return this.tabLink(tabId);
+  }
+
   private async _reattach(tabId: number, state: TabState, why: string): Promise<void> {
     this._log(`reattach tab ${tabId} (${why})`);
     try {

@@ -6,7 +6,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { basename, extname, isAbsolute, join } from "node:path";
 import puppeteer, { type Browser, type Page } from "puppeteer-core";
 import { defaultChromeUserDataDir } from "./chrome-paths.js";
-import { showAuthBanner } from "./auth-banner.js";
+import { clearAuthBanners, showAuthBanner } from "./auth-banner.js";
 import { raiseChrome } from "./launch-browser.js";
 import {
   createCaptureBuffer,
@@ -60,6 +60,8 @@ const MAX_BODY_BYTES = 512 * 1024;
 const LOAD_GRACE_MS = 500;
 /** Upper bound on waiting for an in-page app to settle after a load or route. */
 const IN_PAGE_SETTLE_MS = 10_000;
+/** How often a sign-in wait tries to re-attach a tab a password manager's frame blocks. */
+const SIGN_IN_RETRY_MS = 3_000;
 const URL_POLL_MS = 250;
 const PERFORM_POLL_MS = 150;
 const PERFORM_WAIT_DEFAULT_MS = 10_000;
@@ -111,6 +113,8 @@ export interface CdpTransport {
    * transport's group, out of the group, or closed. Undefined when unknown.
    */
   tabLink?(key: string): TabLink | undefined;
+  /** One attach attempt for a detached tab a sign-in wait is watching. */
+  retryAttach?(key: string): Promise<TabLink | undefined>;
   onTabLinkChange?(listener: (key: string, link: TabLink) => void): () => void;
   /** Transport cleanup before a session or temporary page is released. */
   preparePageRelease?(
@@ -187,6 +191,8 @@ export function createCdpBackend(
    */
   const keptGates = new Map<string, KeptGate>();
   const pageGateKeys = new WeakMap<Page, string>();
+  /** When each detached sign-in tab last got a re-attach attempt. */
+  const signInRetries = new Map<string, number>();
   let pageGateSequence = 0;
   const watchedGateOrigins = new Set<string>();
   /** Broker tab ids: issued on first bind, valid while the page stays open. */
@@ -422,7 +428,17 @@ export function createCdpBackend(
   ): Promise<Page | undefined> {
     const live = await pageForKey(current, key);
     if (live) return live;
-    const link = transport.tabLink?.(key);
+    let link = transport.tabLink?.(key);
+    // The extension retries only on a URL change, which a signed-in
+    // single-page app may never make, so a sign-in wait retries too.
+    const origin = urlOrigin(keptGates.get(key)?.target ?? target ?? "");
+    if (link?.state === "disconnected" && watchedGateOrigins.has(origin) && transport.retryAttach) {
+      const last = signInRetries.get(key) ?? 0;
+      if (Date.now() - last >= SIGN_IN_RETRY_MS) {
+        signInRetries.set(key, Date.now());
+        link = (await transport.retryAttach(key)) ?? link;
+      }
+    }
     if (link?.state === "connected") {
       // Attached a moment ago; Puppeteer has not heard yet.
       const page = await awaitPageForKey(current, key);
@@ -832,6 +848,15 @@ export function createCdpBackend(
       let moveTimer: ReturnType<typeof setTimeout> | undefined;
       let mounted: { page: Page; prompt?: { update(expiresAt: number, count: number): void; dispose(): void }; unmount(): void } | undefined;
       const exit = (reason: "moved" | "closed") => { if (!disposed) onExit(reason); };
+      // The banner's removal fails while the debugger is detached; clear it
+      // from the re-attached page before the retry, which repaints if needed.
+      const reattached = () => {
+        void (async () => {
+          const page = await awaitPageForKey(currentBrowser, key).catch(() => undefined);
+          if (page) await clearAuthBanners(page);
+          exit("moved");
+        })();
+      };
       // Chrome detaches the debugger from a tab while a password manager's
       // frame is in it (see TabDisconnected); the tab is still open in the
       // group, so the user is still signing in. Only a closed tab, or one
@@ -844,12 +869,13 @@ export function createCdpBackend(
           log(`sign-in tab t${key} detached from the debugger; still waiting`);
           return;
         }
-        exit(state === "connected" ? "moved" : "closed");
+        if (state === "connected") reattached();
+        else exit("closed");
       };
       const unlisten = transport.onTabLinkChange?.((changed, link) => {
         if (changed !== key) return;
         if (link.state === "removed" || link.state === "closed") exit("closed");
-        else if (link.state === "connected" && (!mounted || mounted.page.isClosed())) exit("moved");
+        else if (link.state === "connected" && (!mounted || mounted.page.isClosed())) reattached();
       });
       const browserGone = () => exit("closed");
       currentBrowser.on("disconnected", browserGone);
@@ -884,7 +910,7 @@ export function createCdpBackend(
           },
         };
         mounted = current;
-        const prompt = await showAuthBanner(page, new URL(origin).hostname);
+        const prompt = await showAuthBanner(page, new URL(origin).hostname, `__lens_auth_t${key}`);
         if (mounted === current) current.prompt = prompt;
         else prompt.dispose();
         // Navigation may have continued while a previous attempt was running.
@@ -899,7 +925,7 @@ export function createCdpBackend(
       } else {
         // The link may have changed while this watch was being set up.
         const state = transport.tabLink?.(key)?.state;
-        if (state !== "disconnected") queueMicrotask(() => exit(state === "connected" ? "moved" : "closed"));
+        if (state !== "disconnected") queueMicrotask(() => state === "connected" ? reattached() : exit("closed"));
       }
       return {
         update(expiresAt, count) {
@@ -1089,6 +1115,8 @@ export function createCdpBackend(
             navigated = true;
           }
         }
+        // Sign-in has just taken the tab somewhere new; the app may still be rendering it.
+        if (request.existingOnly) await settleReady(chosen, request);
         return makeSession(chosen, false, navigated, target, request.loadTimeoutMs, atAuthGate, {
           pinned: true,
           inPage: request.inPage,
@@ -1104,6 +1132,7 @@ export function createCdpBackend(
           ? !kept || sameGatePlace(existing.url(), kept.keptUrl)
           : undefined;
         if (atAuthGate === false) resetCaptures(existing);
+        if (request.existingOnly && request.navigation !== "fresh") await settleReady(existing, request);
         const state =
           request.navigation === "fresh"
             ? (await reloadPage(existing, request.loadTimeoutMs),

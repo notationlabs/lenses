@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("../src/auth-banner.js", () => ({
   showAuthBanner: async () => ({ update: () => {}, dispose: () => {} }),
+  clearAuthBanners: async () => {},
 }));
 vi.mock("../src/launch-browser.js", () => ({ raiseChrome: async () => {} }));
 
@@ -651,7 +652,7 @@ describe("tabs the debugger loses", () => {
     expect(chrome.browser.newPage).toHaveBeenCalledTimes(1);
 
     chrome.reconnect("100");
-    expect(exits).toEqual(["moved"]);
+    await vi.waitFor(() => expect(exits).toEqual(["moved"]));
     prompt!.dispose();
   });
 });
