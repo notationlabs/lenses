@@ -51,7 +51,7 @@ lens call chatgpt/clear --allow-writes                                  # naviga
 lens call chatgpt/chat                                                  # plain read; no flag needed
 ```
 
-Authoring one: every write requires non-empty `effects.writes` and `cache` 0 or absent; `perform` permits `idempotent: true` only when every step is a navigate. A drop attaches a local file the way a drag from the desktop would: `{ "drop": "#editor", "file": "path" }` names a declared string param with no default, the caller passes an absolute path, and the host drops that file onto the first visible match. HTTP request bodies are declared as `{ "json": expr }`, `{ "text": expr }`, `{ "form": { field: expr } }`, or `{ "search": { field: expr } }`. A native form action is `{ "submit": "#form", "form": { "field[name]": expr } }`; its field expressions become literal named controls before `requestSubmit()`. These expressions read `$params`, and a chained source's body and headers also read the sources before it as `$sources` (see [Expressions](#expressions-and-templates)). Keep a page read as its own lens (like `chatgpt/chat`) and give a perform lens the same tiers as its readback.
+Authoring one: every write requires non-empty `effects.writes` and `cache` 0 or absent; `perform` permits `idempotent: true` only when every step is a navigate. A drop attaches a local file the way a drag from the desktop would: `{ "drop": "#editor", "file": "$params.path" }` names, exactly as `$params.<name>`, a declared string param with no default, the caller passes an absolute path, and the host drops that file onto the first visible match. HTTP request bodies are declared as `{ "json": expr }`, `{ "text": expr }`, `{ "form": { field: expr } }`, or `{ "search": { field: expr } }`. A native form action is `{ "submit": "#form", "form": { "field[name]": expr } }`; its field expressions become literal named controls before `requestSubmit()`. These expressions read `$params`, and a chained source's body and headers also read the sources before it as `$sources` (see [Expressions](#expressions-and-templates)). Keep a page read as its own lens (like `chatgpt/chat`) and give a perform lens the same tiers as its readback.
 
 ## Authoring a lens for an unmapped page
 
@@ -247,18 +247,20 @@ Authoring one: every write requires non-empty `effects.writes` and `cache` 0 or 
    ```
 
    A default may also come from another lens: `{"$lens": ..., "field": ...,
-   "params"?: {...literals}}` calls the target when the caller omits the key and
-   uses the named top-level field of its result. Use it for identity-like values
+   "params"?: {...literals}}` calls the target when the caller omits the key;
+   `field` is an expression over the target's result, bound as `$value`
+   (`"$value.vrn"`, or `"$value.accounts[0].id"` to pick from a list). Use it for identity-like values
    the caller should not have to know — an account number a summary page already
    shows:
 
    ```jsonc
    "params": { "vrn": { "type": "string",
-     "default": { "$lens": "@scope/site/summary", "field": "vrn" } } },
+     "default": { "$lens": "@scope/site/summary", "field": "$value.vrn" } } },
    ```
 
-   The target field must be a non-nullable primitive matching the param type,
-   and a target that errors or returns an outcome fails the call rather than
+   The value must be a non-nullable primitive matching the param type; a plain
+   `$value.name` is checked against the target's `returns` before any call,
+   and any other expression against the value it produces. A target that errors or returns an outcome fails the call rather than
    guessing. Prefer a cached target (`effects.cache`) — the default costs a
    lens call whenever the caller omits the key. This form is a parameter
    default only; `field` is not valid on a `returns` reference.
@@ -409,7 +411,7 @@ expressions. A hole names its root:
 
 | Template | Holes |
 | --- | --- |
-| lens `url`; dom `item`, `selector`, `scope`; perform selectors; intercept `request.url`; http `request.url` and `headers` | `{params.name}` |
+| lens `url` and `ready`; dom `item`, `selector`, `scope`; perform selectors; intercept `request.url`; http `request.url` and `headers` | `{params.name}` |
 | an http source's `request.url` | `{params.name}`, and `{sources.name.body}` or `{sources.name.body.path.0.to}` for a source declared earlier |
 
 URL holes are percent-encoded (a request pattern also encodes `*`, so a value

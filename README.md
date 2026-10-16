@@ -348,7 +348,7 @@ repository — or at a direct HTTP URL.
     { "fill": "#prompt-textarea", "value": "$params.message" },   // insertText, never value=
     { "click": "[data-testid='send-button']" },
     { "press": "Enter" },
-    { "drop": "#editor", "file": "path" },                  // the caller's file, dropped as if dragged in
+    { "drop": "#editor", "file": "$params.path" },                  // the caller's file, dropped as if dragged in
     { "wait": { "increases": "section[data-turn]", "timeoutMs": 30000 } },
     { "navigate": "fresh" }                                 // reload the bound target
   ]

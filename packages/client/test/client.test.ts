@@ -460,7 +460,7 @@ describe("LensClient", () => {
       resolve: [{ kind: "dom", fields: { total: { selector: ".total" } } }],
     });
 
-    const refDefault = { $lens: "@example/hmrc/summary", field: "vrn" };
+    const refDefault = { $lens: "@example/hmrc/summary", field: "$value.vrn" };
 
     async function catalogDirectory(...specs: object[]): Promise<string> {
       const directory = await mkdtemp(join(tmpdir(), "lens-client-"));
@@ -499,6 +499,39 @@ describe("LensClient", () => {
       });
       expect(transport.named).toEqual(["@example/hmrc/summary", "@example/hmrc/vat"]);
       expect(transport.lastParams).toEqual({ vrn: "GB123" });
+    });
+
+    it("evaluates a default's field expression over the target's result", async () => {
+      const listSpec = {
+        ...summarySpec,
+        returns: { type: "object", fields: { vrns: { type: "array", items: { id: "string" } } } },
+      };
+      const { client, transport } = await catalog(
+        listSpec,
+        vatSpec({ type: "string", default: { $lens: "@example/hmrc/summary", field: "$value.vrns[1].id" } })
+      );
+      transport.results["@example/hmrc/summary"] = {
+        kind: "value",
+        value: { vrns: [{ id: "GB1" }, { id: "GB2" }] },
+        resolver: "dom",
+      };
+      transport.results["@example/hmrc/vat"] = { kind: "value", value: { total: 1 }, resolver: "dom" };
+
+      await client.call({ lens: "hmrc/vat" });
+      expect(transport.lastParams).toEqual({ vrn: "GB2" });
+    });
+
+    it("rejects a default whose field expression yields the wrong type", async () => {
+      const { client, transport } = await catalog(
+        summarySpec,
+        vatSpec({ type: "string", default: { $lens: "@example/hmrc/summary", field: "$length($value.vrn)" } })
+      );
+      transport.results["@example/hmrc/summary"] = { kind: "value", value: { vrn: "GB123" }, resolver: "dom" };
+
+      expect(await client.call({ lens: "hmrc/vat" })).toEqual({
+        kind: "error",
+        message: 'default for "vrn" via @example/hmrc/summary: field $length($value.vrn) is not a string',
+      });
     });
 
     it("skips the default call when the caller supplies the param", async () => {
@@ -571,7 +604,7 @@ describe("LensClient", () => {
     it("rejects a ref default naming a field the target does not declare", async () => {
       const { client, transport } = await catalog(
         summarySpec,
-        vatSpec({ type: "string", default: { $lens: "@example/hmrc/summary", field: "vat_number" } })
+        vatSpec({ type: "string", default: { $lens: "@example/hmrc/summary", field: "$value.vat_number" } })
       );
 
       expect(await client.call({ lens: "hmrc/vat" })).toEqual({
@@ -603,7 +636,7 @@ describe("LensClient", () => {
       const selfSpec = {
         name: "@example/web/self",
         url: "https://example.com/{params.x}",
-        params: { x: { type: "string", default: { $lens: "@example/web/self", field: "x" } } },
+        params: { x: { type: "string", default: { $lens: "@example/web/self", field: "$value.x" } } },
         returns: { type: "object", fields: { x: "string" } },
         effects: { reads: ["example.com"], writes: [] },
         resolve: [{ kind: "dom", fields: { x: { selector: ".x" } } }],
@@ -624,7 +657,7 @@ describe("LensClient", () => {
           x:
             step === 5
               ? { type: "string", default: "leaf" }
-              : { type: "string", default: { $lens: `@example/web/step${step + 1}`, field: "x" } },
+              : { type: "string", default: { $lens: `@example/web/step${step + 1}`, field: "$value.x" } },
         },
         returns: { type: "object", fields: { x: "string" } },
         effects: { reads: ["example.com"], writes: [] },

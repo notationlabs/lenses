@@ -502,7 +502,7 @@ describe("perform", () => {
     const dropSpec = validateSpec({
       ...sendSpec,
       params: { path: "string", row: "integer" },
-      perform: [{ drop: "#upload-{params.row}", file: "path" }],
+      perform: [{ drop: "#upload-{params.row}", file: "$params.path" }],
     });
     const { io: withPerform, performed } = performIo();
     await executeLens(dropSpec, { path: "/tmp/clip.mp4", row: 2 }, withPerform);
@@ -513,11 +513,11 @@ describe("perform", () => {
     const dropSpec = validateSpec({
       ...sendSpec,
       params: { path: "string" },
-      perform: [{ drop: "#upload", file: "path" }],
+      perform: [{ drop: "#upload", file: "$params.path" }],
     });
     const { io: withPerform, performed } = performIo();
     const r = await executeLens(dropSpec, { path: "" }, withPerform);
-    expect(r).toEqual({ kind: "error", message: 'perform drop file param "path" is empty' });
+    expect(r).toEqual({ kind: "error", message: 'perform drop file $params.path is empty' });
     expect(performed).toEqual([]);
   });
 
@@ -1388,7 +1388,7 @@ describe("resolveParams with {$lens} defaults", () => {
   const refSpec = validateSpec({
     name: "@example/hmrc/vat",
     url: "https://example.com/vat/{params.vrn}",
-    params: { vrn: { type: "string", default: { $lens: "@example/hmrc/summary", field: "vrn" } } },
+    params: { vrn: { type: "string", default: { $lens: "@example/hmrc/summary", field: "$value.vrn" } } },
     effects: { reads: ["example.com"], writes: [] },
     resolve: [{ kind: "dom", fields: { total: { selector: ".total" } } }],
   });

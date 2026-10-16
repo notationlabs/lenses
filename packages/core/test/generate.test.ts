@@ -39,7 +39,7 @@ describe("generateTsSdk", () => {
         name: "@example/hmrc/vat",
         url: "https://example.com/{vrn}",
         params: {
-          vrn: { type: "string", default: { $lens: "@example/hmrc/summary", field: "vrn" } },
+          vrn: { type: "string", default: { $lens: "@example/hmrc/summary", field: "$value.vrn" } },
         },
       }),
     ]);

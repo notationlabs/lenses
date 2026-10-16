@@ -17,7 +17,7 @@ import { runDom } from "./resolvers/dom.js";
 import { runLlm } from "./resolvers/llm.js";
 import { isPlainObject } from "./util.js";
 import { fillAbsent, satisfiesReturns } from "./reconcile.js";
-import { expandTemplate } from "./url-pattern.js";
+import { dropFileParam, expandTemplate } from "./url-pattern.js";
 
 /**
  * Run resolvers in cost order, filling fields until `returns` is satisfied.
@@ -108,9 +108,9 @@ async function runPerform(
         ...(step.form !== undefined ? { form } : {}),
       });
     } else if ("drop" in step) {
-      const file = params[step.file];
+      const file = params[dropFileParam(step.file) ?? ""];
       if (typeof file !== "string" || file === "") {
-        return { kind: "error", message: `perform drop file param "${step.file}" is empty` };
+        return { kind: "error", message: `perform drop file ${step.file} is empty` };
       }
       steps.push({ drop: expandTemplate(step.drop, params), file });
     } else if ("wait" in step) {
