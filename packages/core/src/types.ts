@@ -114,7 +114,7 @@ export interface PerformWait {
 
 export type PerformStep =
   | { fill: string; value: string } // value is a JSONata expression over $params
-  | { click: string }
+  | { click: string; text?: string } // text: a template the clicked element's text must contain
   | { submit: string; form?: Record<string, ExprString> } // $params expressions, resolved before requestSubmit()
   | { press: string } // named key, e.g. "Enter"
   | { drop: string; file: string } // file names a string param; hosts receive its absolute path

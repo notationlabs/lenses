@@ -257,7 +257,7 @@ fields, detects a named outcome, or misses and falls through.
 When `returns` is an object, fields accumulate across tiers. The engine stops when all
 declared fields are present, so each tier only needs to supply its part of the result.
 
-Lens `map` and `matches` bodies are JSONata expressions with no implicit input: each reads named variables (`$res`, `$item`, `$sources`, `$params`, `$value`, `$page`) bound per site — see the table in [skill/SKILL.md](skill/SKILL.md#variables-in-scope-at-each-site). They cannot reach the network or DOM. Beyond an `http` tier's declared requests, lenses observe what a page already does; page actions and mutating HTTP methods run only when the caller opts in with `--allow-writes` (CLI) or `allowWrites` (client and MCP).
+Lens `map` and `matches` bodies are JSONata expressions with no implicit input: each reads named variables (`$res`, `$item`, `$sources`, `$params`, `$value`, `$page`) bound per site — see the table in [skill/SKILL.md](skill/SKILL.md#variables-in-scope-at-each-site). They cannot reach the network or DOM. Beyond an `http` tier's declared requests, lenses observe what a page already does; lenses that declare `effects.writes` run only when the caller opts in with `--allow-writes` (CLI) or `allowWrites` (client and MCP).
 `lens eval` runs the same sandboxed evaluator against a JSON file or stdin, so an
 expression can be iterated on offline before it goes into a lens document.
 
@@ -341,7 +341,7 @@ repository — or at a direct HTTP URL.
   reserved variable names (`res`, `item`, `sources`, `params`, `value`, `page`).
 
 - `effects` — `{ "reads": [...], "writes": [...], "idempotent": true, "cache": 60 }`.
-- `perform` — an ordered list of write steps run once against the bound page, before the resolve tiers read the result back:
+- `perform` — an ordered list of page steps run once against the bound page, before the resolve tiers read the result back:
 
   ```jsonc
   "perform": [
@@ -356,7 +356,7 @@ repository — or at a direct HTTP URL.
 
   `wait` takes exactly one of `appears` (≥1 match), `gone` (0 matches, immediately true when already satisfied), or `increases` (match count exceeds the baseline sampled at step entry — place it right after the step that triggers the change), plus `timeoutMs` (default 10000). `navigate` accepts only `"fresh"`. `drop` reads the absolute path the caller passed in the named param — a declared string param with no default, so a document can never choose the file — and dispatches dragenter, dragover and drop carrying it onto the first visible match.
 
-  Consent is declared and enforced: `perform` requires non-empty `effects.writes`, `effects.cache` absent or 0, and `idempotent: true` only when every step is a navigate. The caller must pass `--allow-writes`/`allowWrites` or the call is refused with `code: "writes_not_allowed"`; a step failure is `code: "perform_failed"` with the 0-based `step`, and no tier runs after it. Results are never cached, and any result from a call whose steps all ran carries `performed: true` — the write happened, even if reading the result back failed. With `--verbose`, each step reports started/completed; selectors are bounded and likely secret-bearing attribute values are redacted, and fill values are never logged. Steps are not retried after a lost acknowledgement.
+  Consent is declared by the author and enforced: a lens is a write when `effects.writes` is non-empty, so steps that only read (opening a statement, paging a list) declare `writes: []`. A write requires `effects.cache` absent or 0. The caller of a write must pass `--allow-writes`/`allowWrites` or the call is refused with `code: "writes_not_allowed"`; a step failure is `code: "perform_failed"` with the 0-based `step`, and no tier runs after it. Write results are never cached, and any result from a call whose steps all ran carries `performed: true` — the write happened, even if reading the result back failed. With `--verbose`, each step reports started/completed; selectors are bounded and likely secret-bearing attribute values are redacted, and fill values are never logged. Steps are not retried after a lost acknowledgement.
 
 - `loadTimeoutMs` — optional page-load timeout; the default is 30 seconds.
 - `resolve` — ordered http, intercept, DOM, and LLM resolver definitions.

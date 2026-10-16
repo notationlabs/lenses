@@ -135,26 +135,35 @@ export function pagePerformFill(spec: { selector: string; value: string }):
 /**
  * Click the first visible match. Pages often render hidden duplicates of a
  * control, so hidden elements are skipped (offsetParent/client-rect check).
+ * With `text`, only matches whose whitespace-collapsed text contains it count.
  * A disabled or aria-disabled target is an error: the page is not ready.
  */
-export function pagePerformClick(spec: { selector: string }):
+export function pagePerformClick(spec: { selector: string; text?: string }):
   | { ok: true }
   | { ok: false; message: string } {
-  const matches = [...document.querySelectorAll(spec.selector)];
+  const collapse = (value: string) => value.replace(/\s+/g, " ").trim();
+  const described = spec.text === undefined
+    ? `click "${spec.selector}"`
+    : `click "${spec.selector}" with text "${spec.text}"`;
+  let matches = [...document.querySelectorAll(spec.selector)];
+  if (spec.text !== undefined) {
+    const wanted = collapse(spec.text);
+    matches = matches.filter((el) => collapse(el.textContent ?? "").includes(wanted));
+  }
   if (matches.length === 0) {
-    return { ok: false, message: `click "${spec.selector}" matched nothing` };
+    return { ok: false, message: `${described} matched nothing` };
   }
   const visible = matches.find(
     (el) => (el as HTMLElement).offsetParent !== null || el.getClientRects().length > 0
   );
   if (!visible) {
-    return { ok: false, message: `click "${spec.selector}" matched no visible element` };
+    return { ok: false, message: `${described} matched no visible element` };
   }
   if (
     (visible as HTMLButtonElement).disabled === true ||
     visible.getAttribute("aria-disabled") === "true"
   ) {
-    return { ok: false, message: `click "${spec.selector}" target is disabled` };
+    return { ok: false, message: `${described} target is disabled` };
   }
   (visible as HTMLElement).click();
   return { ok: true };

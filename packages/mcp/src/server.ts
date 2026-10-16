@@ -39,7 +39,7 @@ export function createLensMcpServer(client: LensClient, progressIntervalMs = 10_
         "Call a lens in the user's browser.",
         "Returns a value, a structured outcome, or an error.",
         "For agent_extract, use the returned prompt and page text to complete the extraction.",
-        "A lens with perform steps or mutating HTTP methods declares writes — treat it as destructive:",
+        "A lens that declares effects.writes is destructive:",
         "it runs only with allowWrites true and is refused with code writes_not_allowed otherwise.",
       ].join(" "),
       inputSchema: z.object({
