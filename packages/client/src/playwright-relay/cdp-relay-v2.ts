@@ -25,12 +25,19 @@ export class ExtensionProtocolV2 {
   private _model: BrowserModel;
   private _ready = createDeferred<void>();
 
-  constructor(sendCommand: SendCommand) {
+  private _log: (message: string) => void;
+
+  constructor(sendCommand: SendCommand, log: (message: string) => void = () => {}) {
     this._model = new BrowserModel(sendCommand);
+    this._log = log;
   }
 
   ready(): Promise<void> {
     return this._ready.promise;
+  }
+
+  tabIdForTarget(targetId: string): number | undefined {
+    return this._model.tabIdForTarget(targetId);
   }
 
   connectOverCDP(sendToCDPClient: SendToCDPClient): void {
@@ -51,7 +58,8 @@ export class ExtensionProtocolV2 {
         break;
       }
       case "chrome.debugger.onDetach": {
-        const [source] = params as ExtensionEventsV2["chrome.debugger.onDetach"]["params"];
+        const [source, reason] = params as ExtensionEventsV2["chrome.debugger.onDetach"]["params"];
+        this._log(`debugger detached from tab ${source.tabId ?? "?"}: ${reason}`);
         this._model.onDebuggerDetach(source);
         break;
       }

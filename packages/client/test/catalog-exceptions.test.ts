@@ -23,3 +23,18 @@ describe("catalog exceptions", () => {
     expect(applyCatalogSettings({ ...doc, url: "https://elsewhere.test/a/{id}" }, catalog).exceptions).toBeUndefined();
   });
 });
+
+describe("catalog tab settings", () => {
+  const tabbed = { scopes: [{ url: "https://*.example.com/*", tab: "reuse" as const, navigate: "in-page" as const }] };
+  it("gives matching documents the scope's tab and navigate settings", () => {
+    expect(applyCatalogSettings(doc, tabbed)).toMatchObject({ tab: "reuse", navigate: "in-page" });
+  });
+  it("leaves other hosts alone", () => {
+    const spec = applyCatalogSettings({ ...doc, url: "https://elsewhere.test/a/{id}" }, tabbed);
+    expect(spec.tab).toBeUndefined();
+    expect(spec.navigate).toBeUndefined();
+  });
+  it("rejects unknown values in a document", () => {
+    expect(() => applyCatalogSettings({ ...doc, tab: "new" }, {})).toThrow();
+  });
+});

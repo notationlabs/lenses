@@ -2,6 +2,7 @@ import {
   errorMessage,
   executeLens,
   expandUrl,
+  pageNeedsUser,
   specWrites,
   type EngineIO,
   type HttpFetchRequest,
@@ -21,8 +22,9 @@ import type {
   BrowserSession,
   FinishDisposition,
   InterceptDelta,
+  TabChoice,
 } from "./browser-backend.js";
-import { AuthPageUnavailable } from "./browser-backend.js";
+import { AuthPageUnavailable, TabClosed } from "./browser-backend.js";
 
 const MAX_HTTP_BODY_CHARS = 512 * 1024;
 
@@ -175,7 +177,7 @@ export function createBrokerOrchestrator(
     // Enforced here, not trusted from the document: a perform result is never
     // cached and never served from cache, whatever effects.cache claims.
     const cacheTtlMs = writes ? 0 : (message.spec.effects.cache ?? 0) * 1000;
-    const cacheKey = `${JSON.stringify(message.spec)}|${JSON.stringify(message.params)}`;
+    const cacheKey = `${JSON.stringify(message.spec)}|${JSON.stringify(message.params)}|${message.tab ?? ""}`;
     const cached = writes ? undefined : cache.get(cacheKey);
     if (!message.noCache && cached && cached.expiresAt > Date.now()) {
       return { ...cached.result, cached: true } as unknown as LensResult;
@@ -184,6 +186,11 @@ export function createBrokerOrchestrator(
 
     const target = expandUrl(message.spec.url, message.params);
     const loadTimeoutMs = message.spec.loadTimeoutMs ?? 30_000;
+    const choice: TabChoice = {
+      ...(message.tab !== undefined ? { tab: message.tab } : {}),
+      ...(message.spec.tab === "reuse" ? { reuse: true } : {}),
+    };
+    const inPage = message.spec.navigate === "in-page";
     let sessionBackend: BrowserBackend | undefined;
     const requiredCapabilities = capabilitiesForSpec(message.spec);
     const needsPageSession =
@@ -207,7 +214,7 @@ export function createBrokerOrchestrator(
     // can disrupt the form the user is filling out.
     if (authRetry) {
       sessionBackend ??= await selectBackend(callDeadline, requiredCapabilities);
-      if (!await sessionBackend.hasOpenTarget?.(target)) return gateOutcome(message.spec, target);
+      if (!await sessionBackend.hasOpenTarget?.(target, choice)) return gateOutcome(message.spec, target);
     }
 
     // The page is bound on first use, so a call an http tier satisfies never
@@ -220,6 +227,10 @@ export function createBrokerOrchestrator(
       progress(`binding browser page for ${target} via ${sessionBackend.name}`);
       session = await sessionBackend.bind({
         target,
+        ...choice,
+        ...(inPage ? { inPage } : {}),
+        ...(message.spec.ready ? { ready: message.spec.ready } : {}),
+        holdAt: (page) => pageNeedsUser(message.spec, page, message.params),
         loadTimeoutMs,
         existingOnly: authRetry,
         // A document with perform steps binds with "reuse": a reload only
@@ -300,13 +311,24 @@ export function createBrokerOrchestrator(
     let result: LensResult | undefined;
     try {
       result = await executeLens(message.spec, message.params, io);
+      // Name the tab only when it outlives this call: an ordinary created tab
+      // is closed on the way out, and its id would point nowhere.
+      const disposition = authRetry ? "close-if-created" : dispositionFor(result);
+      if (session?.tab && (!session.created || choice.reuse || disposition === "keep")) {
+        result = { ...result, tab: session.tab };
+      }
       if (!message.noCache && result.kind === "value" && !result.partial && cacheTtlMs > 0) {
-        cache.set(cacheKey, { result, expiresAt: Date.now() + cacheTtlMs });
+        // A cached result names no tab: the tab may be gone when it is served.
+        const { tab: _tab, ...untabbed } = result;
+        cache.set(cacheKey, { result: untabbed, expiresAt: Date.now() + cacheTtlMs });
       }
       return result;
     } catch (error) {
       if (authRetry && error instanceof AuthPageUnavailable) {
         return gateOutcome(message.spec, target);
+      }
+      if (error instanceof TabClosed) {
+        return { kind: "error", code: "tab_closed", message: error.message };
       }
       throw error;
     } finally {
@@ -348,12 +370,26 @@ export function createBrokerOrchestrator(
     const backend = await selectBackend(
       message.deadline ?? Date.now() + 60_000
     );
-    progress(`binding browser page for ${message.target} via ${backend.name}`);
-    const session = await backend.bind({
-      target: message.target,
-      loadTimeoutMs: 30_000,
-      navigation: "fresh",
-    });
+    progress(`binding browser page for ${message.target ?? `tab ${message.tab}`} via ${backend.name}`);
+    let session: BrowserSession;
+    try {
+      // A named tab is observed without a document load: in place, or routed
+      // in-page to the target, so tab-held sessions survive authoring.
+      session = await backend.bind(
+        message.tab !== undefined
+          ? {
+              tab: message.tab,
+              ...(message.target !== undefined ? { target: message.target } : {}),
+              inPage: true,
+              loadTimeoutMs: 30_000,
+              navigation: "reuse",
+            }
+          : { target: message.target, loadTimeoutMs: 30_000, navigation: "fresh" }
+      );
+    } catch (error) {
+      if (error instanceof TabClosed) return { kind: "error", code: "tab_closed", message: error.message };
+      throw error;
+    }
     try {
       progress(`collecting page activity for ${message.waitMs}ms`);
       await new Promise((resolve) => setTimeout(resolve, message.waitMs));
@@ -366,7 +402,11 @@ export function createBrokerOrchestrator(
       }));
       const snapshot = await session.snapshot({ maxChars: 6000, html: message.html ?? false });
       progress(`collected ${requests.length} captured requests`);
-      return { kind: "value", value: { snapshot, requests } } as LensResult;
+      return {
+        kind: "value",
+        value: { snapshot, requests },
+        ...(message.tab !== undefined ? { tab: session.tab } : {}),
+      } as LensResult;
     } finally {
       await finishQuietly(backend, session, "close-if-created");
     }

@@ -216,6 +216,9 @@ const lensSpecSchema = z.strictObject({
     )
     .optional(),
   loadTimeoutMs: z.number().int().positive().optional(),
+  tab: z.literal("reuse").optional(),
+  navigate: z.literal("in-page").optional(),
+  ready: z.string().min(1).optional(),
   returns: returnSchema.optional(),
   $defs: z.record(z.string(), defSchema).optional(),
   exceptions: exceptionsSchema.optional(),
@@ -345,6 +348,22 @@ export function validateSpec(raw: unknown): LensSpec {
     for (const [name, source] of Object.entries(resolver.sources ?? {})) {
       check(source.request);
       bindable.add(name);
+    }
+  }
+  // Intercept request patterns take the same holes; an undeclared one would
+  // keep its braces and never match a capture.
+  for (const resolver of result.data.resolve) {
+    if (resolver.kind !== "intercept") continue;
+    const patterns = [
+      ...(resolver.request ? [resolver.request] : []),
+      ...Object.values(resolver.sources ?? {}).map((source) => source.request),
+    ];
+    for (const pattern of patterns) {
+      for (const hole of holesIn(pattern)) {
+        if (!result.data.params?.[hole]) {
+          throw new Error(`invalid lens spec:\n  intercept parameter "${hole}" is not declared`);
+        }
+      }
     }
   }
   // DOM and perform selectors take the same holes. Catching an undeclared one

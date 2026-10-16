@@ -8,11 +8,11 @@ import { skillMarkdown } from "./skill.js";
 
 const globalHelp = `Usage:
   lens list [--catalog <source>] [--port <number>]
-  lens call <lens> [--params <json>] [--timeout-ms <number>] [--auth-lease-ms <number>] [--no-cache] [--lax] [--allow-writes]
+  lens call <lens> [--params <json>] [--tab <id>] [--timeout-ms <number>] [--auth-lease-ms <number>] [--no-cache] [--lax] [--allow-writes]
   lens schema <lens>
   lens gen ts-sdk [<catalog> ...] [--out <file>]
   lens eval <expression> [--input <file>] [--params <json>]
-  lens observe <target> [--request <index|pattern>] [--wait-ms <number>] [--timeout-ms <number>] [--html]
+  lens observe [<target>] [--tab <id>] [--request <index|pattern>] [--wait-ms <number>] [--timeout-ms <number>] [--html]
   lens status [--wait-ms <number>]
   lens broker <status|release|acquire|shutdown>
   lens update [--catalog <source>]
@@ -58,6 +58,9 @@ Options:
                           are available to URL templates and resolver expressions.
   --timeout-ms <number>   Execution timeout (default: 90000)
   --auth-lease-ms <number>  Sign-in wait after needs_auth (default: 120000 in TTY, 0 otherwise)
+  --tab <id>              Run in the tab a previous result named in its "tab"
+                          field instead of finding or opening one. A closed
+                          tab is an error with code "tab_closed".
   --no-cache              Ignore cached results and do not cache this call's result
   --allow-writes          Permit page actions and mutating HTTP requests.
                           Without it a write lens is refused with
@@ -139,13 +142,18 @@ An expression that produces no result prints null and a stderr note.
 Example:
   lens call hn/top | jq .value | lens eval '[stories.{ "t": title }]'
 `,
-  observe: `Usage: lens observe <target> [options]
+  observe: `Usage: lens observe [<target>] [options]
 
 Load a page and return its text snapshot and an index of captured JSON requests
 (method, url, status, body size, short preview). Request bodies are elided; drill
 into one with --request. No catalog needed.
 
+With --tab, observe a tab a previous result named instead of loading a page: no
+target reads it where it is; a target is reached in-page (pushState), so a
+session held in the tab survives. Without --tab a <target> is required.
+
 Options:
+  --tab <id>              Observe this tab (a previous result's "tab" field)
   --request <sel>         Return the body of captured requests matching <sel>:
                           a request index from a prior observation, or a URL
                           substring (first 5 matches)
@@ -161,6 +169,8 @@ Options:
 Example:
   lens observe https://example.com
   lens observe https://example.com --request api/v2/items
+  lens observe --tab t1 --html
+  lens observe https://bank.example/statements --tab t1
 `,
   status: `Usage: lens status [options]
 
@@ -312,6 +322,7 @@ async function main(): Promise<void> {
       "auth-lease-ms": { type: "string" },
       verbose: { type: "boolean", short: "v" },
       "wait-ms": { type: "string" },
+      tab: { type: "string" },
     },
   });
 
@@ -325,7 +336,9 @@ async function main(): Promise<void> {
 
   if (command === "call" && operands.length < 1) throw new Error("call requires <lens>");
   if (command === "schema" && operands.length !== 1) throw new Error("schema requires one <lens>");
-  if (command === "observe" && operands.length < 1) throw new Error("observe requires <target>");
+  if (command === "observe" && operands.length < 1 && values.tab === undefined) {
+    throw new Error("observe requires <target>, --tab <id>, or both");
+  }
 
   if (command === "skill") {
     process.stdout.write(skillMarkdown);
@@ -410,6 +423,7 @@ async function main(): Promise<void> {
           strict: !values.lax,
           allowWrites: values["allow-writes"],
           noCache: values["no-cache"],
+          ...(values.tab !== undefined ? { tab: values.tab } : {}),
         });
         break;
       }
@@ -424,7 +438,7 @@ async function main(): Promise<void> {
             : /^\d+$/.test(values.request)
               ? Number(values.request)
               : values.request;
-        output = await client.observe({ target, waitMs, timeoutMs, html: values.html, request });
+        output = await client.observe({ target, tab: values.tab, waitMs, timeoutMs, html: values.html, request });
         break;
       }
       case "status":

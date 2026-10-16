@@ -35,6 +35,19 @@ if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
   throw new Error("broker requires a port between 1 and 65535");
 }
 
+// stderr is the broker log file (see startBroker); timestamp every line so a
+// lost connection or restart can be lined up against the calls around it.
+const TIMESTAMPED = Symbol.for("lenses.broker.timestamped");
+if (!(console.error as { [TIMESTAMPED]?: true })[TIMESTAMPED]) {
+  const writeLog = console.error.bind(console);
+  console.error = Object.assign(
+    (...args: unknown[]) => writeLog(new Date().toISOString(), ...args),
+    { [TIMESTAMPED]: true as const }
+  );
+}
+console.error(`broker ${process.pid} starting on port ${port}`);
+process.on("exit", (code) => console.error(`broker ${process.pid} exiting (code ${code})`));
+
 process.on("uncaughtException", (error) => console.error("broker uncaught:", error));
 process.on("unhandledRejection", (error) => console.error("broker unhandled:", error));
 

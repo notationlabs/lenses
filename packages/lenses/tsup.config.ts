@@ -25,6 +25,8 @@ export default defineConfig({
   clean: true,
   treeshake: true,
   noExternal: [internalPackages],
+  // Lets workspace-only code (broker-stamp's core lookup) drop out of the bundle.
+  define: { "process.env.LENSES_BUNDLED": '"1"' },
   esbuildOptions(options) {
     options.alias = {
       "@djgrant/lenses-core/graphql": resolve(here, "../core/src/graphql.ts"),

@@ -76,10 +76,21 @@ export interface LensCall {
   noCache?: boolean;
   /** when false, demote `returns` schema violations from an error result to warnings (default true) */
   strict?: boolean;
+  /**
+   * Run in this broker tab id, from an earlier result's `tab`. Never inherited
+   * by {$lens} parameter defaults. A closed tab is error code "tab_closed".
+   */
+  tab?: string;
 }
 
 export interface LensObservation {
-  target: string;
+  /** Page to observe. Optional with `tab`: then the tab is read where it is. */
+  target?: string;
+  /**
+   * Observe this broker tab id (an earlier result's `tab`) without loading a
+   * document: a target is reached in-page with pushState.
+   */
+  tab?: string;
   waitMs?: number;
   timeoutMs?: number;
   /** include the page's body HTML (scripts and styles stripped) for selector authoring */
@@ -330,7 +341,7 @@ export class LensClient {
     }
     this.log(`resolved ${spec.name} to ${url}`);
 
-    const key = `${JSON.stringify(spec)}|${JSON.stringify(params)}`;
+    const key = `${JSON.stringify(spec)}|${JSON.stringify(params)}|${input.tab ?? ""}`;
     const ttl = (spec.effects.cache ?? 0) * 1000;
     const hit = this.cache.get(key);
     if (hit && hit.expiresAt <= Date.now()) this.cache.delete(key);
@@ -353,10 +364,13 @@ export class LensClient {
           }
         : undefined,
       input.authLeaseMs,
-      input.noCache
+      input.noCache,
+      input.tab
     );
     if (!input.noCache && result.kind === "value" && !result.partial && !result.cached && ttl > 0) {
-      this.cache.set(key, { result, expiresAt: Date.now() + ttl });
+      // A cached result names no tab: the tab may be gone when it is served.
+      const { tab: _tab, ...untabbed } = result;
+      this.cache.set(key, { result: untabbed, expiresAt: Date.now() + ttl });
     }
     return this.validate(spec, result, input.strict ?? true);
   }
@@ -452,7 +466,7 @@ export class LensClient {
         : `${spec.name} result failed its schema at ${issues
             .map((issue) => issue.path)
             .join(", ")}${where}`;
-      return { kind: "error", message, issues };
+      return { kind: "error", message, issues, ...(result.tab ? { tab: result.tab } : {}) };
     }
     this.log(`${spec.name} result has ${issues.length} schema warning(s)`);
     return { ...result, warnings: issues };
@@ -469,12 +483,16 @@ export class LensClient {
   }
 
   async observe(input: LensObservation): Promise<LensResult> {
-    this.log(`observing ${input.target}`);
+    if (input.target === undefined && input.tab === undefined) {
+      return { kind: "error", message: "observe needs a target, a tab, or both" };
+    }
+    this.log(`observing ${input.target ?? `tab ${input.tab}`}`);
     const result = await (await this.transport()).observe(
       input.target,
       input.waitMs,
       input.timeoutMs,
-      input.html
+      input.html,
+      input.tab
     );
     if (result.kind !== "value") return result;
     const value = result.value as { snapshot?: unknown; requests?: CapturedRequest[] };

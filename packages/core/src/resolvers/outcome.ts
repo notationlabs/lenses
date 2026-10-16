@@ -62,3 +62,18 @@ async function matchExceptions(
   }
   return null;
 }
+
+/**
+ * Whether a page a host is about to navigate away from already matches one of
+ * the document's `needs_*` exceptions — a tab part-way through signing in.
+ * Hosts use it to leave such a tab where it is, so the call reports the
+ * outcome instead of disturbing the form the user is filling in.
+ */
+export async function pageNeedsUser(
+  spec: LensSpec,
+  page: { url: string; title: string },
+  params: Record<string, unknown>
+): Promise<boolean> {
+  const outcome = await matchPageException(spec, page, params, "dom");
+  return outcome?.kind === "outcome" && outcome.name.startsWith("needs_");
+}

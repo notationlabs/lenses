@@ -54,7 +54,14 @@ export interface CatalogDocument {
   /** Parameters inherited by every lens, with each document winning by name. */
   params?: LensSpec["params"];
   /** Applied in order to URL templates matching each *-only glob. */
-  scopes?: { url: string; exceptions: ExceptionMap }[];
+  scopes?: CatalogScope[];
+}
+
+export interface CatalogScope {
+  url: string;
+  exceptions?: ExceptionMap;
+  tab?: LensSpec["tab"];
+  navigate?: LensSpec["navigate"];
 }
 
 /**
@@ -68,17 +75,21 @@ export function applyCatalogSettings(spec: unknown, catalog: CatalogDocument): L
   if (typeof spec !== "object" || spec === null || Array.isArray(spec)) return validateSpec(spec);
   const document = spec as Partial<LensSpec>;
   const inherited: ExceptionMap = {};
+  const tabbing: Pick<LensSpec, "tab" | "navigate"> = {};
   for (const scope of catalog.scopes ?? []) {
     if (typeof document.url !== "string" || !matchUrlGlob(scope.url, document.url)) continue;
-    for (const [name, entry] of Object.entries(scope.exceptions)) {
+    for (const [name, entry] of Object.entries(scope.exceptions ?? {})) {
       inherited[name] = entry === null ? null : { ...(inherited[name] ?? {}), ...entry };
     }
+    if (scope.tab) tabbing.tab = scope.tab;
+    if (scope.navigate) tabbing.navigate = scope.navigate;
   }
   const exceptions: ExceptionMap = { ...inherited };
   for (const [name, entry] of Object.entries(document.exceptions ?? {})) {
     exceptions[name] = entry === null ? null : { ...(exceptions[name] ?? {}), ...entry };
   }
   return validateSpec({
+    ...tabbing,
     ...document,
     ...(Object.keys(exceptions).length ? { exceptions } : {}),
     ...(catalog.params || document.params
@@ -119,11 +130,16 @@ async function readCatalogDocument(directory: string): Promise<CatalogDocument> 
   try {
     const parsed = JSON.parse(text) as CatalogDocument;
     if (parsed.scopes !== undefined && (!Array.isArray(parsed.scopes) || parsed.scopes.some(
-      (scope) => typeof scope?.url !== "string" || !scope.exceptions || typeof scope.exceptions !== "object" || Array.isArray(scope.exceptions)
-    ))) throw new Error('"scopes" must be an array of {url, exceptions}');
+      (scope) => typeof scope?.url !== "string" ||
+        (scope.exceptions !== undefined && (!scope.exceptions || typeof scope.exceptions !== "object" || Array.isArray(scope.exceptions))) ||
+        (scope.tab !== undefined && scope.tab !== "reuse") ||
+        (scope.navigate !== undefined && scope.navigate !== "in-page")
+    ))) throw new Error('"scopes" must be an array of {url, exceptions?, tab?: "reuse", navigate?: "in-page"}');
     return { helpers: parsed.helpers, params: parsed.params, scopes: parsed.scopes?.map((scope) => ({
       url: scope.url,
-      exceptions: validateExceptions(scope.exceptions)!,
+      ...(scope.exceptions !== undefined ? { exceptions: validateExceptions(scope.exceptions)! } : {}),
+      ...(scope.tab ? { tab: scope.tab } : {}),
+      ...(scope.navigate ? { navigate: scope.navigate } : {}),
     })) };
   } catch (error) {
     throw new Error(

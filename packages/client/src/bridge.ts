@@ -1,4 +1,7 @@
 import { spawn } from "node:child_process";
+import { closeSync, mkdirSync, openSync, renameSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocket } from "ws";
 import type { LensBridgeRequest, LensResult, LensSpec } from "@djgrant/lenses-core";
@@ -63,13 +66,17 @@ export interface LensTransport {
     recording?: RecordingTarget,
     authLeaseMs?: number,
     /** bypass the broker cache without storing the result */
-    noCache?: boolean
+    noCache?: boolean,
+    /** run in this broker tab id, from an earlier result's `tab` */
+    tab?: string
   ): Promise<LensTransportResult>;
   observe(
-    target: string,
+    /** omitted with `tab`: read the tab where it is */
+    target: string | undefined,
     waitMs?: number,
     timeoutMs?: number,
-    html?: boolean
+    html?: boolean,
+    tab?: string
   ): Promise<LensTransportResult>;
   waitForConnection(timeoutMs: number): Promise<boolean>;
   close(): Promise<void>;
@@ -214,7 +221,8 @@ export class BrowserBridge implements LensTransport {
     allowWrites?: boolean,
     recording?: RecordingTarget,
     authLeaseMs = 0,
-    noCache?: boolean
+    noCache?: boolean,
+    tab?: string
   ): Promise<LensTransportResult> {
     return this.request(
       (id) => ({
@@ -228,6 +236,7 @@ export class BrowserBridge implements LensTransport {
         ...(allowWrites !== undefined ? { allowWrites } : {}),
         ...(noCache !== undefined ? { noCache } : {}),
         ...(recording ? { recording } : {}),
+        ...(tab !== undefined ? { tab } : {}),
       }),
       // The broker delivers lease expiry even while a retry is queued; leave
       // transport margin for the final result rather than racing it at expiry.
@@ -236,16 +245,18 @@ export class BrowserBridge implements LensTransport {
   }
 
   observe(
-    target: string,
+    target: string | undefined,
     waitMs = 4_000,
     timeoutMs = 60_000,
-    html = false
+    html = false,
+    tab?: string
   ): Promise<LensTransportResult> {
     return this.request(
       (id) => ({
         type: "observe",
         id,
-        target,
+        ...(target !== undefined ? { target } : {}),
+        ...(tab !== undefined ? { tab } : {}),
         waitMs,
         html,
         deadline: Date.now() + timeoutMs,
@@ -462,9 +473,10 @@ async function startBroker(
 ): Promise<BrokerConnection> {
   const source = import.meta.url.endsWith(".ts") ? "broker-daemon.ts" : "broker-daemon.js";
   const entry = fileURLToPath(new URL(source, import.meta.url));
+  const logFd = openBrokerLog();
   const child = spawn(process.execPath, [entry, String(port)], {
     detached: true,
-    stdio: "ignore",
+    stdio: logFd === undefined ? "ignore" : ["ignore", logFd, logFd],
     env: {
       ...process.env,
       ...(startup.browserProfile
@@ -476,7 +488,8 @@ async function startBroker(
     },
   });
   child.unref();
-  log(`started persistent lens broker on port ${port}`);
+  if (logFd !== undefined) closeSync(logFd);
+  log(`started persistent lens broker on port ${port} (log: ${brokerLogPath()})`);
 
   const deadline = Date.now() + BROKER_START_WAIT_MS;
   while (Date.now() < deadline) {
@@ -485,6 +498,31 @@ async function startBroker(
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
   throw new Error(`lens broker did not start on port ${port}`);
+}
+
+const BROKER_LOG_MAX_BYTES = 1024 * 1024;
+
+export function brokerLogPath(): string {
+  return join(process.env.LENS_CACHE_DIR ?? join(homedir(), ".cache", "lenses"), "broker.log");
+}
+
+/**
+ * Append-mode log for the detached daemon. One previous log is kept when it
+ * grows past the cap. A log that cannot be opened must not stop the broker.
+ */
+function openBrokerLog(): number | undefined {
+  const path = brokerLogPath();
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    try {
+      if (statSync(path).size > BROKER_LOG_MAX_BYTES) renameSync(path, `${path}.1`);
+    } catch {
+      // No log yet.
+    }
+    return openSync(path, "a");
+  } catch {
+    return undefined;
+  }
 }
 
 function connectBroker(port: number, timeoutMs: number): Promise<BrokerConnection | null> {

@@ -1,5 +1,6 @@
 export * from "./types.js";
 export { executeLens, paramLensDefault, resolveParams } from "./engine.js";
+export { pageNeedsUser } from "./resolvers/outcome.js";
 export { evaluate, evaluateBool } from "./expr.js";
 export { materialiseLenses } from "./materialise.js";
 export { expandUrl, matchRequestPattern, matchUrlGlob, sameGatePlace, sameTarget, urlOrigin } from "./url-pattern.js";

@@ -132,6 +132,11 @@ export class BrowserModel {
     return { targetId: tabSession.targetInfo?.targetId };
   }
 
+  /** The Chrome tab id behind an attached target, if this model attached it. */
+  tabIdForTarget(targetId: string): number | undefined {
+    return this._findTabSession((session) => session.targetInfo?.targetId === targetId)?.tabId;
+  }
+
   async closeTarget(targetId: string | undefined): Promise<{ success: boolean }> {
     const tabSession = targetId
       ? this._findTabSession((session) => session.targetInfo?.targetId === targetId)

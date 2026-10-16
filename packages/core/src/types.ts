@@ -16,6 +16,25 @@ export interface LensSpec {
   params?: Record<string, LensParam>;
   /** Maximum time to wait for the target page to finish loading, in milliseconds. */
   loadTimeoutMs?: number;
+  /**
+   * `"reuse"`: run in the tab this origin used last (adopting an open tab on
+   * the origin when there is none) and never close it. A new tab is opened
+   * only when no tab on the origin is open.
+   */
+  tab?: "reuse";
+  /**
+   * `"in-page"`: reach the lens URL in an existing tab with history.pushState
+   * plus popstate, never by loading or reloading the document.
+   */
+  navigate?: "in-page";
+  /**
+   * CSS selector for "this page has rendered": after the call navigates, tiers
+   * wait until it matches, or until the page matches a needs_* exception (a
+   * sign-in redirect), up to the load timeout. Use for apps that show a
+   * transient screen or redirect after `load`. Pick a selector unique to the
+   * destination page: an in-page route can still show the previous page's DOM.
+   */
+  ready?: string;
   /** JSON-schema-ish shape of the return value. Fields whose value is
    *  {"$lens": "<lens-name>", "params": {"key": "<jsonata expr>"}} are lens references. */
   returns?: unknown;
@@ -300,6 +319,8 @@ export type LensResult =
       observed?: string;
       /** every perform step ran — the write committed; absence means it did not */
       performed?: true;
+      /** Broker id of the tab the call ran in; pass it back as `tab` to target it again. */
+      tab?: string;
     }
   | {
       kind: "outcome";
@@ -309,6 +330,8 @@ export type LensResult =
       hint?: string;
       resolver: Resolver["kind"];
       performed?: true;
+      /** Broker id of the tab the call ran in; pass it back as `tab` to target it again. */
+      tab?: string;
     }
   | {
       kind: "error";
@@ -320,12 +343,15 @@ export type LensResult =
         | "writes_not_allowed"
         | "required_backend_unavailable"
         | "perform_failed"
-        | "broker_busy";
+        | "broker_busy"
+        | "tab_closed";
       /** 0-based index of the perform step that failed */
       step?: number;
       performed?: true;
       /** Present on ambiguous non-idempotent timeouts so callers can assess retry risk. */
       mutation?: MutationState;
+      /** Broker id of the tab the call ran in, when it is still open. */
+      tab?: string;
     };
 
 /** A concrete request an http tier asks its host to perform. */
@@ -390,11 +416,16 @@ export type LensBridgeRequest =
       noCache?: boolean;
       /** Per-call target supplied only by the client instance with an active recorder. */
       recording?: { path: string; callId: string; lens: string };
+      /** Run in this broker tab id (an earlier result's `tab`). */
+      tab?: string;
     }
   | {
       type: "observe";
       id: string;
-      target: string;
+      /** Omitted with `tab`: read the tab where it is. */
+      target?: string;
+      /** Observe this broker tab id; a target is reached without opening a tab. */
+      tab?: string;
       waitMs: number;
       html?: boolean;
       deadline?: number;

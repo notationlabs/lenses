@@ -14,6 +14,19 @@ export function expandUrl(template: string, params: Record<string, unknown>): st
 }
 
 /**
+ * Expand a request pattern's holes as in a URL, with `*` also encoded: the
+ * glob has no escape, and a value must never widen the pattern to match
+ * another account's (or item's) requests.
+ */
+export function expandRequestPattern(template: string, params: Record<string, unknown>): string {
+  return template.replace(HOLE, (_, name: string) => {
+    const value = params[name];
+    if (value === undefined) throw new Error(`missing parameter "${name}"`);
+    return encodeURIComponent(String(value)).replace(/\*/g, "%2A");
+  });
+}
+
+/**
  * Expand the same named holes outside a URL, substituting the value verbatim.
  * Percent-encoding is a URL's escape and means nothing to a CSS selector:
  * `#row-{year}` wants `#row-2024`, not `#row-2024` via encodeURIComponent's

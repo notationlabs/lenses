@@ -57,6 +57,10 @@ export function createLensMcpServer(client: LensClient, progressIntervalMs = 10_
           .describe(
             "Permit page actions or mutating HTTP requests; required for write lenses (default false)"
           ),
+        tab: z
+          .string()
+          .optional()
+          .describe("Run in the tab a previous result named in its tab field; a closed tab is error code tab_closed"),
       }),
     },
     async (input, ctx) => {
@@ -86,9 +90,12 @@ export function createLensMcpServer(client: LensClient, progressIntervalMs = 10_
         "requests (method, url, status, body size, short preview) with bodies elided. " +
         "To read a request's body, call again with request set to an index from the " +
         "listing or a URL substring (first 5 matches). " +
-        "Set html to also get the body markup for writing DOM-tier selectors.",
+        "Set html to also get the body markup for writing DOM-tier selectors. " +
+        "Set tab (a previous result's tab field) to observe that tab without loading a page: " +
+        "without target it is read where it is; a target is reached in-page.",
       inputSchema: z.object({
-        target: z.string().url(),
+        target: z.string().url().optional(),
+        tab: z.string().optional(),
         waitMs: z.number().nonnegative().optional(),
         html: z.boolean().optional(),
         request: z
