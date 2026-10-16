@@ -24,7 +24,7 @@ import type {
   InterceptDelta,
   TabChoice,
 } from "./browser-backend.js";
-import { AuthPageUnavailable, TabClosed } from "./browser-backend.js";
+import { AuthPageUnavailable, TabClosed, TabDisconnected } from "./browser-backend.js";
 
 const MAX_HTTP_BODY_CHARS = 512 * 1024;
 
@@ -40,7 +40,14 @@ function writesAllowed(
 }
 
 export type BrokerFrame =
-  | { type: "result"; id: string; result: LensResult; authReplaySafe?: boolean }
+  | {
+      type: "result";
+      id: string;
+      result: LensResult;
+      authReplaySafe?: boolean;
+      /** The call's tab is open but detached from the debugger; the result is the latest word on it. */
+      tabDisconnected?: boolean;
+    }
   | { type: "progress"; id: string; message: string };
 
 export interface BrokerOrchestrator {
@@ -214,7 +221,12 @@ export function createBrokerOrchestrator(
     // can disrupt the form the user is filling out.
     if (authRetry) {
       sessionBackend ??= await selectBackend(callDeadline, requiredCapabilities);
-      if (!await sessionBackend.hasOpenTarget?.(target, choice)) return gateOutcome(message.spec, target);
+      try {
+        if (!await sessionBackend.hasOpenTarget?.(target, choice)) return gateOutcome(message.spec, target);
+      } catch (error) {
+        if (error instanceof TabDisconnected) return disconnectedOutcome(message.spec, error);
+        throw error;
+      }
     }
 
     // The page is bound on first use, so a call an http tier satisfies never
@@ -330,6 +342,7 @@ export function createBrokerOrchestrator(
       if (error instanceof TabClosed) {
         return { kind: "error", code: "tab_closed", message: error.message };
       }
+      if (error instanceof TabDisconnected) return disconnectedOutcome(message.spec, error);
       throw error;
     } finally {
       if (sessionBackend && session) {
@@ -388,6 +401,7 @@ export function createBrokerOrchestrator(
       );
     } catch (error) {
       if (error instanceof TabClosed) return { kind: "error", code: "tab_closed", message: error.message };
+      if (error instanceof TabDisconnected) return disconnectedOutcome(undefined, error);
       throw error;
     }
     try {
@@ -478,6 +492,7 @@ export function createBrokerOrchestrator(
         completed = true;
         emit({
           type: "result", id: message.id, result,
+          ...(disconnectedResults.has(result) ? { tabDisconnected: true } : {}),
           ...(message.type === "call" ? {
             authReplaySafe: !specWrites(message.spec) ||
               ((message.spec.perform?.length ?? 0) > 0 && !performStarted),
@@ -884,6 +899,28 @@ function gateOutcome(spec: LensSpec, signInUrl: string): LensResult {
     value: { url: signInUrl },
     resolver: spec.resolve[0]?.kind ?? "dom",
   };
+}
+
+const disconnectedResults = new WeakSet<LensResult>();
+
+/**
+ * The result for a call whose tab is open but detached from the debugger
+ * (see TabDisconnected). Reported as the sign-in outcome, because that is
+ * what the user is doing there, so the auth wait keeps re-attaching it. The
+ * browser's own reason is passed through verbatim as `detail`.
+ */
+function disconnectedOutcome(spec: LensSpec | undefined, error: TabDisconnected): LensResult {
+  const base = spec ? gateOutcome(spec, error.url) : undefined;
+  const result: LensResult = {
+    kind: "outcome",
+    name: base?.kind === "outcome" ? base.name : "needs_auth",
+    value: { url: error.url, tab: error.tab, ...(error.detail !== undefined ? { detail: error.detail } : {}) },
+    hint: `Finish signing in in the open tab (${error.tab}) in the Lenses tab group, then retry.`,
+    resolver: spec?.resolve[0]?.kind ?? "dom",
+    tab: error.tab,
+  };
+  disconnectedResults.add(result);
+  return result;
 }
 
 function dispositionFor(result: LensResult | undefined): FinishDisposition {

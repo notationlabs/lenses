@@ -7,7 +7,9 @@ vi.mock("../src/auth-banner.js", () => ({
 vi.mock("../src/launch-browser.js", () => ({ raiseChrome: async () => {} }));
 
 import { createCdpBackend, sameSite } from "../src/cdp-host.js";
-import { TabClosed } from "../src/browser-backend.js";
+import { TabClosed, TabDisconnected } from "../src/browser-backend.js";
+import { createAuthLeases } from "../src/auth-leases.js";
+import type { TabLink } from "../src/playwright-relay/browser-model.js";
 
 const origin = "https://bank.example";
 
@@ -426,5 +428,239 @@ describe("tabs part-way through sign-in", () => {
     expect(held.navigated).toBe(false);
     expect(pages[0].routes).toEqual([]);
     expect(pages[0].currentUrl).toBe(`${origin}/login/security-details/option-2`);
+  });
+});
+
+describe("tabs the debugger loses", () => {
+  const passwordManager = "Cannot access a chrome-extension:// URL of different extension";
+
+  /**
+   * Like the Playwright Extension relay: a password manager's frame makes
+   * Chrome detach the debugger from the whole tab. The tab stays open in the
+   * group, its page object goes away, and re-attaching fails until the frame
+   * is gone.
+   */
+  function relayChrome() {
+    const tabs = new Map<string, SpaPage>();
+    const keys = new WeakMap<SpaPage, string>();
+    const links = new Map<string, TabLink>();
+    const listeners = new Set<(key: string, link: TabLink) => void>();
+    const visible = new Set<SpaPage>();
+    let nextId = 100;
+    let reattachError: string | undefined = passwordManager;
+    const setLink = (key: string, link: TabLink) => {
+      links.set(key, link);
+      for (const listener of listeners) listener(key, link);
+    };
+    const browser: Record<string, unknown> = Object.assign(new EventEmitter(), {
+      connected: true,
+      version: async () => "Chrome/144.0.0.0",
+      newPage: vi.fn(async () => {
+        const page = new SpaPage(() => browser);
+        const key = String(nextId++);
+        tabs.set(key, page);
+        keys.set(page, key);
+        links.set(key, { state: "connected" });
+        visible.add(page);
+        return page;
+      }),
+      pages: async () => [...visible].filter((page) => !page.closed),
+    });
+    /** The debugger has the tab again: Puppeteer hands out a new page object for it. */
+    const reconnect = (key: string) => {
+      const after = new SpaPage(() => browser);
+      after.currentUrl = tabs.get(key)!.currentUrl;
+      tabs.set(key, after);
+      keys.set(after, key);
+      visible.add(after);
+      setLink(key, { state: "connected" });
+      return after;
+    };
+    const transport = {
+      name: "test", pollForConnection: false, retryConnect: false,
+      looksReady: () => true, probeLive: async () => true,
+      connect: async () => browser as never,
+      connectHint: () => "test", staleHint: () => "test",
+      tabKey: (page: SpaPage) => keys.get(page),
+      tabLink: (key: string) => links.get(key),
+      reattach: vi.fn(async (key: string) => {
+        if (links.get(key)?.state !== "disconnected") return links.get(key);
+        if (reattachError) setLink(key, { state: "disconnected", lastError: reattachError });
+        else reconnect(key);
+        return links.get(key);
+      }),
+      onTabLinkChange(listener: (key: string, link: TabLink) => void) {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    };
+    return {
+      browser: browser as { newPage: ReturnType<typeof vi.fn> },
+      transport,
+      tabs,
+      reconnect,
+      /** Chrome lets go of the tab; it stays open in the group. */
+      detach(key: string) {
+        const page = tabs.get(key)!;
+        setLink(key, { state: "disconnected" });
+        visible.delete(page);
+        page.closed = true;
+        page.emit("close");
+      },
+      /** A detach the extension never asked to undo: the user dragged the tab out. */
+      dragOut(key: string) {
+        setLink(key, { state: "removed" });
+      },
+      frameGone() {
+        reattachError = undefined;
+      },
+    };
+  }
+
+  const reuse = (target = `${origin}/account-summary`) => ({
+    target, reuse: true, inPage: true, navigation: "reuse" as const, loadTimeoutMs: 100,
+  });
+
+  it("does not open a second tab when the reused tab detaches and later re-attaches", async () => {
+    const chrome = relayChrome();
+    const host = createCdpBackend(() => {}, chrome.transport as never);
+    const first = await host.bind(reuse(`${origin}/login`));
+    await host.finish(first, "close-if-created");
+
+    chrome.detach("100");
+    const failure = await host.bind(reuse()).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(TabDisconnected);
+    expect(failure).toMatchObject({ tab: "t100", url: `${origin}/login`, detail: passwordManager });
+    expect(chrome.transport.reattach).toHaveBeenCalledTimes(1);
+    expect(chrome.browser.newPage).toHaveBeenCalledTimes(1);
+
+    // The frame goes; the next call's one attempt succeeds and runs in the same tab.
+    chrome.frameGone();
+    const again = await host.bind(reuse());
+    expect(again.tab).toBe("t100");
+    expect(again.created).toBe(false);
+    expect(chrome.transport.reattach).toHaveBeenCalledTimes(2);
+    expect(chrome.browser.newPage).toHaveBeenCalledTimes(1);
+  });
+
+  it("finds a tab the extension re-attached on its own", async () => {
+    const chrome = relayChrome();
+    const host = createCdpBackend(() => {}, chrome.transport as never);
+    const first = await host.bind(reuse());
+    await host.finish(first, "close-if-created");
+    chrome.detach("100");
+    chrome.reconnect("100");
+
+    const again = await host.bind({ tab: first.tab, navigation: "reuse", loadTimeoutMs: 100 });
+    expect(again.tab).toBe("t100");
+    expect(chrome.transport.reattach).not.toHaveBeenCalled();
+    expect(chrome.browser.newPage).toHaveBeenCalledTimes(1);
+  });
+
+  it("forgets a tab that detached and never re-attached", async () => {
+    const chrome = relayChrome();
+    const host = createCdpBackend(() => {}, chrome.transport as never);
+    const first = await host.bind(reuse());
+    await host.finish(first, "close-if-created");
+    chrome.detach("100");
+    chrome.dragOut("100");
+
+    await expect(host.bind({ tab: first.tab, navigation: "reuse", loadTimeoutMs: 100 }))
+      .rejects.toThrow("tab t100 is no longer in the Lenses tab group");
+    const next = await host.bind(reuse());
+    expect(next.tab).toBe("t101");
+    expect(next.created).toBe(true);
+    // Never pulled back into the group.
+    expect(chrome.transport.reattach).not.toHaveBeenCalled();
+    expect(chrome.tabs.get("100")!.loads).toEqual([`${origin}/account-summary`]);
+  });
+
+  it("says a closed tab was closed", async () => {
+    const chrome = relayChrome();
+    const host = createCdpBackend(() => {}, chrome.transport as never);
+    const first = await host.bind(reuse());
+    await host.finish(first, "close-if-created");
+    await chrome.tabs.get("100")!.close();
+    chrome.transport.tabLink = (key: string) => (key === "100" ? { state: "closed" } : undefined);
+
+    await expect(host.bind({ tab: first.tab, navigation: "reuse", loadTimeoutMs: 100 }))
+      .rejects.toThrow("tab t100 was closed");
+    await expect(host.bind({ tab: "t999", navigation: "reuse", loadTimeoutMs: 100 }))
+      .rejects.toThrow("tab t999 is closed or no longer in the Lenses tab group");
+  });
+
+  it("keeps the sign-in wait through a detach, and retries once the tab re-attaches", async () => {
+    const chrome = relayChrome();
+    const host = createCdpBackend(() => {}, chrome.transport as never);
+    const target = `${origin}/account-summary`;
+    const gate = await host.bind(reuse());
+    chrome.tabs.get("100")!.currentUrl = `${origin}/login`;
+    await host.finish(gate, "keep");
+
+    const leases = createAuthLeases((gateOrigin, _target, onExit, resume) =>
+      host.watchAuthGate!(gateOrigin, onExit, resume));
+    leases.retain(origin);
+    const waiting = leases.wait(origin, target, Date.now() + 10_000);
+    await vi.waitFor(async () => expect(await host.findAuthGate(origin)).toBeDefined());
+
+    // The user focuses the password field; the password manager's frame detaches the tab.
+    chrome.detach("100");
+    expect(await waiting).toBe("poll");
+    expect(await host.findAuthGate(origin)).toMatchObject({ url: `${origin}/login`, target });
+
+    // Each poll tick makes one re-attach attempt; failure is still signing in.
+    await expect(host.hasOpenTarget!(target, { reuse: true })).rejects.toMatchObject({
+      tab: "t100", detail: passwordManager,
+    });
+    expect(chrome.transport.reattach).toHaveBeenCalledTimes(1);
+    expect(await host.openAuthGate!(origin, target)).toBe(true);
+    expect(chrome.browser.newPage).toHaveBeenCalledTimes(1);
+
+    // Re-attached: the wait ends as a move, and the retry reads the same tab.
+    const next = leases.wait(origin, target, Date.now() + 10_000);
+    chrome.frameGone();
+    expect(await host.hasOpenTarget!(target, { reuse: true })).toBe(true);
+    expect(await next).toBe("moved");
+    expect(chrome.browser.newPage).toHaveBeenCalledTimes(1);
+    leases.close(origin);
+  });
+
+  it("ends the sign-in wait when the detached tab is dragged out of the group", async () => {
+    const chrome = relayChrome();
+    const host = createCdpBackend(() => {}, chrome.transport as never);
+    const gate = await host.bind(reuse(`${origin}/login`));
+    await host.finish(gate, "keep");
+    const exits: string[] = [];
+    const prompt = await host.watchAuthGate!(origin, (reason) => exits.push(reason));
+    expect(prompt).toBeDefined();
+
+    chrome.detach("100");
+    expect(exits).toEqual([]);
+    chrome.dragOut("100");
+    expect(exits).toEqual(["closed"]);
+    prompt!.dispose();
+    expect(await host.findAuthGate(origin)).toBeUndefined();
+  });
+
+  it("signs in on a reused tab it finds detached, without opening another", async () => {
+    const chrome = relayChrome();
+    const host = createCdpBackend(() => {}, chrome.transport as never);
+    const target = `${origin}/account-summary`;
+    const first = await host.bind(reuse());
+    await host.finish(first, "close-if-created");
+    chrome.detach("100");
+
+    await expect(host.bind(reuse())).rejects.toBeInstanceOf(TabDisconnected);
+    // Not a gate for a fresh call: that call should try re-attaching instead.
+    expect(await host.findAuthGate(origin)).toBeUndefined();
+    expect(await host.openAuthGate!(origin, target)).toBe(true);
+    const exits: string[] = [];
+    const prompt = await host.watchAuthGate!(origin, (reason) => exits.push(reason));
+    expect(prompt).toBeDefined();
+    expect(chrome.browser.newPage).toHaveBeenCalledTimes(1);
+
+    chrome.reconnect("100");
+    expect(exits).toEqual(["moved"]);
+    prompt!.dispose();
   });
 });

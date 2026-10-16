@@ -32,7 +32,7 @@ import type { IncomingMessage } from "node:http";
 import type { Duplex } from "node:stream";
 import { ExtensionProtocolV2 } from "./cdp-relay-v2.js";
 import { createDeferred } from "./deferred.js";
-import type { CDPMessage } from "./browser-model.js";
+import type { CDPMessage, TabLink } from "./browser-model.js";
 import type { ExtensionCommandV2, ExtensionEventsV2 } from "./protocol.js";
 
 type CDPCommand = {
@@ -116,6 +116,20 @@ export class CDPRelayServer {
   /** The Chrome tab id behind a CDP target this relay attached. */
   tabIdForTarget(targetId: string): number | undefined {
     return this._handler.tabIdForTarget(targetId);
+  }
+
+  /** Whether a Chrome tab is attached, detached but still in the group, out of the group, or closed. */
+  tabLink(tabId: number): TabLink | undefined {
+    return this._handler.tabLink(tabId);
+  }
+
+  /** One attempt to re-attach a detached tab still in the group; never one outside it. */
+  reattachTab(tabId: number): Promise<TabLink | undefined> {
+    return this._handler.reattachTab(tabId);
+  }
+
+  onTabLinkChange(listener: (tabId: number, link: TabLink) => void): void {
+    this._handler.onTabLinkChange(listener);
   }
 
   stop(): void {

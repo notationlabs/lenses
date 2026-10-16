@@ -17,7 +17,7 @@
  * at revision deda92d15e7d771aacaae47eb2b6e47a562c30ff.
  */
 
-import { BrowserModel, type SendCommand, type SendToCDPClient } from "./browser-model.js";
+import { BrowserModel, type SendCommand, type SendToCDPClient, type TabLink } from "./browser-model.js";
 import { createDeferred } from "./deferred.js";
 import type { ExtensionEventsV2 } from "./protocol.js";
 
@@ -28,8 +28,20 @@ export class ExtensionProtocolV2 {
   private _log: (message: string) => void;
 
   constructor(sendCommand: SendCommand, log: (message: string) => void = () => {}) {
-    this._model = new BrowserModel(sendCommand);
+    this._model = new BrowserModel(sendCommand, log);
     this._log = log;
+  }
+
+  tabLink(tabId: number): TabLink | undefined {
+    return this._model.tabLink(tabId);
+  }
+
+  reattachTab(tabId: number): Promise<TabLink | undefined> {
+    return this._model.reattachTab(tabId);
+  }
+
+  onTabLinkChange(listener: (tabId: number, link: TabLink) => void): void {
+    this._model.onTabLinkChange(listener);
   }
 
   ready(): Promise<void> {

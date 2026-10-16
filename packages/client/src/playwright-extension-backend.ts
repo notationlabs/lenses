@@ -13,6 +13,7 @@ import {
 import { browserProfile, playwrightExtensionToken } from "./user-config.js";
 import { playwrightExtensionInstalledVersion } from "./chrome-paths.js";
 import { CDPRelayServer } from "./playwright-relay/cdp-relay.js";
+import type { TabLink } from "./playwright-relay/browser-model.js";
 import {
   PLAYWRIGHT_EXTENSION_ID,
   PLAYWRIGHT_EXTENSION_INSTALL_URL,
@@ -60,6 +61,7 @@ function createPlaywrightExtensionTransport(
   let relay: CDPRelayServer | undefined;
   let installedVersion: string | undefined;
   let anchor: PlaywrightAnchor | undefined;
+  const linkListeners = new Set<(key: string, link: TabLink) => void>();
   void playwrightExtensionInstalledVersion(undefined, options.profile).then((version) => {
     installedVersion = version;
   });
@@ -100,6 +102,12 @@ function createPlaywrightExtensionTransport(
       const tabId = targetId === undefined ? undefined : relay?.tabIdForTarget(targetId);
       return tabId === undefined ? undefined : String(tabId);
     },
+    tabLink: (key) => relay?.tabLink(Number(key)),
+    reattach: async (key) => relay?.reattachTab(Number(key)),
+    onTabLinkChange(listener) {
+      linkListeners.add(listener);
+      return () => linkListeners.delete(listener);
+    },
     async prepareLeaseRelease() {
       const current = anchor;
       anchor = undefined;
@@ -110,6 +118,10 @@ function createPlaywrightExtensionTransport(
       dispose();
       const next = new CDPRelayServer(log);
       relay = next;
+      next.onTabLinkChange((tabId, link) => {
+        if (relay !== next) return;
+        for (const listener of linkListeners) listener(String(tabId), link);
+      });
       try {
         await next.start();
         const connectUrl = playwrightConnectPageUrl(next.extensionEndpoint(), options.token);
