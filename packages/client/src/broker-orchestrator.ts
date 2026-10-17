@@ -257,7 +257,7 @@ export function createBrokerOrchestrator(
         ...(inPage ? { inPage } : {}),
         ...(message.spec.ready ? { ready: expandTemplate(message.spec.ready, message.params) } : {}),
         holdAt: (page) => pageNeedsUser(message.spec, page, message.params),
-        ...(maxBodyBytes ? { maxBodyBytes } : {}),
+        ...(fileLens ? { maxBodyBytes, blockDownloads: true } : {}),
         loadTimeoutMs,
         existingOnly: authRetry,
         // A document with perform steps binds with "reuse": a reload only
