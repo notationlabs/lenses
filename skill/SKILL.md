@@ -59,7 +59,7 @@ lens call chatgpt/clear --allow-writes                                  # naviga
 lens call chatgpt/chat                                                  # plain read; no flag needed
 ```
 
-Authoring one: a mutating HTTP method requires non-empty `effects.writes`; a write requires `cache` 0 or absent. Declare `idempotent: true` only when repeating the steps is harmless. `{ "click": "a.statement", "text": "{params.period}" }` clicks the first visible match whose whitespace-collapsed text contains the template. A drop attaches a local file the way a drag from the desktop would: `{ "drop": "#editor", "file": "$params.path" }` names, exactly as `$params.<name>`, a declared string param with no default, the caller passes an absolute path, and the host drops that file onto the first visible match. HTTP request bodies are declared as `{ "json": expr }`, `{ "text": expr }`, `{ "form": { field: expr } }`, or `{ "search": { field: expr } }`. A native form action is `{ "submit": "#form", "form": { "field[name]": expr } }`; its field expressions become literal named controls before `requestSubmit()`. These expressions read `$params`, and a chained source's body also reads the sources before it as `$sources` (see [Expressions](#expressions-and-templates)). Keep a page read as its own lens (like `chatgpt/chat`) and give a perform lens the same tiers as its readback.
+Authoring one: a mutating HTTP method requires non-empty `effects.writes`; a write requires `cache` 0 or absent. Declare `idempotent: true` only when repeating the steps is harmless. `{ "click": "a.statement", "text": "{params.period}" }` clicks the first visible match whose whitespace-collapsed text contains the template; of nested matches, the innermost. A wait takes the same `text`. In click and wait selectors, `a >>> b` matches `b` inside `a`'s shadow root, for controls inside web components. A drop attaches a local file the way a drag from the desktop would: `{ "drop": "#editor", "file": "$params.path" }` names, exactly as `$params.<name>`, a declared string param with no default, the caller passes an absolute path, and the host drops that file onto the first visible match. HTTP request bodies are declared as `{ "json": expr }`, `{ "text": expr }`, `{ "form": { field: expr } }`, or `{ "search": { field: expr } }`. A native form action is `{ "submit": "#form", "form": { "field[name]": expr } }`; its field expressions become literal named controls before `requestSubmit()`. These expressions read `$params`, and a chained source's body also reads the sources before it as `$sources` (see [Expressions](#expressions-and-templates)). Keep a page read as its own lens (like `chatgpt/chat`) and give a perform lens the same tiers as its readback.
 
 ## File lenses
 
@@ -86,8 +86,9 @@ tier produces file content and the broker writes it into the caller's
 A tier missing a field, or with invalid base64 or an unsafe name, fails with
 `code: "file_invalid"`. Intercept and http tiers of a file lens keep response
 bodies up to 32MB (512KB otherwise). `effects.cache` applies as usual: a hit
-writes the cached file again. While a file lens runs, the tab's own downloads are denied, so a
-page that also saves the file (as RBS does) leaves no second copy.
+writes the cached file again. While a file lens's steps run, and for 5s after, the page cannot
+save files through `<a download>`, so a page that also saves the file (as
+RBS does) leaves no second copy in Downloads.
 
 ## Authoring a lens for an unmapped page
 

@@ -135,20 +135,41 @@ export function pagePerformFill(spec: { selector: string; value: string }):
 /**
  * Click the first visible match. Pages often render hidden duplicates of a
  * control, so hidden elements are skipped (offsetParent/client-rect check).
- * With `text`, only matches whose whitespace-collapsed text contains it count.
+ * `a >>> b` matches b anywhere inside a's shadow root, for web components.
+ * With `text`, only matches whose whitespace-collapsed text contains it
+ * count, and of those the innermost: a container that merely holds the
+ * labelled control is not what the author means.
  * A disabled or aria-disabled target is an error: the page is not ready.
  */
 export function pagePerformClick(spec: { selector: string; text?: string }):
   | { ok: true }
   | { ok: false; message: string } {
+  // Page functions are serialised one at a time, so matching is repeated in
+  // pagePerformCount rather than shared.
   const collapse = (value: string) => value.replace(/\s+/g, " ").trim();
+  const deep = (root: ParentNode, selector: string): Element[] => {
+    const found = [...root.querySelectorAll(selector)];
+    for (const el of root.querySelectorAll("*")) {
+      if (el.shadowRoot) found.push(...deep(el.shadowRoot, selector));
+    }
+    return found;
+  };
+  const query = (selector: string): Element[] => {
+    const [first, ...rest] = selector.split(">>>").map((part) => part.trim());
+    let matches = [...document.querySelectorAll(first)];
+    for (const part of rest) {
+      matches = matches.flatMap((host) => deep(host.shadowRoot ?? host, part));
+    }
+    return matches;
+  };
   const described = spec.text === undefined
     ? `click "${spec.selector}"`
     : `click "${spec.selector}" with text "${spec.text}"`;
-  let matches = [...document.querySelectorAll(spec.selector)];
+  let matches = query(spec.selector);
   if (spec.text !== undefined) {
     const wanted = collapse(spec.text);
-    matches = matches.filter((el) => collapse(el.textContent ?? "").includes(wanted));
+    const texts = matches.filter((el) => collapse(el.textContent ?? "").includes(wanted));
+    matches = texts.filter((el) => !texts.some((other) => other !== el && el.contains(other)));
   }
   if (matches.length === 0) {
     return { ok: false, message: `${described} matched nothing` };
@@ -331,8 +352,69 @@ export function pagePerformDrop(spec: { selector: string; name: string; type: st
  * host sampled at step entry. One probe keeps the wait semantics in the host,
  * where the timeout and poll interval already live.
  */
-export function pagePerformCount(spec: { selector: string }): number {
-  return document.querySelectorAll(spec.selector).length;
+export function pagePerformCount(spec: { selector: string; text?: string }): number {
+  // The same matching as pagePerformClick: `>>>` pierces shadow roots, and
+  // `text` keeps the innermost matches containing it.
+  const collapse = (value: string) => value.replace(/\s+/g, " ").trim();
+  const deep = (root: ParentNode, selector: string): Element[] => {
+    const found = [...root.querySelectorAll(selector)];
+    for (const el of root.querySelectorAll("*")) {
+      if (el.shadowRoot) found.push(...deep(el.shadowRoot, selector));
+    }
+    return found;
+  };
+  const [first, ...rest] = spec.selector.split(">>>").map((part) => part.trim());
+  let matches = [...document.querySelectorAll(first)];
+  for (const part of rest) {
+    matches = matches.flatMap((host) => deep(host.shadowRoot ?? host, part));
+  }
+  if (spec.text === undefined) return matches.length;
+  const wanted = collapse(spec.text);
+  const texts = matches.filter((el) => collapse(el.textContent ?? "").includes(wanted));
+  return texts.filter((el) => !texts.some((other) => other !== el && el.contains(other))).length;
+}
+
+/**
+ * Stop the page saving files while a file lens runs: the lens writes the
+ * file itself, so a page download would be a second copy. Pages save through
+ * an `<a download>` click, often on a detached anchor, so the guard covers
+ * the anchor's click(), dispatched click events, and real clicks. Chrome's
+ * own download control needs browser-level CDP, which the extension relay
+ * refuses.
+ */
+export function pageGuardDownloads(spec: { on: boolean }): void {
+  type Guard = {
+    click: typeof HTMLAnchorElement.prototype.click;
+    dispatch: typeof EventTarget.prototype.dispatchEvent;
+    onClick: (event: Event) => void;
+  };
+  const holder = window as unknown as { __lensDownloadGuard?: Guard };
+  const current = holder.__lensDownloadGuard;
+  if (!spec.on) {
+    if (!current) return;
+    HTMLAnchorElement.prototype.click = current.click;
+    EventTarget.prototype.dispatchEvent = current.dispatch;
+    document.removeEventListener("click", current.onClick, true);
+    delete holder.__lensDownloadGuard;
+    return;
+  }
+  if (current) return;
+  const click = HTMLAnchorElement.prototype.click;
+  const dispatch = EventTarget.prototype.dispatchEvent;
+  const saves = (target: unknown) => target instanceof HTMLAnchorElement && target.hasAttribute("download");
+  const onClick = (event: Event) => {
+    const origin = event.composedPath()[0];
+    if (origin instanceof Element && origin.closest("a[download]")) event.preventDefault();
+  };
+  HTMLAnchorElement.prototype.click = function (this: HTMLAnchorElement) {
+    if (!saves(this)) click.call(this);
+  };
+  EventTarget.prototype.dispatchEvent = function (this: EventTarget, event: Event) {
+    if (event.type === "click" && saves(this)) return false;
+    return dispatch.call(this, event);
+  };
+  document.addEventListener("click", onClick, true);
+  holder.__lensDownloadGuard = { click, dispatch, onClick };
 }
 
 export function pageSnapshot(opts: { maxChars?: number; html?: boolean; maxHtmlChars?: number }): PageSnapshot {

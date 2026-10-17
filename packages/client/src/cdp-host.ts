@@ -12,6 +12,7 @@ import {
   createCaptureBuffer,
   errorMessage,
   pageDomExtract,
+  pageGuardDownloads,
   pagePerformClick,
   pagePerformCount,
   pagePerformDrop,
@@ -59,6 +60,8 @@ function readyCheck(request: BindRequest): ReadyCheck | undefined {
 
 const MAX_BODY_BYTES = 512 * 1024;
 const LOAD_GRACE_MS = 500;
+/** How long a page stays stopped from saving files after a file lens call. */
+const DOWNLOAD_GUARD_GRACE_MS = 5_000;
 /** Upper bound on waiting for an in-page app to settle after a load or route. */
 const IN_PAGE_SETTLE_MS = 10_000;
 /** How often a sign-in wait tries to re-attach a tab a password manager's frame blocks. */
@@ -217,24 +220,39 @@ export function createCdpBackend(
     else captureLimits.delete(page);
   }
 
-  /** Pages whose own downloads a file lens call is denying. */
-  const deniedDownloads = new WeakSet<Page>();
-  async function setDownloads(page: Page, behavior: "deny" | "default"): Promise<void> {
-    // Puppeteer keeps the page's own CDP session internal; a new session would
-    // need Target.attachToTarget, which the extension relay does not offer.
-    const client = (page as unknown as { _client?: () => { send(method: string, params: object): Promise<unknown> } })._client?.();
-    if (!client) return;
+  /**
+   * Pages a file lens call has stopped from saving files, and a count of
+   * guard changes so a late release cannot lift a newer call's guard.
+   */
+  const downloadGuards = new WeakMap<Page, number>();
+  /** Pages bound by a file lens call, whose perform steps run guarded. */
+  const guardWanted = new WeakSet<Page>();
+  async function guardDownloads(page: Page, on: boolean): Promise<void> {
+    downloadGuards.set(page, (downloadGuards.get(page) ?? 0) + 1);
     try {
-      await client.send("Page.setDownloadBehavior", { behavior });
-      if (behavior === "deny") deniedDownloads.add(page);
-      else deniedDownloads.delete(page);
+      await page.evaluate(pageGuardDownloads, { on });
     } catch (error) {
-      log(`could not set download behavior to ${behavior}: ${errorMessage(error)}`);
+      log(`could not ${on ? "stop" : "restore"} page downloads: ${errorMessage(error)}`);
     }
+  }
+  /**
+   * A page saves after its request resolves, which is after the call has its
+   * file, so the guard outlasts the call by DOWNLOAD_GUARD_GRACE_MS.
+   */
+  function releaseDownloadsLater(page: Page): void {
+    const generation = downloadGuards.get(page);
+    if (generation === undefined) return;
+    setTimeout(() => {
+      if (downloadGuards.get(page) !== generation || page.isClosed()) return;
+      downloadGuards.delete(page);
+      void page.evaluate(pageGuardDownloads, { on: false }).catch(() => {});
+    }, DOWNLOAD_GUARD_GRACE_MS).unref?.();
   }
   async function prepareCall(page: Page, request: BindRequest): Promise<void> {
     limitCaptures(page, request);
-    if (request.blockDownloads) await setDownloads(page, "deny");
+    // Applied when the steps run: the page may still be about to load.
+    if (request.blockDownloads) guardWanted.add(page);
+    else guardWanted.delete(page);
   }
 
   function captures(page: Page): CaptureBuffer {
@@ -719,9 +737,12 @@ export function createCdpBackend(
       },
       async perform(steps) {
         assertOpen(session);
-        return performSteps(page, steps, () =>
-          navigateFresh(page, target, loadTimeoutMs, inPage)
-        );
+        const guarded = guardWanted.has(page);
+        if (guarded) await guardDownloads(page, true);
+        return performSteps(page, steps, async () => {
+          await navigateFresh(page, target, loadTimeoutMs, inPage);
+          if (guarded) await guardDownloads(page, true);
+        });
       },
       async snapshot(options) {
         assertOpen(session);
@@ -1206,9 +1227,7 @@ export function createCdpBackend(
     ): Promise<void> {
       const cdpSession = session as CdpSession;
       cdpSession.closed = true;
-      if (deniedDownloads.has(cdpSession.page) && !cdpSession.page.isClosed()) {
-        await setDownloads(cdpSession.page, "default");
-      }
+      if (!cdpSession.page.isClosed()) releaseDownloadsLater(cdpSession.page);
       cdpSession.stopRecordingState();
       wakeCaptureWaiters(cdpSession.captures);
       // A retry can still land on another login step. Keep the user's original
@@ -1322,8 +1341,9 @@ async function performStep(
     return performDrop(page, step);
   }
   if ("wait" in step) {
+    const text = step.wait.text;
     return performWait(step.wait, (selector) =>
-      page.evaluate(pagePerformCount, { selector })
+      page.evaluate(pagePerformCount, { selector, ...(text !== undefined ? { text } : {}) })
     );
   }
   await navigateFresh();
