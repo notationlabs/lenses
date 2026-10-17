@@ -470,10 +470,12 @@ export type LensBridgeRequest =
    * use Chrome's single consented debugging slot; "acquire" reconnects (Chrome
    * shows a fresh Allow dialog); "status" reports the lease without side effects.
    * "shutdown" retires the broker itself: it drains in-flight work, releases the
-   * lease and exits, so a client running newer code can respawn it.
+   * lease and exits, so a client running newer code can respawn it. With
+   * `ifIdle` a broker with work running or queued declines and keeps running.
    */
   | {
       type: "control";
       id: string;
       action: "release" | "acquire" | "status" | "shutdown";
+      ifIdle?: boolean;
     };

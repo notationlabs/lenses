@@ -56,6 +56,8 @@ type TabState = {
   /** Why the last attach failed, verbatim from Chrome. */
   lastError?: string;
   removalTimer?: ReturnType<typeof setTimeout>;
+  /** A tab handed over by a retiring broker: attach it only if it is still this target. */
+  expectedTargetId?: string;
 };
 
 /**
@@ -246,11 +248,42 @@ export class BrowserModel {
     if (source.tabId !== undefined) this._detachTab(source.tabId);
   }
 
+  /**
+   * Take tabs a retiring broker held. Attaching puts each back in the
+   * extension's group without reloading it; Puppeteer then sees it as a page.
+   * A tab whose target changed (Chrome restarted and reused the id) is left
+   * alone.
+   */
+  async adoptTabs(tabs: Array<{ tabId: number; targetId: string }>): Promise<void> {
+    const adopted: number[] = [];
+    for (const { tabId, targetId } of tabs) {
+      if (this._tabs.has(tabId) || this._closedTabs.has(tabId)) continue;
+      this._tabs.set(tabId, { inGroup: true, expectedTargetId: targetId });
+      adopted.push(tabId);
+    }
+    if (!this._autoAttach) return;
+    await Promise.all(
+      adopted.map((tabId) => this._attachTab(tabId).catch((error) => this._dropAdoption(tabId, error)))
+    );
+  }
+
+  private _dropAdoption(tabId: number, error: unknown): void {
+    const state = this._tabs.get(tabId);
+    if (state?.expectedTargetId === undefined || state.session) return;
+    this._tabs.delete(tabId);
+    this._log(`handed-over tab ${tabId} not adopted: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
   async enableAutoAttach(): Promise<void> {
     this._autoAttach = true;
     const tabIds = [...this._tabs.keys()];
     await Promise.all(
-      tabIds.map((tabId) => this._attachTab(tabId).catch((error) => console.error(error)))
+      tabIds.map((tabId) =>
+        this._attachTab(tabId).catch((error) => {
+          if (this._tabs.get(tabId)?.expectedTargetId !== undefined) this._dropAdoption(tabId, error);
+          else console.error(error);
+        })
+      )
     );
   }
 
@@ -344,6 +377,11 @@ export class BrowserModel {
         "Target.getTargetInfo",
       ]);
       if (this._tabs.get(tabId) !== state) throw new Error(`Tab ${tabId} closed while attaching`);
+      const expected = state.expectedTargetId;
+      if (expected !== undefined && result?.targetInfo?.targetId !== expected) {
+        throw new Error(`tab ${tabId} is no longer target ${expected}`);
+      }
+      state.expectedTargetId = undefined;
 
       const tabSession: TabSession = {
         tabId,

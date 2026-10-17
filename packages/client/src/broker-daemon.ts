@@ -18,7 +18,7 @@ import {
 } from "./launch-browser.js";
 import { browserProfile, playwrightExtensionToken } from "./user-config.js";
 import { createIdleExitTimer, createShutdownSequence } from "./broker-lifecycle.js";
-import { brokerBuildStamp } from "./broker-stamp.js";
+import { BROKER_PROTOCOL, brokerBuild } from "./broker-stamp.js";
 import { SerialTaskQueue } from "./serial-task-queue.js";
 import {
   authProof,
@@ -93,11 +93,14 @@ let ensureBrowserInFlight: Promise<void> | undefined;
 let browserPresent: boolean | undefined;
 const requestQueue = new SerialTaskQueue();
 const authLeases = createBrokerAuthLeases(orchestrator);
-const buildStamp = brokerBuildStamp();
+const build = brokerBuild();
+const buildStamp = build.stamp;
 const DRAIN_TIMEOUT_MS = 10_000;
 const DEFAULT_IDLE_EXIT_MS = 15 * 60_000;
 const DEFAULT_NO_BROWSER_EXIT_MS = 10_000;
 let shuttingDown = false;
+/** A client asked for the restart: leave the group's tabs for the next broker. */
+let handOverTabs = false;
 
 const idleReleaseMs = Number(process.env.LENS_BROKER_IDLE_RELEASE_MS ?? 0) || 0;
 const idleExitMs = Number(process.env.LENS_BROKER_IDLE_EXIT_MS ?? DEFAULT_IDLE_EXIT_MS) || 0;
@@ -496,11 +499,21 @@ async function handleControl(
   message: Extract<LensBridgeRequest, { type: "control" }>
 ): Promise<void> {
   if (message.action === "shutdown") {
+    // A call counts from arrival to result, through any sign-in wait.
+    if (message.ifIdle && inFlight > 0) {
+      send(client, {
+        type: "result",
+        id: message.id,
+        result: { kind: "value", value: { shuttingDown: false, stamp: buildStamp } },
+      });
+      return;
+    }
     send(client, {
       type: "result",
       id: message.id,
       result: { kind: "value", value: { shuttingDown: true, stamp: buildStamp } },
     });
+    handOverTabs = true;
     void shutdown("client requested a restart");
     return;
   }
@@ -546,7 +559,7 @@ const runShutdown = createShutdownSequence({
   inFlight: () => inFlight,
   drainTimeoutMs: DRAIN_TIMEOUT_MS,
   release: async () => {
-    await extension.release();
+    await extension.release({ handOver: handOverTabs });
     await cdp.release();
   },
   log: (message) => console.error(message),
@@ -574,6 +587,8 @@ function sendStatus(socket: WebSocket): void {
   send(socket, {
     type: "status",
     stamp: buildStamp,
+    builtAt: build.builtAt,
+    protocol: BROKER_PROTOCOL,
     connected: preferred.available(),
     lease: cdp.lease(),
     backend: selected?.name,

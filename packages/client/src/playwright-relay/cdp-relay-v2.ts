@@ -48,6 +48,10 @@ export class ExtensionProtocolV2 {
     this._model.onTabLinkChange(listener);
   }
 
+  adoptTabs(tabs: Array<{ tabId: number; targetId: string }>): Promise<void> {
+    return this._model.adoptTabs(tabs);
+  }
+
   ready(): Promise<void> {
     return this._ready.promise;
   }

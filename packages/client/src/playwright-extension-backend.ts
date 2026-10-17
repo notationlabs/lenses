@@ -1,10 +1,12 @@
 import puppeteer from "puppeteer-core";
+import type { Browser } from "puppeteer-core";
 import {
   createCdpBackend,
   pageTargetId,
   type CdpBackend,
   type CdpTransport,
 } from "./cdp-host.js";
+import { saveHandover, takeHandover, type HandedOverTab } from "./tab-handover.js";
 import {
   foregroundApplication,
   openUrlInChrome,
@@ -38,6 +40,8 @@ export interface PlaywrightExtensionOptions {
   profile?: string;
   token?: string;
   openConnectPage?: (url: string) => Promise<void>;
+  /** Where a restarting broker leaves its tabs; tests point it elsewhere. */
+  handoverPath?: string;
 }
 
 type ResolvedPlaywrightExtensionOptions = PlaywrightExtensionOptions & { profile: string };
@@ -50,6 +54,7 @@ export function createPlaywrightExtensionBackend(
     profile: options.profile ?? browserProfile(),
     token: options.token ?? playwrightExtensionToken(),
     openConnectPage: options.openConnectPage,
+    handoverPath: options.handoverPath,
   };
   return createCdpBackend(log, createPlaywrightExtensionTransport(log, resolved));
 }
@@ -61,6 +66,7 @@ function createPlaywrightExtensionTransport(
   let relay: CDPRelayServer | undefined;
   let installedVersion: string | undefined;
   let anchor: PlaywrightAnchor | undefined;
+  let anchorTabId: string | undefined;
   const linkListeners = new Set<(key: string, link: TabLink) => void>();
   void playwrightExtensionInstalledVersion(undefined, options.profile).then((version) => {
     installedVersion = version;
@@ -72,6 +78,21 @@ function createPlaywrightExtensionTransport(
     relay?.stop();
     relay = undefined;
   };
+
+  /** The web pages in this broker's group, other than its own status page. */
+  async function groupTabs(browser: Browser): Promise<HandedOverTab[]> {
+    const tabs: HandedOverTab[] = [];
+    for (const page of await browser.pages().catch(() => [])) {
+      const targetId = pageTargetId(page);
+      const tabId = targetId === undefined ? undefined : relay?.tabIdForTarget(targetId);
+      if (targetId === undefined || tabId === undefined || String(tabId) === anchorTabId) continue;
+      if (relay?.tabLink(tabId)?.state !== "connected") continue;
+      const url = page.url();
+      if (!/^https?:/.test(url)) continue;
+      tabs.push({ tabId, targetId, url });
+    }
+    return tabs;
+  }
 
   return {
     name: "playwright-extension",
@@ -109,9 +130,15 @@ function createPlaywrightExtensionTransport(
       linkListeners.add(listener);
       return () => linkListeners.delete(listener);
     },
-    async prepareLeaseRelease() {
+    async prepareLeaseRelease(browser, release) {
+      if (release?.handOver) {
+        const tabs = await groupTabs(browser);
+        saveHandover(options.profile, tabs, options.handoverPath);
+        if (tabs.length) log(`left ${tabs.length} tab(s) for the next broker: ${tabs.map((tab) => tab.tabId).join(", ")}`);
+      }
       const current = anchor;
       anchor = undefined;
+      anchorTabId = undefined;
       await current?.release();
     },
     dispose,
@@ -160,6 +187,12 @@ function createPlaywrightExtensionTransport(
               );
             }),
           ]);
+          const handedOver = takeHandover(options.profile, options.handoverPath);
+          if (handedOver.length) {
+            log(`adopting ${handedOver.length} tab(s) from the previous broker: ${handedOver.map((tab) => tab.tabId).join(", ")}`);
+            // Attached when Puppeteer turns on auto-attach, below.
+            await next.adoptTabs(handedOver);
+          }
         } finally {
           // The stock extension explicitly activates its selected tab and
           // focuses Chrome. Restore immediately: delaying this makes the focus
@@ -172,6 +205,9 @@ function createPlaywrightExtensionTransport(
         });
         const connectPage = (await connected.pages()).find(isPlaywrightConnectPage);
         const anchorPage = await connected.newPage({ background: true });
+        const anchorTarget = pageTargetId(anchorPage);
+        const anchorTab = anchorTarget === undefined ? undefined : next.tabIdForTarget(anchorTarget);
+        anchorTabId = anchorTab === undefined ? undefined : String(anchorTab);
         await renderPlaywrightAnchor(anchorPage, options.profile, installedVersion);
         anchor = retainPlaywrightAnchor(anchorPage, requestLeaseRelease);
         anchor.record("Connected");
