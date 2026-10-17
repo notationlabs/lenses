@@ -150,6 +150,7 @@ const waitSchema = z
     appears: z.string().optional(),
     gone: z.string().optional(),
     increases: z.string().optional(),
+    text: z.string().optional(),
     timeoutMs: z.number().int().positive().optional(),
   })
   .refine(
@@ -162,7 +163,7 @@ const PERFORM_HINT =
   'must be one perform step: {"fill": <sel>, "value": <expr>}, {"click": <sel>, "text"?: <template>}, ' +
   '{"submit": <form-sel>, "form"?: {<field>: <expr>}}, {"press": <key>}, ' +
   '{"drop": <sel>, "file": <param>}, ' +
-  '{"wait": {"appears" | "gone" | "increases": <sel>, "timeoutMs"?: <ms>}}, ' +
+  '{"wait": {"appears" | "gone" | "increases": <sel>, "text"?: <template>, "timeoutMs"?: <ms>}}, ' +
   'or {"navigate": "fresh"}';
 
 // A closed opcode set: unknown keys and unknown opcodes fail here rather than
@@ -576,6 +577,7 @@ function checkExpressionsAndTemplates(spec: LensSpec): void {
     } else if ("drop" in step) template(step.drop, `${at}.drop`);
     else if ("wait" in step) {
       template(step.wait.appears ?? step.wait.gone ?? step.wait.increases, `${at}.wait`);
+      template(step.wait.text, `${at}.wait.text`);
     }
   });
 

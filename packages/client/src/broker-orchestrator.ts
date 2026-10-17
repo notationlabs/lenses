@@ -855,7 +855,7 @@ function describePerformStep(step: PerformStep): string {
     : step.wait.gone !== undefined
       ? "gone"
       : "increases";
-  return `wait ${form} ${safeSelector(step.wait[form] ?? "")}`;
+  return `wait ${form} ${safeSelector(step.wait[form] ?? "")}${step.wait.text !== undefined ? " (text redacted)" : ""}`;
 }
 
 function safeSelector(selector: string): string {

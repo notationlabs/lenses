@@ -108,6 +108,8 @@ export interface PerformWait {
   appears?: string;
   gone?: string;
   increases?: string;
+  /** a template the matched elements' text must contain, as on click */
+  text?: string;
   /** how long to poll before the step fails, ms (default 10000) */
   timeoutMs?: number;
 }

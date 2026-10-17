@@ -30,6 +30,7 @@ export {
 export { generateTsSdk } from "./generate.js";
 export {
   pageDomExtract,
+  pageGuardDownloads,
   pagePerformClick,
   pagePerformCount,
   pagePerformDrop,

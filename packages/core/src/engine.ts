@@ -125,6 +125,7 @@ async function runPerform(
             : wait.gone !== undefined
               ? { gone: expandTemplate(wait.gone, params) }
               : { increases: expandTemplate(wait.increases!, params) }),
+          ...(wait.text !== undefined ? { text: expandTemplate(wait.text, params) } : {}),
           ...(wait.timeoutMs !== undefined ? { timeoutMs: wait.timeoutMs } : {}),
         },
       });
