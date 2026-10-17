@@ -10,6 +10,7 @@ import { clearAuthBanners, showAuthBanner } from "./auth-banner.js";
 import { raiseChrome } from "./launch-browser.js";
 import {
   createCaptureBuffer,
+  errorMessage,
   pageDomExtract,
   pagePerformClick,
   pagePerformCount,
@@ -214,6 +215,26 @@ export function createCdpBackend(
   function limitCaptures(page: Page, request: BindRequest): void {
     if (request.maxBodyBytes) captureLimits.set(page, request.maxBodyBytes);
     else captureLimits.delete(page);
+  }
+
+  /** Pages whose own downloads a file lens call is denying. */
+  const deniedDownloads = new WeakSet<Page>();
+  async function setDownloads(page: Page, behavior: "deny" | "default"): Promise<void> {
+    // Puppeteer keeps the page's own CDP session internal; a new session would
+    // need Target.attachToTarget, which the extension relay does not offer.
+    const client = (page as unknown as { _client?: () => { send(method: string, params: object): Promise<unknown> } })._client?.();
+    if (!client) return;
+    try {
+      await client.send("Page.setDownloadBehavior", { behavior });
+      if (behavior === "deny") deniedDownloads.add(page);
+      else deniedDownloads.delete(page);
+    } catch (error) {
+      log(`could not set download behavior to ${behavior}: ${errorMessage(error)}`);
+    }
+  }
+  async function prepareCall(page: Page, request: BindRequest): Promise<void> {
+    limitCaptures(page, request);
+    if (request.blockDownloads) await setDownloads(page, "deny");
   }
 
   function captures(page: Page): CaptureBuffer {
@@ -1092,7 +1113,7 @@ export function createCdpBackend(
       const current = await ensureBrowser(() => {});
       const chosen = await chooseTab(current, request);
       if (chosen) {
-        limitCaptures(chosen, request);
+        await prepareCall(chosen, request);
         const kept = keptGate(chosen);
         const atAuthGate = request.existingOnly
           ? !kept || sameGatePlace(chosen.url(), kept.keptUrl)
@@ -1133,7 +1154,7 @@ export function createCdpBackend(
       if (request.target === undefined) throw new Error("bind needs a target or a tab");
       const existing = await findPage(current, request.target);
       if (existing) {
-        limitCaptures(existing, request);
+        await prepareCall(existing, request);
         const kept = keptGate(existing);
         // A retry that has left the original sign-in place must not resolve
         // against responses captured before login (even if they match first).
@@ -1162,7 +1183,7 @@ export function createCdpBackend(
       if (request.existingOnly) throw new AuthPageUnavailable("auth retry has no open target tab");
       const page = await current.newPage({ background: true });
       transport.recordEvent?.("Call tab opened");
-      limitCaptures(page, request);
+      await prepareCall(page, request);
       resetCaptures(page);
       // Register before loading: a slow sign-in redirect must not orphan the tab.
       if (request.reuse) rememberReuse(urlOrigin(request.target), page);
@@ -1185,6 +1206,9 @@ export function createCdpBackend(
     ): Promise<void> {
       const cdpSession = session as CdpSession;
       cdpSession.closed = true;
+      if (deniedDownloads.has(cdpSession.page) && !cdpSession.page.isClosed()) {
+        await setDownloads(cdpSession.page, "default");
+      }
       cdpSession.stopRecordingState();
       wakeCaptureWaiters(cdpSession.captures);
       // A retry can still land on another login step. Keep the user's original

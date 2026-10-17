@@ -102,6 +102,11 @@ export interface BindRequest extends TabChoice {
   holdAt?(page: { url: string; title: string }): Promise<boolean>;
   /** Capture response bodies up to this size while bound; a file lens reads larger ones. */
   maxBodyBytes?: number;
+  /**
+   * Deny the page's own downloads until the call finishes. A file lens writes
+   * its file itself, so a download the page starts would be a second copy.
+   */
+  blockDownloads?: boolean;
 }
 
 export interface DomExtractResult {

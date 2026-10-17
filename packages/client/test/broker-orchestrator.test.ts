@@ -1518,6 +1518,7 @@ describe("file lenses", () => {
     expect(readFileSync(join(dir, "Statement.pdf"))).toEqual(pdf);
     expect(readdirSync(dir)).toEqual(["Statement.pdf"]);
     expect(backend.binds[0].maxBodyBytes).toBeGreaterThan(512 * 1024);
+    expect(backend.binds[0].blockDownloads).toBe(true);
   });
 
   it("names an unnamed file after the lens and its content hash", async () => {
