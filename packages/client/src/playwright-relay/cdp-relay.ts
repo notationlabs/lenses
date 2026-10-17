@@ -128,6 +128,11 @@ export class CDPRelayServer {
     return this._handler.retryAttach(tabId);
   }
 
+  /** Attach an attached tab afresh, when its debugger session stopped answering. */
+  refreshAttach(tabId: number): Promise<TabLink | undefined> {
+    return this._handler.refreshAttach(tabId);
+  }
+
   onTabLinkChange(listener: (tabId: number, link: TabLink) => void): void {
     this._handler.onTabLinkChange(listener);
   }

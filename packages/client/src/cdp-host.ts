@@ -66,6 +66,8 @@ const DOWNLOAD_GUARD_GRACE_MS = 5_000;
 const IN_PAGE_SETTLE_MS = 10_000;
 /** How often a sign-in wait tries to re-attach a tab a password manager's frame blocks. */
 const SIGN_IN_RETRY_MS = 3_000;
+/** How long a re-found tab gets to answer a trivial evaluate before it is attached afresh. */
+const ANSWER_TIMEOUT_MS = 3_000;
 const URL_POLL_MS = 250;
 const PERFORM_POLL_MS = 150;
 const PERFORM_WAIT_DEFAULT_MS = 10_000;
@@ -119,6 +121,8 @@ export interface CdpTransport {
   tabLink?(key: string): TabLink | undefined;
   /** One attach attempt for a detached tab a sign-in wait is watching. */
   retryAttach?(key: string): Promise<TabLink | undefined>;
+  /** Attach an attached tab afresh, when its debugger session stopped answering. */
+  refreshAttach?(key: string): Promise<TabLink | undefined>;
   onTabLinkChange?(listener: (key: string, link: TabLink) => void): () => void;
   /** Transport cleanup before a session or temporary page is released. */
   preparePageRelease?(
@@ -473,7 +477,7 @@ export function createCdpBackend(
     lastPage?: Page
   ): Promise<Page | undefined> {
     const live = await pageForKey(current, key);
-    if (live) return live;
+    if (live) return await answeringPage(current, key, live, target, lastPage);
     let link = transport.tabLink?.(key);
     // The extension retries only on a URL change, which a signed-in
     // single-page app may never make, so a sign-in wait retries too.
@@ -488,7 +492,7 @@ export function createCdpBackend(
     if (link?.state === "connected") {
       // Attached a moment ago; Puppeteer has not heard yet.
       const page = await awaitPageForKey(current, key);
-      if (page) return page;
+      if (page) return await answeringPage(current, key, page, target, lastPage);
     } else if (link?.state !== "disconnected") {
       return undefined;
     }
@@ -498,6 +502,39 @@ export function createCdpBackend(
     if (!kept) keptGates.set(key, { page: lastPage, target: target ?? url, keptUrl: url, detached: true });
     log(`tab ${id} is detached from the debugger: ${link.lastError ?? "waiting for it to re-attach"}`);
     throw new TabDisconnected(id, url, link.lastError);
+  }
+
+  /**
+   * A re-attached tab can come back with a debugger session that never
+   * reports the page's JavaScript context (seen after a password manager's
+   * frame blocked the attach mid sign-in), so every evaluate would hang.
+   * Such a tab is attached afresh; if that attach is blocked too, it is
+   * treated as detached, which a sign-in wait retries.
+   */
+  async function answeringPage(
+    current: Browser,
+    key: string,
+    page: Page,
+    target: string | undefined,
+    lastPage: Page | undefined
+  ): Promise<Page | undefined> {
+    if (!transport.refreshAttach || (await answers(page))) return page;
+    log(`tab t${key} does not answer; attaching it afresh`);
+    const link = await transport.refreshAttach(key);
+    if (link?.state === "connected") {
+      const fresh = await awaitPageForKey(current, key);
+      if (fresh && (await answers(fresh))) return fresh;
+      log(`tab t${key} still does not answer after a fresh attach`);
+      return fresh ?? page;
+    }
+    return await recoverTab(current, key, target, lastPage);
+  }
+
+  async function answers(page: Page): Promise<boolean> {
+    return await Promise.race([
+      page.evaluate(() => true).catch(() => false),
+      delay(ANSWER_TIMEOUT_MS).then(() => false),
+    ]);
   }
 
   /** Puppeteer hears of a re-attached tab over the relay socket, a moment after the relay attaches it. */

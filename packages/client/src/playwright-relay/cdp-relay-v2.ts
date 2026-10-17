@@ -40,6 +40,10 @@ export class ExtensionProtocolV2 {
     return this._model.retryAttach(tabId);
   }
 
+  refreshAttach(tabId: number): Promise<TabLink | undefined> {
+    return this._model.refreshAttach(tabId);
+  }
+
   onTabLinkChange(listener: (tabId: number, link: TabLink) => void): void {
     this._model.onTabLinkChange(listener);
   }

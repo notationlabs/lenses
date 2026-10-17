@@ -104,6 +104,7 @@ function createPlaywrightExtensionTransport(
     },
     tabLink: (key) => relay?.tabLink(Number(key)),
     retryAttach: async (key) => relay?.retryAttach(Number(key)),
+    refreshAttach: async (key) => relay?.refreshAttach(Number(key)),
     onTabLinkChange(listener) {
       linkListeners.add(listener);
       return () => linkListeners.delete(listener);
