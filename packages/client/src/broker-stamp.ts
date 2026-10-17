@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -12,27 +12,49 @@ import { fileURLToPath } from "node:url";
  * contributes: the daemon runs core's engine as much as its own code.
  */
 export function computeBuildStamp(...dirs: string[]): string {
-  const hash = createHash("sha256");
-  for (const dir of dirs) {
-    hash.update(`${dir}\0`);
-    hashDirectory(hash, dir, "");
-  }
-  return hash.digest("hex").slice(0, 16);
+  return computeBuild(...dirs).stamp;
 }
 
-function hashDirectory(hash: ReturnType<typeof createHash>, root: string, relative: string): void {
+export interface BrokerBuild {
+  stamp: string;
+  /**
+   * When the newest module was written, in ms. Two installs of the same
+   * source (the bundle and the workspace build) differ in stamp, so only
+   * this says which one is newer. Package managers that hard-link or copy
+   * with times preserved keep it.
+   */
+  builtAt: number;
+}
+
+export function computeBuild(...dirs: string[]): BrokerBuild {
+  const hash = createHash("sha256");
+  const newest = { builtAt: 0 };
+  for (const dir of dirs) {
+    hash.update(`${dir}\0`);
+    hashDirectory(hash, newest, dir, "");
+  }
+  return { stamp: hash.digest("hex").slice(0, 16), builtAt: Math.floor(newest.builtAt) };
+}
+
+function hashDirectory(
+  hash: ReturnType<typeof createHash>,
+  newest: { builtAt: number },
+  root: string,
+  relative: string
+): void {
   const entries = readdirSync(join(root, relative), { withFileTypes: true })
     .sort((a, b) => a.name.localeCompare(b.name));
   for (const entry of entries) {
     const path = relative ? `${relative}/${entry.name}` : entry.name;
     if (entry.isDirectory()) {
-      if (entry.name !== "node_modules") hashDirectory(hash, root, path);
+      if (entry.name !== "node_modules") hashDirectory(hash, newest, root, path);
       continue;
     }
     if (!isModule(entry.name)) continue;
     hash.update(path);
     hash.update("\0");
     hash.update(readFileSync(join(root, path)));
+    newest.builtAt = Math.max(newest.builtAt, statSync(join(root, path)).mtimeMs);
   }
 }
 
@@ -55,20 +77,31 @@ function coreModuleDir(): string | undefined {
   }
 }
 
-let cached: string | undefined;
+let cached: BrokerBuild | undefined;
 
 /**
- * The stamp of the module directories this file and core were loaded from —
+ * The build of the module directories this file and core were loaded from —
  * `dist/` when built, `src/` under bun. Memoised on purpose: a running daemon
  * must keep reporting the code it started with, not the code now on disk.
  */
-export function brokerBuildStamp(): string {
+export function brokerBuild(): BrokerBuild {
   if (cached === undefined) {
     const core = coreModuleDir();
-    cached = computeBuildStamp(
+    cached = computeBuild(
       dirname(fileURLToPath(import.meta.url)),
       ...(core ? [core] : [])
     );
   }
   return cached;
 }
+
+export function brokerBuildStamp(): string {
+  return brokerBuild().stamp;
+}
+
+/**
+ * The version of the messages a client and broker exchange. Raise it when a
+ * change would break a client of the previous build talking to this broker,
+ * or this client talking to a broker of the previous build.
+ */
+export const BROKER_PROTOCOL = 1;

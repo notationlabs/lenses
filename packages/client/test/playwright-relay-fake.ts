@@ -39,6 +39,12 @@ export class FakePlaywrightExtension {
     this.sendEvent("extension.initialized", []);
   }
 
+  /** A tab already open in Chrome, outside any group, as after a broker restart. */
+  openTab(id: number, url: string): void {
+    this.tabs.set(id, url);
+    this.nextTabId = Math.max(this.nextTabId, id);
+  }
+
   close(reason?: string): void {
     this.socket?.close(1000, reason);
   }

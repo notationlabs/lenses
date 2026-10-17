@@ -107,8 +107,11 @@ export interface CdpTransport {
   recordEvent?(message: string): void;
   /** Actionable status after an unexpected live connection loss. */
   disconnectHint?(): string;
-  /** Transport cleanup before the browser lease is disconnected. */
-  prepareLeaseRelease?(browser: Browser): Promise<void>;
+  /**
+   * Transport cleanup before the browser lease is disconnected. With
+   * `handOver`, the broker is restarting: leave its tabs for the next one.
+   */
+  prepareLeaseRelease?(browser: Browser, options?: ReleaseOptions): Promise<void>;
   /**
    * A tab identity that lasts as long as the tab (a Chrome tab id, or a CDP
    * target id), when the transport can name one.
@@ -134,6 +137,11 @@ export interface CdpTransport {
   dispose?(): void;
 }
 
+export interface ReleaseOptions {
+  /** The broker is restarting: leave its tabs for the next broker to adopt. */
+  handOver?: boolean;
+}
+
 export interface CdpBackend extends BrowserBackend {
   lease(): CdpLease;
   /**
@@ -142,7 +150,7 @@ export interface CdpBackend extends BrowserBackend {
    * endpoint.
    */
   browserLive(): Promise<boolean>;
-  release(): Promise<void>;
+  release(options?: ReleaseOptions): Promise<void>;
   /** The transport's broker-owned anchor was explicitly closed by the user. */
   onLeaseReleaseRequest(listener: () => void): () => void;
   acquire(progress?: (message: string) => void): Promise<void>;
@@ -836,7 +844,7 @@ export function createCdpBackend(
     async browserLive() {
       return available() || endpointLive();
     },
-    async release() {
+    async release(options = {}) {
       released = true;
       if (connecting) await connecting.catch(() => {});
       const current = browser;
@@ -845,7 +853,7 @@ export function createCdpBackend(
         return;
       }
       try {
-        await transport.prepareLeaseRelease?.(current);
+        await transport.prepareLeaseRelease?.(current, options);
       } catch {
         // Release must continue even if the anchor was already closed.
       }

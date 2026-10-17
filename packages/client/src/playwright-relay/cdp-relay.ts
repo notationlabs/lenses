@@ -137,6 +137,11 @@ export class CDPRelayServer {
     this._handler.onTabLinkChange(listener);
   }
 
+  /** Take tabs a retiring broker held, back into this relay's group. */
+  adoptTabs(tabs: Array<{ tabId: number; targetId: string }>): Promise<void> {
+    return this._handler.adoptTabs(tabs);
+  }
+
   stop(): void {
     this._closeConnections("Server stopped");
     this._wss?.close();

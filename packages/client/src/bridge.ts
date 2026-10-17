@@ -6,14 +6,14 @@ import { fileURLToPath } from "node:url";
 import { WebSocket } from "ws";
 import type { LensBridgeRequest, LensResult, LensSpec } from "@djgrant/lenses-core";
 import { coordinateRespawn } from "./broker-respawn.js";
-import { brokerBuildStamp } from "./broker-stamp.js";
+import { BROKER_PROTOCOL, brokerBuild, type BrokerBuild } from "./broker-stamp.js";
 import { authProof, loadBrokerAuth, proofMatches } from "./broker-auth.js";
 import { randomBytes } from "node:crypto";
 import type { RecordingTarget } from "./recording.js";
 
 const BROKER_START_WAIT_MS = 3_000;
 const BROKER_SHUTDOWN_WAIT_MS = 12_000;
-/** Bounded so a stamp that never converges reports an error instead of looping. */
+/** Bounded so a build that never converges reports an error instead of looping. */
 const BROKER_BIND_ATTEMPTS = 3;
 
 export type LensLogger = (message: string) => void;
@@ -108,6 +108,10 @@ type BrokerMessage =
       diagnostics?: BrokerDiagnostics;
       /** Build stamp of the daemon's code; absent on brokers older than this. */
       stamp?: string;
+      /** When the daemon's code was built, in ms; absent on older brokers. */
+      builtAt?: number;
+      /** Client-broker message version; absent on brokers from before version 1. */
+      protocol?: number;
     }
   | { type: "result"; id: string; result: LensTransportResult }
   | { type: "progress"; id: string; message: string };
@@ -161,16 +165,20 @@ export class BrowserBridge implements LensTransport {
     startup: BrokerStartupOptions = {}
   ): Promise<BrowserBridge> {
     if (host !== "127.0.0.1") throw new Error("the lens broker only listens on 127.0.0.1");
-    const expected = brokerBuildStamp();
+    const ours = brokerBuild();
     for (let attempt = 1; attempt <= BROKER_BIND_ATTEMPTS; attempt += 1) {
       const connection =
         (await connectBroker(port, 150)) ?? (await startBroker(port, log, startup));
-      const stamp = connection.status.stamp;
-      if (stamp !== undefined && stamp !== expected) {
-        log(`lens broker on port ${port} runs build ${stamp}, expected ${expected}`);
-        await retireStaleBroker(connection, port, log);
-        continue;
+      const verdict = judgeBroker(connection.status, ours);
+      if (verdict.action === "refuse") {
+        connection.socket.close();
+        throw new Error(`lens broker on port ${port} ${verdict.reason}`);
       }
+      if (verdict.action === "retire") {
+        log(`lens broker on port ${port} ${verdict.reason}`);
+        if ((await retireStaleBroker(connection, port, log)) !== "declined") continue;
+      }
+      if (verdict.action === "use" && verdict.reason) log(`lens broker on port ${port} ${verdict.reason}`);
       log(`connected to lens broker on ws://${host}:${port}`);
       if (connection.status.connected) {
         log(`browser connected through broker port ${port}`);
@@ -178,7 +186,7 @@ export class BrowserBridge implements LensTransport {
       return new BrowserBridge(connection.socket, port, log, connection.status);
     }
     throw new Error(
-      `lens broker on port ${port} still reports a stale build after ${BROKER_BIND_ATTEMPTS} restart attempts`
+      `lens broker on port ${port} still reports an older build after ${BROKER_BIND_ATTEMPTS} restart attempts`
     );
   }
 
@@ -364,12 +372,8 @@ export class BrowserBridge implements LensTransport {
   }
 
   private onMessage(raw: string): void {
-    let message: BrokerMessage;
-    try {
-      message = JSON.parse(raw) as BrokerMessage;
-    } catch {
-      return;
-    }
+    const message = parseBrokerMessage(raw);
+    if (!message) return;
     if (message.type === "status") {
       const wasConnected = this.browserConnected;
       this.browserConnected = message.connected;
@@ -419,10 +423,56 @@ export class BrowserBridge implements LensTransport {
   }
 }
 
+function parseBrokerMessage(raw: string): BrokerMessage | undefined {
+  try {
+    return JSON.parse(raw) as BrokerMessage;
+  } catch {
+    return undefined;
+  }
+}
+
 function requestDescription(message: LensBridgeRequest, id: string): string {
   if (message.type !== "call") return `${message.type} ${id}`;
   const recording = message.recording ? `, recording ${message.recording.callId}` : "";
   return `call ${id} for ${message.spec.name}${recording}`;
+}
+
+export type BrokerVerdict =
+  | { action: "use"; reason?: string }
+  | { action: "retire"; reason: string }
+  | { action: "refuse"; reason: string };
+
+/**
+ * Whether a client should use the broker it found. Every install of lenses
+ * shares one broker port, and each restart drops the broker's tabs, so only
+ * a newer build restarts a broker, and only while it is idle. An older
+ * build uses the newer broker when it speaks the same protocol. Any other
+ * rule lets two installs restart each other's broker on every call.
+ */
+export function judgeBroker(
+  status: Extract<BrokerMessage, { type: "status" }>,
+  ours: BrokerBuild,
+  protocol = BROKER_PROTOCOL
+): BrokerVerdict {
+  const stamp = status.stamp;
+  if (stamp === undefined || stamp === ours.stamp) return { action: "use" };
+  // Brokers from before the protocol field speak version 1.
+  const compatible = (status.protocol ?? 1) === protocol;
+  const newer = status.builtAt === undefined || ours.builtAt > status.builtAt;
+  if (!newer) {
+    if (compatible) return { action: "use", reason: `runs build ${stamp}, newer than this client's ${ours.stamp}` };
+    return {
+      action: "refuse",
+      reason:
+        `runs a newer build (${stamp}, protocol ${status.protocol}) that this client ` +
+        `(protocol ${protocol}) cannot use; update this install of lenses`,
+    };
+  }
+  const busy = !!status.diagnostics?.activeCall || (status.diagnostics?.queuedCalls ?? 0) > 0;
+  if (busy && compatible) {
+    return { action: "use", reason: `runs older build ${stamp}; it is busy, so it is not restarted` };
+  }
+  return { action: "retire", reason: `runs older build ${stamp}; restarting it with build ${ours.stamp}` };
 }
 
 interface BrokerConnection {
@@ -438,31 +488,51 @@ async function retireStaleBroker(
   connection: BrokerConnection,
   port: number,
   log: LensLogger
-): Promise<void> {
+): Promise<"retired" | "declined" | "waited"> {
+  let declined = false;
   const outcome = await coordinateRespawn(port, {
-    respawn: () => requestShutdown(connection, log),
+    respawn: async () => {
+      declined = await requestShutdown(connection, log);
+    },
     waitMs: BROKER_SHUTDOWN_WAIT_MS,
   });
+  // A broker that declined stays up, and this connection to it stays usable.
+  if (declined) return "declined";
   connection.socket.close();
   if (outcome === "waited") log(`another client is restarting the lens broker on port ${port}`);
+  return outcome === "waited" ? "waited" : "retired";
 }
 
-function requestShutdown(connection: BrokerConnection, log: LensLogger): Promise<void> {
-  log("asking the stale lens broker to shut down");
+/** Resolves true when the broker declines because it is busy. */
+function requestShutdown(connection: BrokerConnection, log: LensLogger): Promise<boolean> {
+  log("asking the older lens broker to shut down once idle");
   return new Promise((resolve) => {
     let settled = false;
-    const finish = () => {
+    const finish = (busy = false) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      resolve();
+      connection.socket.off("message", declined);
+      resolve(busy);
+    };
+    // A broker that took work since its status declines; the client then
+    // binds to it as it is.
+    const declined = (data: unknown) => {
+      const message = parseBrokerMessage(String(data));
+      if (message?.type !== "result" || message.id !== "shutdown") return;
+      const value = message.result.kind === "value" ? message.result.value : undefined;
+      if ((value as { shuttingDown?: boolean } | undefined)?.shuttingDown === false) {
+        log("the lens broker is busy; leaving it running");
+        finish(true);
+      }
     };
     // The daemon drains in-flight work before exiting, so the close event — not
     // the ack — is the signal that the port is free for a fresh spawn.
-    const timer = setTimeout(finish, BROKER_SHUTDOWN_WAIT_MS);
-    connection.socket.once("close", finish);
+    const timer = setTimeout(() => finish(), BROKER_SHUTDOWN_WAIT_MS);
+    connection.socket.once("close", () => finish());
+    connection.socket.on("message", declined);
     connection.socket.send(
-      JSON.stringify({ type: "control", id: "shutdown", action: "shutdown" }),
+      JSON.stringify({ type: "control", id: "shutdown", action: "shutdown", ifIdle: true }),
       (error) => {
         if (error) finish();
       }

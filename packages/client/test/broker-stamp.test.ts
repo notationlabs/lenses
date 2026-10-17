@@ -1,8 +1,8 @@
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { computeBuildStamp } from "../src/broker-stamp.js";
+import { computeBuild, computeBuildStamp } from "../src/broker-stamp.js";
 
 describe("broker build stamp", () => {
   it("changes with modules in subdirectories and in every given directory", () => {
@@ -25,5 +25,16 @@ describe("broker build stamp", () => {
     const settled = computeBuildStamp(client, core);
     writeFileSync(join(core, "engine.d.ts"), "types");
     expect(computeBuildStamp(client, core)).toBe(settled);
+  });
+
+  it("dates a build by its newest module", () => {
+    const dir = mkdtempSync(join(tmpdir(), "stamp-time-"));
+    writeFileSync(join(dir, "a.js"), "a");
+    writeFileSync(join(dir, "b.js"), "b");
+    writeFileSync(join(dir, "notes.md"), "not code");
+    utimesSync(join(dir, "a.js"), 1_000, 1_000);
+    utimesSync(join(dir, "b.js"), 2_000, 2_000);
+    utimesSync(join(dir, "notes.md"), 9_000, 9_000);
+    expect(computeBuild(dir).builtAt).toBe(2_000_000);
   });
 });

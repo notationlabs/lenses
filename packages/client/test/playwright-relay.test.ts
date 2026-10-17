@@ -230,6 +230,37 @@ describe("Playwright CDP relay", () => {
     expect(await model.refreshAttach(99)).toBeUndefined();
   });
 
+  it("adopts a handed-over tab only while it is still the same target", async () => {
+    const commands: { method: string; params: any }[] = [];
+    const emitted: { method?: string; params?: any }[] = [];
+    const logs: string[] = [];
+    const model = new BrowserModel(async (method, params) => {
+      commands.push({ method, params });
+      if (method === "chrome.debugger.sendCommand" && params[1] === "Target.getTargetInfo") {
+        // Tab 9 now holds a different page than the one handed over.
+        const targetId = params[0].tabId === 9 ? "someone-else" : `target-${params[0].tabId}`;
+        return { targetInfo: { targetId, type: "page" } };
+      }
+      return undefined;
+    }, (message) => logs.push(message));
+    model.connectOverCDP((message) => emitted.push(message));
+
+    await model.adoptTabs([
+      { tabId: 4, targetId: "target-4" },
+      { tabId: 9, targetId: "target-9" },
+    ]);
+    // Nothing attaches until Puppeteer turns on auto-attach.
+    expect(commands).toEqual([]);
+    await model.enableAutoAttach();
+
+    expect(model.tabLink(4)).toEqual({ state: "connected" });
+    expect(model.tabIdForTarget("target-4")).toBe(4);
+    expect(model.tabLink(9)).toBeUndefined();
+    expect(commands).toContainEqual({ method: "chrome.debugger.detach", params: [{ tabId: 9 }] });
+    expect(logs).toContain("handed-over tab 9 not adopted: tab 9 is no longer target target-9");
+    expect(emitted.map((row) => row.params?.targetInfo?.targetId)).toEqual(["target-4"]);
+  });
+
   it("does not retry a tab that left the group", async () => {
     vi.useFakeTimers();
     try {
@@ -324,6 +355,31 @@ describe("Playwright CDP relay", () => {
     });
     expect(browser.connected).toBe(true);
     await browser.disconnect();
+  });
+
+  it("shows Puppeteer a handed-over tab as a page, without navigating it", async () => {
+    relay = new CDPRelayServer();
+    await relay.start();
+    extension = new FakePlaywrightExtension();
+    await extension.attach(relay.extensionEndpoint());
+    await relay.waitForExtension();
+    extension.openTab(5, "https://bank.example/accounts");
+    await relay.adoptTabs([{ tabId: 5, targetId: "target-5" }]);
+
+    const browser = await puppeteer.connect({
+      browserWSEndpoint: relay.cdpEndpoint(),
+      defaultViewport: null,
+    });
+    try {
+      const urls = (await browser.targets()).map((target) => target.url());
+      expect(urls).toContain("https://bank.example/accounts");
+      expect(relay.tabIdForTarget("target-5")).toBe(5);
+      expect(relay.tabLink(5)).toEqual({ state: "connected" });
+      const commands = extension.commands.map((command) => command.params as any[]);
+      expect(commands.some((params) => params?.[0]?.tabId === 5 && /Page\.(navigate|reload)/.test(params?.[1]))).toBe(false);
+    } finally {
+      await browser.disconnect();
+    }
   });
 
   it("creates the first real target without prematurely activating it", async () => {
