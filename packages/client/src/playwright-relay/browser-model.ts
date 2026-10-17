@@ -130,6 +130,28 @@ export class BrowserModel {
     return this.tabLink(tabId);
   }
 
+  /**
+   * Drop an attached tab's debugger session and attach afresh. A tab
+   * re-attached mid sign-in can come back with a session that never reports
+   * the page's JavaScript context, so every evaluate hangs; a new session
+   * starts clean. The tab stays in the group throughout, so this cannot pull
+   * a dragged-out tab back in.
+   */
+  async refreshAttach(tabId: number): Promise<TabLink | undefined> {
+    const state = this._tabs.get(tabId);
+    const session = state?.session;
+    if (!state || !session) return this.tabLink(tabId);
+    this._log(`refresh tab ${tabId}: its debugger session is unresponsive`);
+    state.session = undefined;
+    // A blocked attach leaves the tab detached, for a sign-in wait to retry.
+    state.lastDetachAt = Date.now();
+    this._emitDetached(session);
+    await this._sendToExtension("chrome.debugger.detach", [{ tabId }]).catch(() => {});
+    await this._reattach(tabId, state, "refresh");
+    if (!state.session) this._notifyTabLink(tabId);
+    return this.tabLink(tabId);
+  }
+
   private async _reattach(tabId: number, state: TabState, why: string): Promise<void> {
     this._log(`reattach tab ${tabId} (${why})`);
     try {

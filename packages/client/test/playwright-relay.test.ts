@@ -205,6 +205,31 @@ describe("Playwright CDP relay", () => {
     expect(attachCount(commands)).toBe(4);
   });
 
+  it("attaches an attached tab afresh on request, leaving a blocked one for the sign-in retry", async () => {
+    const { model, blocked, commands, emitted, logs } = detachableModel();
+    await model.enableAutoAttach();
+    await model.createTarget("https://bank.example/login");
+    blocked.frame = false;
+
+    expect(await model.refreshAttach(1)).toEqual({ state: "connected" });
+    expect(commands).toContain("chrome.debugger.detach");
+    expect(emitted.map((row) => row.method)).toEqual([
+      "Target.attachedToTarget",
+      "Target.detachedFromTarget",
+      "Target.attachedToTarget",
+    ]);
+    expect(logs).toContain("refresh tab 1: its debugger session is unresponsive");
+    expect(emitted[2]!.params.sessionId).not.toBe(emitted[0]!.params.sessionId);
+
+    blocked.frame = true;
+    expect((await model.refreshAttach(1))?.state).toBe("disconnected");
+    blocked.frame = false;
+    expect(await model.retryAttach(1)).toEqual({ state: "connected" });
+
+    // Unknown tabs are left alone.
+    expect(await model.refreshAttach(99)).toBeUndefined();
+  });
+
   it("does not retry a tab that left the group", async () => {
     vi.useFakeTimers();
     try {

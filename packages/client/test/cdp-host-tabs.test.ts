@@ -36,7 +36,11 @@ class SpaPage extends EventEmitter {
   async reload() { this.reloads += 1; }
   /** Selectors the rendered page currently matches. */
   present = new Set<string>();
-  async evaluate(_fn: unknown, arg: string) {
+  /** A debugger session that never reports the page's JavaScript context: evaluates hang. */
+  wedged = false;
+  async evaluate(_fn: unknown, arg?: string) {
+    if (this.wedged) return await new Promise(() => {});
+    if (arg === undefined) return true;
     // Routing passes a path; a ready probe passes a selector.
     if (!arg.startsWith("/")) return this.present.has(arg);
     this.routes.push(arg);
@@ -632,6 +636,31 @@ describe("tabs the debugger loses", () => {
     expect(exits).toEqual(["closed"]);
     prompt!.dispose();
     expect(await host.findAuthGate(origin)).toBeUndefined();
+  });
+
+  it("attaches afresh a re-found tab whose evaluates hang", async () => {
+    const chrome = relayChrome();
+    const refreshes: string[] = [];
+    const transport = {
+      ...chrome.transport,
+      async refreshAttach(key: string) {
+        refreshes.push(key);
+        chrome.detach(key);
+        chrome.reconnect(key);
+        return { state: "connected" as const };
+      },
+    };
+    const host = createCdpBackend(() => {}, transport as never);
+    const first = await host.bind(reuse());
+    await host.finish(first, "close-if-created");
+    chrome.detach("100");
+    chrome.reconnect("100").wedged = true;
+
+    const next = await host.bind(reuse());
+    expect(next.tab).toBe("t100");
+    expect(refreshes).toEqual(["100"]);
+    expect(chrome.tabs.get("100")!.wedged).toBe(false);
+    expect(chrome.browser.newPage).toHaveBeenCalledTimes(1);
   });
 
   it("signs in on a reused tab it finds detached, without opening another", async () => {
