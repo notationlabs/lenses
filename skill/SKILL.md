@@ -86,7 +86,8 @@ tier produces file content and the broker writes it into the caller's
 A tier missing a field, or with invalid base64 or an unsafe name, fails with
 `code: "file_invalid"`. Intercept and http tiers of a file lens keep response
 bodies up to 32MB (512KB otherwise). `effects.cache` applies as usual: a hit
-writes the cached file again.
+writes the cached file again. While a file lens runs, the tab's own downloads are denied, so a
+page that also saves the file (as RBS does) leaves no second copy.
 
 ## Authoring a lens for an unmapped page
 
