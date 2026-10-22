@@ -11,7 +11,13 @@ export interface ElectronHost {
   browserURL: string;
   /** Broker port to listen on. */
   port: number;
-  /** Open a hidden window and resolve its CDP target id. */
+  /**
+   * The hidden page that opens lens tabs. The broker attaches only to pages
+   * it opened, and their popups: windows the user opens to sign in are never
+   * driven or instrumented.
+   */
+  hostTargetId: string;
+  /** Open a hidden window from the host page and resolve its CDP target id. */
   openWindow(): Promise<string>;
   /** Show the window holding this target and bring the app forward. */
   reveal(targetId: string): void;
@@ -34,12 +40,29 @@ export function setElectronHost(host: ElectronHost): void {
 
 const targetId = (target: Target) =>
   (target as unknown as { _targetId?: unknown })._targetId;
+const openerId = (target: Target) =>
+  (target as unknown as { _getTargetInfo(): { openerId?: string } })._getTargetInfo().openerId;
 
 /**
  * Electron's CDP does not support Target.createTarget, so new tabs come from
  * the app, which opens a window and names its target.
  */
 export function createElectronTransport(host: ElectronHost): CdpTransport {
+  /** Lens tabs and the popups they opened, by target id. */
+  const owned = new Set<string>();
+  // Puppeteer attaches to each new target, asks this, and detaches from a
+  // refused one before its page runs. Child targets (out-of-process frames)
+  // are only found through an attached page, so they follow their page.
+  const targetFilter = (target: Target): boolean => {
+    if (target.type() === "shared_worker") return false;
+    if (target.type() !== "page") return true;
+    const id = targetId(target);
+    if (typeof id === "string" && owned.has(id)) return true;
+    const opener = openerId(target);
+    if (opener === undefined || (opener !== host.hostTargetId && !owned.has(opener))) return false;
+    if (typeof id === "string") owned.add(id);
+    return true;
+  };
   const probeLive = async () => {
     try {
       const response = await fetch(`${host.browserURL}/json/version`, {
@@ -59,7 +82,7 @@ export function createElectronTransport(host: ElectronHost): CdpTransport {
     connectHint: () => "connecting to the Lenses app browser",
     staleHint: () => "The Lenses app browser is not responding; restart the app.",
     async connect() {
-      return puppeteer.connect({ browserURL: host.browserURL, defaultViewport: null });
+      return puppeteer.connect({ browserURL: host.browserURL, defaultViewport: null, targetFilter });
     },
     tabKey: pageTargetId,
     async newPage(browser: Browser): Promise<Page> {
