@@ -1,0 +1,20 @@
+{
+  "name": "@djgrant/lenses-app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Lenses as a desktop app: the broker and its own browser in one Electron app.",
+  "type": "module",
+  "main": "./dist/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "tsc -p tsconfig.json && electron ."
+  },
+  "dependencies": {
+    "@djgrant/lenses-client": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "electron": "^45.0.0",
+    "typescript": "^5.6.0"
+  }
+}

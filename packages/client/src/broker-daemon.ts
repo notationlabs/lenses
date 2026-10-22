@@ -29,8 +29,11 @@ import {
 import { randomBytes } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 import { browserAdvice } from "./broker-advice.js";
+import { createElectronTransport, electronHost } from "./electron-host.js";
 
-const port = Number(process.argv[2]);
+/** Set when the Lenses app runs this broker in its main process. */
+const host = electronHost();
+const port = host?.port ?? Number(process.argv[2]);
 if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
   throw new Error("broker requires a port between 1 and 65535");
 }
@@ -70,7 +73,7 @@ const unauthenticated = new Map<WebSocket, Unauthenticated>();
 const authTimers = new Map<WebSocket, ReturnType<typeof setTimeout>>();
 const profile = browserProfile();
 const extensionToken = playwrightExtensionToken();
-const cdp = createCdpBackend();
+const cdp = host ? createCdpBackend(undefined, createElectronTransport(host)) : createCdpBackend();
 const extension = createPlaywrightExtensionBackend(
   (message) => console.error(message),
   { profile, token: extensionToken }
@@ -78,12 +81,15 @@ const extension = createPlaywrightExtensionBackend(
 let extensionInstalled: boolean | undefined;
 /** This process already failed to attach; do not wait 45s on every later call. */
 let extensionAttemptFailed = false;
-void playwrightExtensionInstalled(undefined, profile).then((installed) => {
-  extensionInstalled = installed;
-});
+if (!host) {
+  void playwrightExtensionInstalled(undefined, profile).then((installed) => {
+    extensionInstalled = installed;
+  });
+}
 const extensionGraceMs =
   Number(process.env.LENS_BROKER_EXTENSION_GRACE_MS ?? "") || 2_000;
-const orchestrator = createBrokerOrchestrator([extension, cdp], {
+const backends = host ? [cdp] : [extension, cdp];
+const orchestrator = createBrokerOrchestrator(backends, {
   prepareBackends: ensureBrowser,
   preferredWaitMs: () =>
     extensionInstalled === true && !extensionAttemptFailed ? extensionGraceMs : 0,
@@ -103,7 +109,10 @@ let shuttingDown = false;
 let handOverTabs = false;
 
 const idleReleaseMs = Number(process.env.LENS_BROKER_IDLE_RELEASE_MS ?? 0) || 0;
-const idleExitMs = Number(process.env.LENS_BROKER_IDLE_EXIT_MS ?? DEFAULT_IDLE_EXIT_MS) || 0;
+// The app owns its broker's lifetime.
+const idleExitMs = host
+  ? 0
+  : Number(process.env.LENS_BROKER_IDLE_EXIT_MS ?? DEFAULT_IDLE_EXIT_MS) || 0;
 const noBrowserExitMs =
   Number(process.env.LENS_BROKER_NO_BROWSER_EXIT_MS ?? DEFAULT_NO_BROWSER_EXIT_MS) || 0;
 let inFlight = 0;
@@ -134,6 +143,10 @@ function ensureBrowser(): Promise<void> {
 }
 
 async function checkAndConnect(): Promise<void> {
+  if (host) {
+    cdp.start();
+    return;
+  }
   browserPresent = await browserRunning();
   if (!browserPresent) {
     if (!autoLaunchEnabled() || !(await launchBrowser(profile))) {
@@ -499,8 +512,9 @@ async function handleControl(
   message: Extract<LensBridgeRequest, { type: "control" }>
 ): Promise<void> {
   if (message.action === "shutdown") {
-    // A call counts from arrival to result, through any sign-in wait.
-    if (message.ifIdle && inFlight > 0) {
+    // A call counts from arrival to result, through any sign-in wait. The
+    // app's broker declines: clients then use it as it is.
+    if (host || (message.ifIdle && inFlight > 0)) {
       send(client, {
         type: "result",
         id: message.id,
@@ -577,14 +591,18 @@ const runShutdown = createShutdownSequence({
 });
 
 function sendStatus(socket: WebSocket): void {
+  send(socket, currentStatus());
+}
+
+function currentStatus() {
   const preferred = extension.available() ? extension : cdp;
   const reportedActiveCall = activeCall ?? orchestrator.busy();
-  const backends = [extension, cdp].map((backend) => ({
+  const backendInfo = backends.map((backend) => ({
     ...backend.info(),
     available: backend.available(),
   }));
   const selected = preferred.available() ? preferred.info() : undefined;
-  send(socket, {
+  return {
     type: "status",
     stamp: buildStamp,
     builtAt: build.builtAt,
@@ -594,17 +612,17 @@ function sendStatus(socket: WebSocket): void {
     backend: selected?.name,
     ua: selected?.detail,
     capabilities: selected?.capabilities ?? [],
-    backends,
+    backends: backendInfo,
     diagnostics: {
       concurrency: "serial_queue",
       activeCall: reportedActiveCall,
       queuedCalls,
       lastBackendError:
-        lastBackendError ?? backends.find((backend) => backend.diagnostic)?.diagnostic,
+        lastBackendError ?? backendInfo.find((backend) => backend.diagnostic)?.diagnostic,
       reconnectAttempts: cdp.info().reconnectAttempts ?? 0,
     },
-    advice: describeGap(),
-  });
+    advice: host ? undefined : describeGap(),
+  };
 }
 
 function describeGap(): string | undefined {
@@ -624,8 +642,11 @@ function rememberBackendError(backend: { info(): { name: string; diagnostic?: st
   if (diagnostic) lastBackendError = `${backend.info().name}: ${diagnostic}`;
 }
 
+host?.started?.({ status: currentStatus });
+
 function broadcastStatus(): void {
   for (const client of clients) sendStatus(client);
+  host?.status?.(currentStatus());
 }
 
 function send(socket: WebSocket, value: unknown): void {

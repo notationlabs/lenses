@@ -13,6 +13,16 @@
       "types": "./dist/index.d.ts",
       "bun": "./src/index.ts",
       "import": "./dist/index.js"
+    },
+    "./electron-host": {
+      "types": "./dist/electron-host.d.ts",
+      "bun": "./src/electron-host.ts",
+      "import": "./dist/electron-host.js"
+    },
+    "./broker-daemon": {
+      "types": "./dist/broker-daemon.d.ts",
+      "bun": "./src/broker-daemon.ts",
+      "import": "./dist/broker-daemon.js"
     }
   },
   "scripts": {

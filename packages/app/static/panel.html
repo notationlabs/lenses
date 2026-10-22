@@ -1,0 +1,91 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<title>Lenses</title>
+<style>
+  :root { color-scheme: light dark; font: 13px -apple-system, system-ui, sans-serif; }
+  body { margin: 0; padding: 20px 24px; }
+  h1 { font-size: 18px; margin: 0 0 16px; }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; opacity: .6; margin: 24px 0 8px; }
+  .status { display: grid; grid-template-columns: 140px 1fr; gap: 6px 12px; }
+  .status dt { opacity: .6; }
+  .status dd { margin: 0; overflow-wrap: anywhere; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: #c33; }
+  .dot.on { background: #2a2; }
+  .row { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid #8883; }
+  .row .text { flex: 1; min-width: 0; }
+  .row .title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row .url { opacity: .6; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tag { font-size: 10px; padding: 1px 6px; border-radius: 8px; background: #8883; flex-shrink: 0; width: 56px; text-align: center; }
+  .actions { flex-shrink: 0; display: flex; gap: 4px; }
+  form { display: flex; gap: 8px; }
+  input { flex: 1; padding: 6px 8px; }
+  .empty, .hint { opacity: .6; }
+  .error { color: #c33; }
+</style>
+</head>
+<body>
+<h1>Lenses</h1>
+<dl class="status" id="status"></dl>
+
+<h2>Sign in to a site</h2>
+<form id="open">
+  <input id="url" placeholder="github.com" autocomplete="off">
+  <button>Open</button>
+</form>
+<p class="hint">Sessions you sign in to here are the ones lens calls use.</p>
+
+<h2>Windows</h2>
+<div id="windows"></div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const esc = (text) => String(text ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+
+  $("open").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const url = $("url").value.trim();
+    if (url) window.lenses.openSite(url);
+    $("url").value = "";
+  });
+
+  window.lenses.onState((state) => {
+    const status = state.status ?? {};
+    const diag = status.diagnostics ?? {};
+    const active = diag.activeCall;
+    const rows = [
+      ["Broker", state.brokerError
+        ? `<span class="error">${esc(state.brokerError)}</span>`
+        : `<span class="dot ${status.connected ? "on" : ""}"></span>${status.connected ? "Connected" : "Starting"} on port ${state.port}`],
+      ["Running", active ? `${esc(active.lens ?? active.type)} · ${Math.round((Date.now() - active.startedAt) / 1000)}s` : "Nothing"],
+      ["Queued", diag.queuedCalls ?? 0],
+      ["Browser", esc(status.ua ?? "")],
+    ];
+    if (diag.lastBackendError) rows.push(["Last error", `<span class="error">${esc(diag.lastBackendError)}</span>`]);
+    $("status").innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("");
+
+    $("windows").innerHTML = state.windows.length
+      ? state.windows.map((w) => `
+        <div class="row">
+          <span class="tag">${w.lensTab ? "lens" : "sign-in"}</span>
+          <div class="text">
+            <div class="title">${esc(w.title || "Untitled")}</div>
+            <div class="url">${esc(w.url)}</div>
+          </div>
+          <div class="actions">
+            <button data-id="${w.id}" data-action="${w.visible ? "hide" : "show"}">${w.visible ? "Hide" : "Show"}</button>
+            <button data-id="${w.id}" data-action="close">Close</button>
+          </div>
+        </div>`).join("")
+      : `<p class="empty">No windows open.</p>`;
+  });
+
+  $("windows").addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-id]");
+    if (button) window.lenses.window(Number(button.dataset.id), button.dataset.action);
+  });
+</script>
+</body>
+</html>
