@@ -127,6 +127,10 @@ export interface CdpTransport {
   /** Attach an attached tab afresh, when its debugger session stopped answering. */
   refreshAttach?(key: string): Promise<TabLink | undefined>;
   onTabLinkChange?(listener: (key: string, link: TabLink) => void): () => void;
+  /** Open a background tab, for browsers whose CDP cannot create targets (Electron). */
+  newPage?(browser: Browser): Promise<Page>;
+  /** Put a tab in front of the user. Defaults to bringing it to front in Chrome. */
+  reveal?(page: Page): Promise<void>;
   /** Transport cleanup before a session or temporary page is released. */
   preparePageRelease?(
     browser: Browser,
@@ -217,6 +221,14 @@ export function createCdpBackend(
   /** `tab: "reuse"`: the tab each origin used last, and its durable key. */
   const reuseTabs = new Map<string, Page>();
   const reuseKeys = new Map<string, string>();
+
+  const openPage = (current: Browser) =>
+    transport.newPage ? transport.newPage(current) : current.newPage({ background: true });
+  async function reveal(page: Page): Promise<void> {
+    if (transport.reveal) return transport.reveal(page);
+    await page.bringToFront();
+    await raiseChrome();
+  }
 
   const endpointAvailable = () => transport.looksReady();
   const endpointLive = () => transport.probeLive();
@@ -901,8 +913,7 @@ export function createCdpBackend(
         const reused = await pageForKey(browser, recorded);
         if (reused && sameSite(reused.url(), origin)) {
           keptGates.set(recorded, { page: reused, target, keptUrl: reused.url() });
-          await reused.bringToFront().catch(() => {});
-          await raiseChrome();
+          await reveal(reused).catch(() => {});
           return true;
         }
         if (!reused && transport.tabLink?.(recorded)?.state === "disconnected") {
@@ -912,11 +923,10 @@ export function createCdpBackend(
       }
       let page: Page | undefined;
       try {
-        page = await browser.newPage({ background: true });
+        page = await openPage(browser);
         await settle(page.goto(target, { waitUntil: "load", timeout: 15_000 }));
         keptGates.set(gateKeyOf(page), { page, target, keptUrl: page.url() });
-        await page.bringToFront();
-        await raiseChrome();
+        await reveal(page);
         return true;
       } catch {
         if (page) await page.close().catch(() => {});
@@ -1093,7 +1103,7 @@ export function createCdpBackend(
       if (!page) {
         if (request.existingOnly) return undefined;
         try {
-          page = await browser.newPage({ background: true });
+          page = await openPage(browser);
           created = true;
           transport.recordEvent?.("HTTP tab opened");
           await settle(
@@ -1247,7 +1257,7 @@ export function createCdpBackend(
         return session;
       }
       if (request.existingOnly) throw new AuthPageUnavailable("auth retry has no open target tab");
-      const page = await current.newPage({ background: true });
+      const page = await openPage(current);
       transport.recordEvent?.("Call tab opened");
       await prepareCall(page, request);
       resetCaptures(page);
@@ -1305,8 +1315,7 @@ export function createCdpBackend(
         try {
           // The page was opened in the background, so without this the
           // sign-in page sits unseen behind whatever the user is doing.
-          await cdpSession.page.bringToFront();
-          await raiseChrome();
+          await reveal(cdpSession.page);
         } catch {
           // The user may close the page while its call is still running.
         }
