@@ -32,6 +32,7 @@ app.userAgentFallback = app.userAgentFallback
 /** Windows the broker opened, by CDP target id. */
 const lensTabs = new Map<string, BrowserWindow>();
 let panel: BrowserWindow | undefined;
+let hostPage: BrowserWindow | undefined;
 let tray: Tray | undefined;
 let brokerStatus: unknown;
 let readStatus: (() => unknown) | undefined;
@@ -57,9 +58,12 @@ app.whenReady().then(async () => {
 
 async function startBroker(): Promise<void> {
   if (await portInUse(BROKER_PORT)) await retireBroker();
+  const browserURL = `http://127.0.0.1:${await debuggingPort()}`;
+  hostPage = await createHostPage();
   setElectronHost({
-    browserURL: `http://127.0.0.1:${await debuggingPort()}`,
+    browserURL,
     port: BROKER_PORT,
+    hostTargetId: await targetId(hostPage.webContents),
     openWindow,
     reveal,
     status: (frame) => {
@@ -111,14 +115,45 @@ async function debuggingPort(): Promise<number> {
   throw new Error("the app's remote debugging endpoint did not start");
 }
 
-async function openWindow(): Promise<string> {
-  const window = new BrowserWindow({
-    show: false,
-    width: 1280,
-    height: 900,
-    webPreferences: { backgroundThrottling: false },
-  });
-  await window.loadURL("about:blank");
+/**
+ * A hidden page that opens every lens tab, so the broker can tell lens tabs
+ * (and their popups) from windows the user opened: CDP names each page's
+ * opener.
+ */
+async function createHostPage(): Promise<BrowserWindow> {
+  const window = new BrowserWindow({ show: false });
+  window.webContents.setWindowOpenHandler(() => ({
+    action: "allow",
+    overrideBrowserWindowOptions: {
+      show: false,
+      width: 1280,
+      height: 900,
+      webPreferences: { backgroundThrottling: false },
+    },
+  }));
+  await window.loadURL("data:text/html,<title>Lenses host</title>");
+  return window;
+}
+
+let opening = Promise.resolve();
+
+/** One at a time: each window.open is matched to the next window created. */
+function openWindow(): Promise<string> {
+  const next = opening.then(openLensTab);
+  opening = next.then(
+    () => {},
+    () => {}
+  );
+  return next;
+}
+
+async function openLensTab(): Promise<string> {
+  const host = hostPage!.webContents;
+  const created = new Promise<BrowserWindow>((resolve) =>
+    host.once("did-create-window", (window) => resolve(window))
+  );
+  await host.executeJavaScript(`window.open("about:blank", "_blank", "noopener")`, true);
+  const window = await created;
   const id = await targetId(window.webContents);
   lensTabs.set(id, window);
   window.on("closed", () => {
@@ -150,7 +185,10 @@ function reveal(id: string): void {
   app.focus({ steal: true });
 }
 
-/** A window for signing in to a site by hand; its cookies serve later calls. */
+/**
+ * A window for signing in to a site by hand; its cookies serve later calls.
+ * The broker never attaches to it (see createHostPage).
+ */
 function openSite(url: string): void {
   const target = /^https?:\/\//.test(url) ? url : `https://${url}`;
   const window = new BrowserWindow({ width: 1180, height: 860 });
@@ -229,7 +267,7 @@ function currentStatus(): BrokerStatus | undefined {
 
 function windows() {
   return BrowserWindow.getAllWindows()
-    .filter((window) => window !== panel && !window.isDestroyed())
+    .filter((window) => window !== panel && window !== hostPage && !window.isDestroyed())
     .map((window) => {
       const lensTab = [...lensTabs].find(([, candidate]) => candidate === window);
       return {
@@ -257,7 +295,7 @@ function refresh(): void {
 ipcMain.on("open-site", (_event, url: string) => openSite(url));
 ipcMain.on("window", (_event, id: number, action: "show" | "hide" | "close") => {
   const window = BrowserWindow.fromId(id);
-  if (!window || window === panel) return;
+  if (!window || window === panel || window === hostPage) return;
   if (action === "show") {
     window.show();
     window.focus();
