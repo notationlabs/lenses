@@ -188,7 +188,8 @@ export interface BrowserBackend {
     resume?: boolean
   ): Promise<{ update(expiresAt: number, count: number): void; dispose(): void } | undefined>;
   bind(request: BindRequest): Promise<BrowserSession>;
-  finish(session: BrowserSession, disposition: FinishDisposition): Promise<void>;
+  /** `need`: the call ended at a page that needs the user, with this needs_* outcome. */
+  finish(session: BrowserSession, disposition: FinishDisposition, need?: string): Promise<void>;
   /**
    * An HTTP request with the browser's cookies, without binding a tab. Absent
    * (or resolving undefined) on backends that cannot make one; the http tier

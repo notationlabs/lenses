@@ -1,7 +1,7 @@
 /**
- * The tabs the broker may drive, each through its own debugger. Only what the
- * browser hands over (lens tabs and their popups) is listed; anything else is
- * refused, so the user's tabs cannot be attached at all.
+ * The pages the broker may drive, each through its own debugger: what the
+ * app hands over (lens pages, and the popups and pages they open). Anything
+ * else is refused, the app's own windows included.
  */
 import { app, type WebContents } from "electron";
 import type { ElectronTabListener, ElectronTabs } from "@djgrant/lenses-client/electron-host";
@@ -10,10 +10,12 @@ import type { ElectronTabListener, ElectronTabs } from "@djgrant/lenses-client/e
 const REANNOUNCE_MS = 150;
 
 export interface LensTabsOptions {
-  /** Open a background lens tab; the browser hands it over (add) as it opens. */
+  /** Open a background lens page; it is handed over (add) as it opens. */
   open(url?: string): WebContents;
-  /** Show a lens tab or popup, for a sign-in. */
-  reveal(contents: WebContents): void;
+  /** The page needs the user: a needs_* outcome, e.g. needs_auth. */
+  attention(contents: WebContents, need: string): void;
+  /** A call on the page ended without needing the user. */
+  settled(contents: WebContents): void;
 }
 
 export function createLensTabs(options: LensTabsOptions) {
@@ -65,9 +67,13 @@ export function createLensTabs(options: LensTabsOptions) {
     async close(tabId) {
       contentsOf(tabId).close();
     },
-    reveal(tabId) {
+    attention(tabId, need) {
       const contents = exposed.get(tabId);
-      if (contents && !contents.isDestroyed()) options.reveal(contents);
+      if (contents && !contents.isDestroyed()) options.attention(contents, need);
+    },
+    settled(tabId) {
+      const contents = exposed.get(tabId);
+      if (contents && !contents.isDestroyed()) options.settled(contents);
     },
     async attach(tabId) {
       const contents = contentsOf(tabId);

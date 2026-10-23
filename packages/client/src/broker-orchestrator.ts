@@ -366,7 +366,7 @@ export function createBrokerOrchestrator(
         try {
           if (recording) await recording.finish();
         } finally {
-          await finishQuietly(sessionBackend, session, authRetry ? "close-if-created" : dispositionFor(result));
+          await finishQuietly(sessionBackend, session, authRetry ? "close-if-created" : dispositionFor(result), needOf(result));
         }
       }
     }
@@ -950,13 +950,19 @@ function dispositionFor(result: LensResult | undefined): FinishDisposition {
     : "close-if-created";
 }
 
+/** The needs_* outcome a call ended with: its page needs the user. */
+function needOf(result: LensResult | undefined): string | undefined {
+  return result?.kind === "outcome" && result.name.startsWith("needs_") ? result.name : undefined;
+}
+
 async function finishQuietly(
   backend: BrowserBackend,
   session: BrowserSession,
-  disposition: FinishDisposition
+  disposition: FinishDisposition,
+  need?: string
 ): Promise<void> {
   try {
-    await backend.finish(session, disposition);
+    await backend.finish(session, disposition, need);
   } catch {
     // A backend loss must not replace the call's result or failure.
   }

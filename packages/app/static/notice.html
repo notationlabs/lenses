@@ -1,0 +1,59 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<title>Lenses</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    font: 13px -apple-system, system-ui, sans-serif;
+    --surface: #f6f6f8f2; --text: #1d1d1f; --muted: #6e6e73; --line: #0000001f;
+    --button: #0000000f; --accent: #5b5bd6; --on-accent: #fff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --surface: #2a2a2ef2; --text: #ececf0; --muted: #9a9aa2; --line: #ffffff1f; --button: #ffffff14; --accent: #8e8ef0; --on-accent: #111; }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; user-select: none; cursor: default; }
+  #card {
+    height: 100%; display: flex; align-items: center; gap: 12px; padding: 12px 14px;
+    background: var(--surface); color: var(--text); border: 1px solid var(--line); border-radius: 14px;
+    -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px);
+  }
+  #mark { flex: none; width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center; background: var(--accent); color: var(--on-accent); font-size: 18px; }
+  #text { flex: 1; min-width: 0; }
+  #heading { font-weight: 600; }
+  #title, #more { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #more:empty { display: none; }
+  #actions { flex: none; display: flex; flex-direction: column; gap: 6px; }
+  button { font: inherit; width: 72px; padding: 4px 0; border: 0; border-radius: 7px; background: var(--button); color: var(--text); }
+  button#open { background: var(--accent); color: var(--on-accent); font-weight: 600; }
+</style>
+</head>
+<body>
+<div id="card" role="alert">
+  <div id="mark" aria-hidden="true">◎</div>
+  <div id="text">
+    <div id="heading">Action required</div>
+    <div id="title"></div>
+    <div id="more"></div>
+  </div>
+  <div id="actions">
+    <button id="open">Open</button>
+    <button id="ignore">Ignore</button>
+  </div>
+</div>
+<script>
+  let page;
+  window.notice.onNotice((state) => {
+    page = state.page;
+    document.querySelector("#title").textContent = state.title;
+    document.querySelector("#more").textContent = state.more ? `and ${state.more} more in the inbox` : "";
+  });
+  document.querySelector("#open").onclick = () => page !== undefined && window.notice.open(page);
+  document.querySelector("#ignore").onclick = () => page !== undefined && window.notice.ignore(page);
+  window.notice.ready();
+</script>
+</body>
+</html>

@@ -1,0 +1,193 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<title>Lenses</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    font: 13px -apple-system, system-ui, sans-serif;
+    --bg: #ebebed; --sidebar: #e3e3e6; --surface: #fff; --text: #1d1d1f; --muted: #6e6e73;
+    --line: #0000001a; --hover: #0000000d; --selected: #0000001a; --accent: #5b5bd6; --on-accent: #fff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1f1f22; --sidebar: #252528; --surface: #2a2a2e; --text: #ececf0; --muted: #9a9aa2;
+      --line: #ffffff1a; --hover: #ffffff12; --selected: #ffffff1f; --accent: #8e8ef0; --on-accent: #111;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { display: flex; background: var(--bg); color: var(--text); overflow: hidden; user-select: none; cursor: default; }
+  button { font: inherit; color: inherit; background: none; border: 0; border-radius: 6px; padding: 4px 8px; }
+  button:hover:not(:disabled) { background: var(--hover); }
+  button:disabled { opacity: .35; }
+
+  #sidebar { width: 260px; flex: none; display: flex; flex-direction: column; background: var(--sidebar); border-right: 1px solid var(--line); }
+  #titlebar { height: 52px; flex: none; -webkit-app-region: drag; }
+  #lists { flex: 1; overflow: auto; padding: 0 8px 8px; }
+  h2 { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 14px 8px 6px; display: flex; justify-content: space-between; }
+  .row { display: block; width: 100%; text-align: left; padding: 7px 8px; border-radius: 7px; }
+  .row[aria-selected="true"] { background: var(--selected); }
+  .row .main { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row .sub { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .count { background: var(--accent); color: var(--on-accent); border-radius: 9px; padding: 0 6px; font-size: 11px; }
+  .none { color: var(--muted); padding: 4px 8px; }
+  #status { flex: none; padding: 10px 16px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  #main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  #header { height: 52px; flex: none; display: flex; align-items: center; gap: 4px; padding: 0 12px; border-bottom: 1px solid var(--line); -webkit-app-region: drag; }
+  #header button { -webkit-app-region: no-drag; }
+  #heading { flex: 1; min-width: 0; padding: 0 6px; }
+  #heading .main { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #heading .sub { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #need { display: none; align-items: center; gap: 10px; padding: 8px 14px; background: var(--accent); color: var(--on-accent); }
+  #need.on { display: flex; }
+  #need span { flex: 1; }
+  #need button { background: #ffffff33; }
+  #page { flex: 1; background: var(--surface); }
+  #placeholder { flex: 1; display: grid; place-items: center; color: var(--muted); text-align: center; padding: 24px; }
+  #placeholder.listing { place-items: start center; }
+  #placeholder .cards { display: grid; gap: 8px; width: min(560px, 100%); text-align: left; }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; color: var(--text); }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<nav id="sidebar">
+  <div id="titlebar"></div>
+  <div id="lists">
+    <h2>Inbox <span id="inbox-count" class="count" hidden></span></h2>
+    <div id="inbox"></div>
+    <h2>Sites</h2>
+    <div id="sites"></div>
+  </div>
+  <div id="status">Starting…</div>
+</nav>
+<main id="main">
+  <div id="header">
+    <button id="back" title="Back" disabled>‹</button>
+    <button id="reload" title="Reload" disabled>↻</button>
+    <div id="heading"><div class="main"></div><div class="sub"></div></div>
+  </div>
+  <div id="need"><span></span><button id="done">Done</button></div>
+  <div id="page" hidden></div>
+  <div id="placeholder"></div>
+</main>
+<script>
+  const $ = (selector) => document.querySelector(selector);
+  let state = { inbox: [], pages: [], status: undefined };
+  // What the user picked: a page, a site, or nothing.
+  let selection = { kind: "none" };
+
+  const age = (since) => {
+    const minutes = Math.floor((Date.now() - since) / 60000);
+    return minutes < 1 ? "just now" : minutes < 60 ? `${minutes} min ago` : `${Math.floor(minutes / 60)} h ago`;
+  };
+  const sites = () => {
+    const bySite = new Map();
+    for (const page of state.pages) {
+      if (!page.site) continue;
+      bySite.set(page.site, [...(bySite.get(page.site) ?? []), page]);
+    }
+    return [...bySite].sort(([a], [b]) => a.localeCompare(b));
+  };
+  const row = (main, sub, selected, onclick) => {
+    const button = document.createElement("button");
+    button.className = "row";
+    button.setAttribute("aria-selected", String(selected));
+    button.innerHTML = `<div class="main"></div><div class="sub"></div>`;
+    button.querySelector(".main").textContent = main;
+    button.querySelector(".sub").textContent = sub;
+    button.onclick = onclick;
+    return button;
+  };
+
+  function select(next) {
+    selection = next;
+    if (next.kind === "page") window.lenses.command("select", next.page);
+    else window.lenses.command("clear");
+    render();
+  }
+
+  function render() {
+    const inbox = $("#inbox");
+    inbox.replaceChildren(...state.inbox.map((item) =>
+      row(item.label, age(item.since), selection.kind === "page" && selection.page === item.page, () => select({ kind: "page", page: item.page }))));
+    if (!state.inbox.length) inbox.innerHTML = `<div class="none">Nothing needs you</div>`;
+    $("#inbox-count").hidden = !state.inbox.length;
+    $("#inbox-count").textContent = state.inbox.length;
+
+    const list = $("#sites");
+    const all = sites();
+    list.replaceChildren(...all.map(([site, pages]) =>
+      row(site, pages.length === 1 ? "1 page" : `${pages.length} pages`, selection.kind === "site" && selection.site === site, () => select({ kind: "site", site }))));
+    if (!all.length) list.innerHTML = `<div class="none">No lens pages open</div>`;
+
+    const status = state.status ?? {};
+    $("#status").textContent = status.error ? `Broker failed: ${status.error}` : status.line ?? "Starting…";
+
+    const page = selection.kind === "page" ? state.pages.find((entry) => entry.id === selection.page) : undefined;
+    if (selection.kind === "page" && !page) selection = { kind: "none" };
+    const item = page && state.inbox.find((entry) => entry.page === page.id || entry.page === page.opener);
+    $("#page").hidden = !page;
+    $("#placeholder").hidden = !!page;
+    $("#back").disabled = !page?.canGoBack;
+    $("#reload").disabled = !page;
+    $("#need").classList.toggle("on", !!item);
+    if (item) $("#need span").textContent = `${item.label} — the lens call continues once you're through.`;
+
+    if (page) {
+      $("#heading .main").textContent = page.title || page.site || "Page";
+      $("#heading .sub").textContent = page.url;
+    } else if (selection.kind === "site") {
+      const pages = state.pages.filter((entry) => entry.site === selection.site);
+      $("#heading .main").textContent = selection.site;
+      $("#heading .sub").textContent = pages.length === 1 ? "1 lens page open" : `${pages.length} lens pages open`;
+      const cards = document.createElement("div");
+      cards.className = "cards";
+      cards.replaceChildren(...pages.map((entry) => {
+        const card = row(entry.title || entry.url, entry.url, false, () => select({ kind: "page", page: entry.id }));
+        card.classList.add("card");
+        return card;
+      }));
+      $("#placeholder").replaceChildren(cards);
+      $("#placeholder").classList.add("listing");
+    } else {
+      $("#placeholder").classList.remove("listing");
+      $("#heading .main").textContent = "Lenses";
+      $("#heading .sub").textContent = "";
+      $("#placeholder").textContent = state.inbox.length
+        ? "Pick an item in the inbox to deal with it."
+        : "Nothing needs you. Lenses keeps running in the menu bar.";
+    }
+  }
+
+  $("#back").onclick = () => selection.kind === "page" && window.lenses.command("back", selection.page);
+  $("#reload").onclick = () => selection.kind === "page" && window.lenses.command("reload", selection.page);
+  $("#done").onclick = () => {
+    const page = state.pages.find((entry) => entry.id === selection.page);
+    const item = page && state.inbox.find((entry) => entry.page === page.id || entry.page === page.opener);
+    if (item) window.lenses.command("done", item.page);
+  };
+
+  new ResizeObserver(() => {
+    const rect = $("#page").getBoundingClientRect();
+    window.lenses.viewport({ x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height) });
+  }).observe($("#page"));
+
+  window.lenses.onState((next) => {
+    state = next;
+    if (next.shown !== undefined && !(selection.kind === "page" && selection.page === next.shown)) selection = { kind: "page", page: next.shown };
+    render();
+  });
+  window.lenses.onSelect((page) => {
+    selection = page === undefined ? { kind: "none" } : { kind: "page", page };
+    render();
+  });
+  setInterval(render, 30_000);
+  window.lenses.ready();
+</script>
+</body>
+</html>

@@ -3,7 +3,7 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { canRun, connectBroker, freePort, startHarness, type BrokerClient, type Harness } from "./electron.js";
 
 /**
@@ -111,7 +111,12 @@ describe.skipIf(!canRun)("signing in while a lens call waits", () => {
     await new Promise((resolve) => server?.close(resolve));
   });
 
+  beforeEach(async () => {
+    await harness.control("forward");
+  });
+
   afterEach(async () => {
+    await harness.control("closeWindow");
     // Sign out again, and close every page.
     for (const page of await harness.pages()) {
       await harness.control("evaluate", page.id, `document.cookie = "session=; Max-Age=0; Path=/"`).catch(() => {});
@@ -137,19 +142,46 @@ describe.skipIf(!canRun)("signing in while a lens call waits", () => {
   const pageAt = async (prefix: string) => (await harness.pages()).find((page) => page.url.startsWith(prefix));
   const result = (id: string) => broker.framesFor(id).find((frame) => frame.type === "result");
 
-  /** The call has stopped at the login page, and the broker has shown it to the user. */
+  /**
+   * The call has stopped at the login page: it is in the inbox, and a notice
+   * says so. Nothing came forward: the window stays shut, the page unseen.
+   */
   async function waitingForSignIn(id: string) {
     await expect
       .poll(() => broker.framesFor(id).some((frame) => frame.type === "progress" && frame.message?.includes("waiting for sign-in")), { timeout: 15_000 })
       .toBe(true);
     const login = await pageAt(site("/login"));
-    expect(login).toMatchObject({ where: "tab", kind: "lens", visible: true, active: true });
-    expect(await harness.control<number[]>("reveals")).toContain(login!.id);
+    expect(login).toMatchObject({ popup: false, exposed: true, shown: false });
+    await expect.poll(() => harness.control("inbox")).toEqual([
+      expect.objectContaining({ page: login!.id, site: "127.0.0.1", need: "needs_auth", ignored: false }),
+    ]);
+    await expect.poll(() => harness.control("notice")).toEqual({ page: login!.id, title: "Sign in to 127.0.0.1", more: 0, focusable: false });
+    expect(await harness.control("noticeText")).toContain("Sign in to 127.0.0.1");
+    expect(await harness.control("window")).toEqual({ visible: false, shown: null });
+    expect(await harness.control("forward")).toEqual([]);
     // With the broker's banner telling the user what to do.
     await expect
       .poll(() => harness.control("evaluate", login!.id, `document.querySelector("[data-lenses-auth]") !== null`))
       .toBe(true);
     return login!;
+  }
+
+  /** The user clicks Open on the notice: the window opens on the login page. */
+  async function userOpens(login: { id: number }) {
+    await harness.control("noticeClick", "open");
+    await expect.poll(() => harness.control("window")).toEqual({ visible: true, shown: login.id });
+    expect(await harness.control("notice")).toBeNull();
+    // Coming forward now is the user's doing.
+    expect(await harness.control<string[]>("forward")).toContain("app.focus");
+  }
+
+  /** Signed in: the call has its value, and nothing is left in the inbox. */
+  async function signedIn(id: string) {
+    await expect.poll(() => result(id), { timeout: 15_000 }).toBeDefined();
+    expect(result(id)!.result).toMatchObject({ kind: "value" });
+    expect(JSON.stringify(result(id)!.result)).toContain("Signed in");
+    await expect.poll(() => harness.control("inbox")).toEqual([]);
+    expect(await harness.control("notice")).toBeNull();
   }
 
   async function userClicks(prefix: string, selector: string) {
@@ -161,57 +193,78 @@ describe.skipIf(!canRun)("signing in while a lens call waits", () => {
     await harness.control("evaluate", page!.id, `document.querySelector(${JSON.stringify(selector)}).click()`);
   }
 
-  it("the user signs in with a popup from the revealed login tab, and the call returns", async () => {
+  it("the user opens the notice and signs in with a popup, and the call returns", async () => {
     const id = call();
-    await waitingForSignIn(id);
+    const login = await waitingForSignIn(id);
+    await userOpens(login);
     await userClicks(site("/login"), "#popup");
+    // Asked for from the page on show, the popup comes forward.
+    await expect.poll(() => pageAt(provider("/signin"))).toMatchObject({ popup: true, shown: true });
     await userClicks(provider("/signin"), "#allow");
-    await expect.poll(() => result(id), { timeout: 15_000 }).toBeDefined();
-    expect(result(id)!.result).toMatchObject({ kind: "value" });
-    expect(JSON.stringify(result(id)!.result)).toContain("Signed in");
+    await signedIn(id);
     // The popup closed itself; no sign-in page is left over.
     expect(await pageAt(provider(""))).toBeUndefined();
     expect(await pageAt(site("/login"))).toBeUndefined();
   });
 
-  it("the user signs in by redirect in the revealed login tab, and the call returns", async () => {
+  it("the user opens the notice and signs in by redirect, and the call returns", async () => {
     const id = call();
-    await waitingForSignIn(id);
+    const login = await waitingForSignIn(id);
+    await userOpens(login);
     await userClicks(site("/login"), "#redirect");
     await userClicks(provider("/signin"), "#allow");
-    await expect.poll(() => result(id), { timeout: 15_000 }).toBeDefined();
-    expect(result(id)!.result).toMatchObject({ kind: "value" });
-    expect(JSON.stringify(result(id)!.result)).toContain("Signed in");
+    await signedIn(id);
+  });
+
+  it("ignoring the notice leaves the item in the inbox, and the call waiting, until the user deals with it", async () => {
+    const id = call();
+    const login = await waitingForSignIn(id);
+    await harness.control("noticeClick", "ignore");
+    await expect.poll(() => harness.control("notice")).toBeNull();
+    expect(await harness.control("inbox")).toEqual([expect.objectContaining({ page: login.id, ignored: true })]);
+    // Past a few of the broker's one-second sign-in checks: no new notice, nothing forward.
+    await new Promise((resolve) => setTimeout(resolve, 3_000));
+    expect(await harness.control("notice")).toBeNull();
+    expect(await harness.control("forward")).toEqual([]);
+    expect(result(id)).toBeUndefined();
+    // Later, from the menu bar.
+    await harness.control("open", login.id);
+    await expect.poll(() => harness.control("window")).toEqual({ visible: true, shown: login.id });
+    await userClicks(site("/login"), "#redirect");
+    await userClicks(provider("/signin"), "#allow");
+    await signedIn(id);
   });
 
   it("the user closes the popup without signing in: the call keeps waiting, and a later sign-in still returns it", async () => {
     const id = call();
     const login = await waitingForSignIn(id);
+    await userOpens(login);
     await userClicks(site("/login"), "#popup");
     await expect.poll(async () => !!(await pageAt(provider("/signin")))).toBe(true);
     await harness.control("close", (await pageAt(provider("/signin")))!.id);
     // Past a few of the broker's one-second sign-in checks.
     await new Promise((resolve) => setTimeout(resolve, 3_000));
     expect(result(id)).toBeUndefined();
-    expect(await pageAt(site("/login"))).toMatchObject({ id: login.id, active: true });
+    expect(await pageAt(site("/login"))).toMatchObject({ id: login.id, shown: true });
+    expect(await harness.control("inbox")).toEqual([expect.objectContaining({ page: login.id })]);
     await userClicks(site("/login"), "#redirect");
     await userClicks(provider("/signin"), "#allow");
-    await expect.poll(() => result(id), { timeout: 15_000 }).toBeDefined();
-    expect(result(id)!.result).toMatchObject({ kind: "value" });
+    await signedIn(id);
   });
 
   it("the user signs in with a popup opened blank and then sent to the provider", async () => {
     const id = call();
-    await waitingForSignIn(id);
+    const login = await waitingForSignIn(id);
+    await userOpens(login);
     await userClicks(site("/login"), "#blank-popup");
     await userClicks(provider("/signin"), "#allow");
-    await expect.poll(() => result(id), { timeout: 15_000 }).toBeDefined();
-    expect(result(id)!.result).toMatchObject({ kind: "value" });
+    await signedIn(id);
   });
 
-  it("the broker leaves the tab alone while it is on a provider page its needs_auth also matches", async () => {
+  it("the broker leaves the page alone while it is on a provider page its needs_auth also matches", async () => {
     const id = call();
     const login = await waitingForSignIn(id);
+    await userOpens(login);
     await userClicks(site("/login"), "#redirect-login");
     await expect.poll(async () => (await pageAt(provider("/oauth/login")))?.id).toBe(login.id);
     // Past a few of the broker's one-second sign-in checks: still there, no result.
@@ -219,7 +272,6 @@ describe.skipIf(!canRun)("signing in while a lens call waits", () => {
     expect((await pageAt(provider("/oauth/login")))?.id).toBe(login.id);
     expect(result(id)).toBeUndefined();
     await userClicks(provider("/oauth/login"), "#allow");
-    await expect.poll(() => result(id), { timeout: 15_000 }).toBeDefined();
-    expect(result(id)!.result).toMatchObject({ kind: "value" });
+    await signedIn(id);
   });
 });

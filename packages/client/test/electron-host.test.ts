@@ -34,8 +34,11 @@ class FakeTabs implements ElectronTabs {
     this.urls.delete(tabId);
     for (const listener of this.listeners) listener.removed(tabId);
   }
-  reveal(tabId: number) {
-    this.calls.push(`reveal ${tabId}`);
+  attention(tabId: number, need: string) {
+    this.calls.push(`attention ${tabId} ${need}`);
+  }
+  settled(tabId: number) {
+    this.calls.push(`settled ${tabId}`);
   }
   async attach(tabId: number) {
     if (!this.urls.has(tabId)) throw new Error(`no lens tab ${tabId}`);

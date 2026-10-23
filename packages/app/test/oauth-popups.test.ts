@@ -99,10 +99,12 @@ describe.skipIf(!canRun)("OAuth popups", () => {
 
   beforeEach(async () => {
     broker = await harness.broker();
+    await harness.control("forward");
   });
 
   afterEach(async () => {
     await broker.disconnect().catch(() => {});
+    await harness.control("closeWindow");
     for (const page of await harness.pages()) await harness.control("close", page.id).catch(() => {});
     await expect.poll(() => harness.pages()).toEqual([]);
   });
@@ -128,11 +130,13 @@ describe.skipIf(!canRun)("OAuth popups", () => {
 
   const pageAt = async (prefix: string) => (await harness.pages()).find((page) => page.url.startsWith(prefix));
 
-  it("a lens tab's sign-in popup reaches the broker as a page opened by that tab", async () => {
+  it("a lens page's sign-in popup reaches the broker as a page opened by it, out of sight", async () => {
     const { page, popup } = await openSignIn();
     expect(popup.url()).toMatch(provider("/login?"));
     expect(popup.target().opener()).toBe(page.target());
-    expect(await pageAt(provider("/login"))).toMatchObject({ where: "popup", exposed: true, visible: true });
+    // The broker opened it: it stays out of sight, like any lens page.
+    expect(await pageAt(provider("/login"))).toMatchObject({ popup: true, exposed: true, shown: false });
+    expect(await harness.control("forward")).toEqual([]);
   });
 
   it("the broker can finish the sign-in: the popup posts the code to its opener and closes", async () => {
@@ -168,31 +172,25 @@ describe.skipIf(!canRun)("OAuth popups", () => {
     await page.waitForFunction(() => location.pathname === "/signed-in");
   });
 
-  it("a popup from the user's own tab never reaches the broker", async () => {
-    const created: string[] = [];
-    broker.on("targetcreated", (target) => created.push(target.url()));
-    const tab = await harness.control<number>("openUserTab", site("/"));
-    await expect
-      .poll(() => harness.control("evaluate", tab, `document.readyState === "complete" && !!document.querySelector("#signin")`))
-      .toBe(true);
-    await harness.control("evaluate", tab, `document.querySelector("#signin").click()`);
-    await expect.poll(() => pageAt(provider("/login"))).toMatchObject({ where: "popup", exposed: false });
-    expect(await broker.pages()).toEqual([]);
-    // The user's own sign-in still works.
-    const login = await pageAt(provider("/login"));
-    await harness.control("evaluate", login!.id, `document.querySelector("#allow").click()`);
-    await expect.poll(async () => (await harness.pages()).find((page) => page.id === tab)?.url).toBe(site("/signed-in?code=c123"));
-    expect(created).toEqual([]);
+  it("a popup the user opens from a page on show comes forward", async () => {
+    const page = await broker.newPage({ background: true });
+    await page.goto(site("/"));
+    const lens = (await pageAt(site("/")))!;
+    await harness.control("open", lens.id);
+    await expect.poll(() => harness.control("window")).toEqual({ visible: true, shown: lens.id });
+    // The user clicks the sign-in button in the page they are looking at.
+    await harness.control("evaluate", lens.id, `document.querySelector("#signin").click()`);
+    await expect.poll(() => pageAt(provider("/login"))).toMatchObject({ popup: true, exposed: true, shown: true });
   });
 
-  it("a link from a lens tab to a new tab opens a lens tab the broker can drive", async () => {
+  it("a link from a lens page to a new tab opens a lens page the broker can drive", async () => {
     const page = await broker.newPage({ background: true });
     await page.goto(site("/"));
     const docs = broker.waitForTarget((target) => target.url() === site("/docs"));
     await click(page, "#docs");
     const tab = await (await docs).page();
     expect(await tab!.title()).toBe("Docs");
-    expect(await pageAt(site("/docs"))).toMatchObject({ where: "tab", kind: "lens", exposed: true });
+    expect(await pageAt(site("/docs"))).toMatchObject({ popup: false, exposed: true, shown: false });
   });
 
   it("a popup opened blank reaches the broker, and its URL follows it to the provider", async () => {
