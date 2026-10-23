@@ -1,7 +1,8 @@
 /**
  * The Lenses app: the broker runs in this main process and drives the app's
- * own Chromium. Lens tabs are hidden windows, shown when a sign-in needs the
- * user. CLI, MCP, and library clients reach the broker on its usual port.
+ * own Chromium. Lens tabs are background tabs in the app's browser window,
+ * brought forward when a sign-in needs the user. CLI, MCP, and library
+ * clients reach the broker on its usual port.
  */
 import { app, BrowserWindow, ipcMain, Menu, nativeImage, Tray, type WebContents } from "electron";
 import { existsSync, readFileSync } from "node:fs";
@@ -11,6 +12,7 @@ import { fileURLToPath } from "node:url";
 import { setTimeout as sleep } from "node:timers/promises";
 import { createLensClient } from "@djgrant/lenses-client";
 import { setElectronHost } from "@djgrant/lenses-client/electron-host";
+import { createBrowser, type Browser } from "./browser.js";
 
 const BROKER_PORT = Number(process.env.LENS_BROKER_PORT ?? 4319);
 const staticDir = fileURLToPath(new URL("../static/", import.meta.url));
@@ -29,22 +31,24 @@ app.userAgentFallback = app.userAgentFallback
   .replace(new RegExp(` ${app.getName()}/\\S+`, "i"), "")
   .replace(/ lenses-app\/\S+/i, "");
 
-/** Windows the broker opened, by CDP target id. */
-const lensTabs = new Map<string, BrowserWindow>();
-let panel: BrowserWindow | undefined;
+/** Tabs the broker opened, by CDP target id. */
+const lensTabs = new Map<string, WebContents>();
+let browser: Browser | undefined;
 let hostPage: BrowserWindow | undefined;
 let tray: Tray | undefined;
 let brokerStatus: unknown;
 let readStatus: (() => unknown) | undefined;
 let brokerError: string | undefined;
 
-app.on("second-instance", () => showPanel());
+app.on("second-instance", () => browser?.show());
+app.on("activate", () => browser?.show());
 // A menu bar app: closing every window leaves it running.
 app.on("window-all-closed", () => {});
 
 app.whenReady().then(async () => {
   if (!primary) return;
   app.dock?.hide();
+  browser = createBrowser({ staticDir, changed: () => refresh() });
   createTray();
   try {
     await startBroker();
@@ -117,18 +121,18 @@ async function debuggingPort(): Promise<number> {
 
 /**
  * A hidden page that opens every lens tab, so the broker can tell lens tabs
- * (and their popups) from windows the user opened: CDP names each page's
- * opener.
+ * (and their popups) from tabs the user opened: CDP names each page's
+ * opener. Each window it opens becomes a background tab in the browser.
  */
 async function createHostPage(): Promise<BrowserWindow> {
   const window = new BrowserWindow({ show: false });
   window.webContents.setWindowOpenHandler(() => ({
     action: "allow",
-    overrideBrowserWindowOptions: {
-      show: false,
-      width: 1280,
-      height: 900,
-      webPreferences: { backgroundThrottling: false },
+    createWindow: (options) => {
+      const contents = browser!.adoptLensTab(options);
+      pendingTab?.(contents);
+      pendingTab = undefined;
+      return contents;
     },
   }));
   await window.loadURL("data:text/html,<title>Lenses host</title>");
@@ -136,8 +140,9 @@ async function createHostPage(): Promise<BrowserWindow> {
 }
 
 let opening = Promise.resolve();
+let pendingTab: ((contents: WebContents) => void) | undefined;
 
-/** One at a time: each window.open is matched to the next window created. */
+/** One at a time: each window.open is matched to the next tab created. */
 function openWindow(): Promise<string> {
   const next = opening.then(openLensTab);
   opening = next.then(
@@ -149,20 +154,14 @@ function openWindow(): Promise<string> {
 
 async function openLensTab(): Promise<string> {
   const host = hostPage!.webContents;
-  const created = new Promise<BrowserWindow>((resolve) =>
-    host.once("did-create-window", (window) => resolve(window))
-  );
-  await host.executeJavaScript(`window.open("about:blank", "_blank", "noopener")`, true);
-  const window = await created;
-  const id = await targetId(window.webContents);
-  lensTabs.set(id, window);
-  window.on("closed", () => {
-    lensTabs.delete(id);
-    refresh();
+  const created = new Promise<WebContents>((resolve) => {
+    pendingTab = resolve;
   });
-  window.webContents.on("page-title-updated", refresh);
-  window.webContents.on("did-navigate", refresh);
-  refresh();
+  await host.executeJavaScript(`window.open("about:blank", "_blank", "noopener")`, true);
+  const contents = await created;
+  const id = await targetId(contents);
+  lensTabs.set(id, contents);
+  contents.once("destroyed", () => lensTabs.delete(id));
   return id;
 }
 
@@ -178,25 +177,8 @@ async function targetId(contents: WebContents): Promise<string> {
 }
 
 function reveal(id: string): void {
-  const window = lensTabs.get(id);
-  if (!window || window.isDestroyed()) return;
-  window.show();
-  window.focus();
-  app.focus({ steal: true });
-}
-
-/**
- * A window for signing in to a site by hand; its cookies serve later calls.
- * The broker never attaches to it (see createHostPage).
- */
-function openSite(url: string): void {
-  const target = /^https?:\/\//.test(url) ? url : `https://${url}`;
-  const window = new BrowserWindow({ width: 1180, height: 860 });
-  window.webContents.on("page-title-updated", refresh);
-  window.webContents.on("did-navigate", refresh);
-  window.on("closed", refresh);
-  void window.loadURL(target);
-  refresh();
+  const contents = lensTabs.get(id);
+  if (contents && !contents.isDestroyed()) browser?.reveal(contents);
 }
 
 function createTray(): void {
@@ -215,7 +197,9 @@ function updateTrayMenu(): void {
     Menu.buildFromTemplate([
       { label: statusLine(status), enabled: false },
       { type: "separator" },
-      { label: "Control Panel…", click: showPanel },
+      { label: "Show Browser", click: () => browser?.show() },
+      { label: "New Tab", click: () => browser?.openUserTab() },
+      { label: "Broker Status…", click: () => browser?.togglePanel(true) },
       { type: "separator" },
       { label: "Quit Lenses", role: "quit" },
     ])
@@ -228,26 +212,6 @@ function statusLine(status: BrokerStatus | undefined): string {
   const active = status.diagnostics?.activeCall;
   if (active) return `Running ${active.lens ?? active.type}`;
   return status.connected ? "Ready" : "Browser not connected";
-}
-
-function showPanel(): void {
-  if (panel && !panel.isDestroyed()) {
-    panel.show();
-    panel.focus();
-    app.focus({ steal: true });
-    return;
-  }
-  panel = new BrowserWindow({
-    width: 720,
-    height: 640,
-    title: "Lenses",
-    webPreferences: { preload: join(staticDir, "preload.cjs") },
-  });
-  void panel.loadFile(join(staticDir, "panel.html"));
-  panel.on("closed", () => {
-    panel = undefined;
-  });
-  app.focus({ steal: true });
 }
 
 interface BrokerStatus {
@@ -265,44 +229,18 @@ function currentStatus(): BrokerStatus | undefined {
   return (readStatus?.() ?? brokerStatus) as BrokerStatus | undefined;
 }
 
-function windows() {
-  return BrowserWindow.getAllWindows()
-    .filter((window) => window !== panel && window !== hostPage && !window.isDestroyed())
-    .map((window) => {
-      const lensTab = [...lensTabs].find(([, candidate]) => candidate === window);
-      return {
-        id: window.id,
-        lensTab: !!lensTab,
-        title: window.webContents.getTitle(),
-        url: window.webContents.getURL(),
-        visible: window.isVisible(),
-      };
-    });
-}
-
 function refresh(): void {
   updateTrayMenu();
-  if (!panel || panel.isDestroyed()) return;
-  panel.webContents.send("state", {
+  if (!browser || browser.window.isDestroyed()) return;
+  browser.window.webContents.send("status", {
     port: BROKER_PORT,
     brokerError,
     status: currentStatus(),
-    windows: windows(),
     userAgent: app.userAgentFallback,
   });
 }
 
-ipcMain.on("open-site", (_event, url: string) => openSite(url));
-ipcMain.on("window", (_event, id: number, action: "show" | "hide" | "close") => {
-  const window = BrowserWindow.fromId(id);
-  if (!window || window === panel || window === hostPage) return;
-  if (action === "show") {
-    window.show();
-    window.focus();
-    app.focus({ steal: true });
-  }
-  if (action === "hide") window.hide();
-  if (action === "close") window.close();
+ipcMain.on("ready", () => {
   refresh();
+  browser?.resend();
 });
-ipcMain.on("ready", refresh);

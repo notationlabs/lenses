@@ -1,0 +1,274 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src * data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<title>Lenses</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    font: 12px -apple-system, system-ui, sans-serif;
+    --bg: #ebebed; --surface: #fff; --text: #1d1d1f; --muted: #6e6e73;
+    --line: #0000001a; --hover: #0000000d; --accent: #5b5bd6; --danger: #d33;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1f1f22; --surface: #2a2a2e; --text: #ececf0; --muted: #9a9aa2;
+      --line: #ffffff1a; --hover: #ffffff12; --accent: #8e8ef0; --danger: #f06060;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { display: flex; flex-direction: column; background: var(--bg); color: var(--text); overflow: hidden; user-select: none; }
+  button { font: inherit; color: inherit; background: none; border: 0; border-radius: 6px; cursor: default; }
+  button:hover:not(:disabled) { background: var(--hover); }
+  button:disabled { opacity: .35; }
+
+  /* Tab strip: the title bar, clear of the traffic lights. */
+  #strip { display: flex; align-items: flex-end; gap: 2px; height: 40px; padding: 0 8px 0 80px; -webkit-app-region: drag; flex-shrink: 0; }
+  #tabs { display: flex; gap: 2px; min-width: 0; flex: 0 1 auto; overflow: hidden; }
+  .tab { -webkit-app-region: no-drag; display: flex; align-items: center; gap: 6px; height: 32px; width: 200px; min-width: 64px; flex: 0 1 200px; padding: 0 6px 0 10px; border-radius: 8px 8px 0 0; position: relative; }
+  .tab:hover { background: var(--hover); }
+  .tab.active { background: var(--surface); }
+  .tab .icon { width: 16px; height: 16px; flex-shrink: 0; display: grid; place-items: center; font-size: 12px; color: var(--muted); }
+  .tab .icon img { width: 16px; height: 16px; }
+  .tab.lens .icon { color: var(--accent); }
+  .tab .title { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tab .close { width: 18px; height: 18px; line-height: 16px; font-size: 14px; flex-shrink: 0; opacity: 0; padding: 0; }
+  .tab:hover .close, .tab.active .close { opacity: .7; }
+  .tab.loading .icon::after { content: ""; position: absolute; width: 14px; height: 14px; border: 1.5px solid var(--accent); border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; }
+  .tab.loading .icon > * { visibility: hidden; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .strip-button { -webkit-app-region: no-drag; width: 28px; height: 28px; margin-bottom: 2px; flex-shrink: 0; font-size: 16px; }
+  #strip .spacer { flex: 1; }
+  #status-button { width: auto; padding: 0 10px; font-size: 12px; display: flex; align-items: center; gap: 6px; color: var(--muted); }
+
+  /* Chrome row, as T3 Code's: back, forward, reload, address. */
+  #chrome { display: flex; align-items: center; gap: 2px; height: 40px; padding: 0 8px; background: var(--surface); border-bottom: 1px solid var(--line); flex-shrink: 0; }
+  #chrome button { width: 28px; height: 28px; font-size: 15px; }
+  #address-form { flex: 1; display: flex; margin-left: 4px; position: relative; }
+  #address { flex: 1; height: 28px; padding: 0 10px 0 28px; border-radius: 14px; border: 1px solid transparent; background: var(--bg); color: var(--text); font: inherit; outline: none; user-select: text; }
+  #address:focus { border-color: var(--accent); background: var(--surface); }
+  #address-badge { position: absolute; left: 10px; top: 7px; font-size: 11px; color: var(--muted); pointer-events: none; }
+  #address-badge.lens { color: var(--accent); }
+  #address-badge.error { color: var(--danger); }
+
+  #main { flex: 1; display: flex; min-height: 0; }
+  #viewport { flex: 1; min-width: 0; background: var(--surface); position: relative; }
+  #empty { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; gap: 14px; padding: 24px; }
+  #empty[hidden] { display: none; }
+  #empty h1 { font-size: 22px; font-weight: 600; margin: 0; }
+  #empty p { margin: 0 auto; color: var(--muted); max-width: 420px; line-height: 1.5; }
+  #empty form { display: flex; gap: 8px; width: 420px; margin: 6px auto 0; }
+  #empty input { flex: 1; height: 32px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; outline: none; user-select: text; }
+  #empty input:focus { border-color: var(--accent); }
+  #empty button { padding: 0 14px; background: var(--accent); color: #fff; border-radius: 8px; }
+
+  #panel { width: 300px; flex-shrink: 0; background: var(--surface); border-left: 1px solid var(--line); padding: 16px; overflow: auto; user-select: text; }
+  #panel[hidden] { display: none; }
+  #panel h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 10px; font-weight: 600; }
+  #panel h2:not(:first-child) { margin-top: 22px; }
+  #panel dl { display: grid; grid-template-columns: 76px 1fr; gap: 8px 10px; margin: 0; }
+  #panel dt { color: var(--muted); }
+  #panel dd { margin: 0; overflow-wrap: anywhere; }
+  #panel p { color: var(--muted); line-height: 1.5; margin: 0; }
+  .lens-row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; margin: 0 -8px; border-radius: 6px; }
+  .lens-row:hover { background: var(--hover); }
+  .lens-row .text { flex: 1; min-width: 0; }
+  .lens-row .text div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .lens-row .url { color: var(--muted); font-size: 11px; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--danger); flex-shrink: 0; }
+  .dot.on { background: #2a2; }
+  .dot.busy { background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .35; } }
+  .error { color: var(--danger); }
+</style>
+</head>
+<body>
+<div id="strip">
+  <div id="tabs"></div>
+  <button class="strip-button" id="new-tab" title="New Tab (⌘T)">+</button>
+  <div class="spacer"></div>
+  <button class="strip-button" id="status-button" title="Broker status (⇧⌘S)"><span class="dot" id="status-dot"></span><span id="status-text">Starting…</span></button>
+</div>
+<form id="chrome" autocomplete="off">
+  <button type="button" id="back" title="Back (⌘[)">←</button>
+  <button type="button" id="forward" title="Forward (⌘])">→</button>
+  <button type="button" id="reload" title="Reload (⌘R)">↻</button>
+  <div id="address-form">
+    <span id="address-badge"></span>
+    <input id="address" placeholder="Search or enter address" spellcheck="false">
+  </div>
+</form>
+<div id="main">
+  <div id="viewport">
+    <div id="empty">
+      <h1>Lenses</h1>
+      <p>Sign in to sites here: lens calls use these sessions. Tabs the broker opens appear marked ◎, and come forward when a call needs you.</p>
+      <form id="empty-form" autocomplete="off">
+        <input id="empty-address" placeholder="github.com" spellcheck="false">
+        <button>Open</button>
+      </form>
+    </div>
+  </div>
+  <aside id="panel" hidden>
+    <h2>Broker</h2>
+    <dl id="status"></dl>
+    <h2>Lens tabs</h2>
+    <div id="lens-tabs"></div>
+    <h2>About tabs</h2>
+    <p>The broker drives only tabs it opened, and their popups. Tabs you open are never attached or instrumented; they share cookies with lens tabs, so a sign-in here serves later calls.</p>
+  </aside>
+</div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const esc = (text) => String(text ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+  const api = window.lenses;
+  let tabs = [];
+  let activeId;
+  let editing = false;
+
+  const active = () => tabs.find((tab) => tab.id === activeId);
+  const displayUrl = (url) => (url === "about:blank" ? "" : url ?? "");
+  const tabTitle = (tab) =>
+    (tab.title !== "about:blank" && tab.title) || displayUrl(tab.url) || (tab.kind === "lens" ? "Lens tab" : "New Tab");
+
+  // The native views sit over #viewport: tell main where it is.
+  function sendViewport() {
+    const rect = $("viewport").getBoundingClientRect();
+    api.viewport({
+      top: rect.top,
+      left: rect.left,
+      right: window.innerWidth - rect.right,
+      bottom: window.innerHeight - rect.bottom,
+    });
+  }
+  new ResizeObserver(sendViewport).observe($("viewport"));
+  window.addEventListener("resize", sendViewport);
+
+  api.onTabs((state) => {
+    tabs = state.tabs;
+    activeId = state.activeId;
+    render();
+  });
+
+  function render() {
+    $("tabs").innerHTML = tabs.map((tab) => `
+      <div class="tab ${tab.kind} ${tab.id === activeId ? "active" : ""} ${tab.loading ? "loading" : ""}" data-id="${tab.id}" title="${esc(tabTitle(tab))}${tab.kind === "lens" ? " · lens tab" : ""}">
+        <span class="icon">${tab.kind === "lens" ? "<span>◎</span>" : tab.favicon ? `<img src="${esc(tab.favicon)}" onerror="this.remove()">` : "<span>○</span>"}</span>
+        <span class="title">${esc(tabTitle(tab))}</span>
+        <button class="close" data-close="${tab.id}" title="Close Tab (⌘W)">×</button>
+      </div>`).join("");
+
+    const tab = active();
+    $("empty").hidden = !!tab;
+    $("back").disabled = !tab?.canGoBack;
+    $("forward").disabled = !tab?.canGoForward;
+    $("reload").disabled = !tab;
+    $("reload").textContent = tab?.loading ? "✕" : "↻";
+    $("reload").title = tab?.loading ? "Stop" : "Reload (⌘R)";
+    const badge = $("address-badge");
+    badge.className = tab?.error ? "error" : tab?.kind === "lens" ? "lens" : "";
+    badge.textContent = tab?.error ? "⚠" : tab?.kind === "lens" ? "◎" : "⌕";
+    badge.title = tab?.error ?? "";
+    if (!editing) $("address").value = displayUrl(tab?.url);
+
+    const lensTabs = tabs.filter((candidate) => candidate.kind === "lens");
+    $("lens-tabs").innerHTML = lensTabs.length
+      ? lensTabs.map((lens) => `
+        <div class="lens-row" data-id="${lens.id}">
+          <div class="text"><div>${esc(tabTitle(lens))}</div><div class="url">${esc(displayUrl(lens.url))}</div></div>
+          <button data-close="${lens.id}" title="Close">×</button>
+        </div>`).join("")
+      : `<p>None open.</p>`;
+  }
+
+  function onTabClick(event) {
+    const close = event.target.closest("[data-close]");
+    if (close) {
+      event.stopPropagation();
+      return api.command("close", Number(close.dataset.close));
+    }
+    const row = event.target.closest("[data-id]");
+    if (row) api.command("activate", Number(row.dataset.id));
+  }
+  $("tabs").addEventListener("click", onTabClick);
+  $("lens-tabs").addEventListener("click", onTabClick);
+  $("tabs").addEventListener("auxclick", (event) => {
+    const row = event.target.closest("[data-id]");
+    if (event.button === 1 && row) api.command("close", Number(row.dataset.id));
+  });
+
+  $("new-tab").addEventListener("click", () => api.command("new-tab"));
+  $("back").addEventListener("click", () => api.command("back"));
+  $("forward").addEventListener("click", () => api.command("forward"));
+  $("reload").addEventListener("click", () => api.command(active()?.loading ? "stop" : "reload"));
+
+  const address = $("address");
+  address.addEventListener("focus", () => {
+    editing = true;
+    address.select();
+  });
+  address.addEventListener("blur", () => {
+    editing = false;
+    render();
+  });
+  address.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") address.blur();
+  });
+  $("chrome").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const value = address.value.trim();
+    if (!value) return;
+    address.blur();
+    api.command("navigate", activeId, value);
+  });
+  $("empty-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const value = $("empty-address").value.trim();
+    if (value) api.command("navigate", activeId, value);
+    $("empty-address").value = "";
+  });
+
+  api.onFocusAddress(() => {
+    const input = active() ? address : $("empty-address");
+    input.focus();
+    input.select();
+  });
+
+  function setPanel(open) {
+    $("panel").hidden = !open;
+    sendViewport();
+  }
+  api.onTogglePanel((open) => setPanel(open ?? $("panel").hidden));
+  $("status-button").addEventListener("click", () => setPanel($("panel").hidden));
+
+  api.onStatus((state) => {
+    const status = state.status ?? {};
+    const diag = status.diagnostics ?? {};
+    const call = diag.activeCall;
+    const dot = $("status-dot");
+    dot.className = `dot ${state.brokerError ? "" : call ? "busy" : status.connected ? "on" : ""}`;
+    $("status-text").textContent = state.brokerError
+      ? "Broker failed"
+      : call ? `Running ${call.lens ?? call.type}`
+      : status.connected ? "Ready" : "Starting…";
+    const rows = [
+      ["Broker", state.brokerError
+        ? `<span class="error">${esc(state.brokerError)}</span>`
+        : `${status.connected ? "Connected" : "Starting"} on port ${state.port}`],
+      ["Running", call ? `${esc(call.lens ?? call.type)} · ${Math.round((Date.now() - call.startedAt) / 1000)}s` : "Nothing"],
+      ["Queued", diag.queuedCalls ?? 0],
+      ["Browser", esc(status.ua ?? state.userAgent ?? "")],
+    ];
+    if (diag.lastBackendError) rows.push(["Last error", `<span class="error">${esc(diag.lastBackendError)}</span>`]);
+    $("status").innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("");
+  });
+
+  render();
+  sendViewport();
+  api.ready();
+</script>
+</body>
+</html>
