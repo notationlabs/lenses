@@ -159,10 +159,10 @@ describe.skipIf(!canRun)("signing in while a lens call waits", () => {
     expect(await harness.control("noticeText")).toContain("Sign in to 127.0.0.1");
     expect(await harness.control("window")).toEqual({ visible: false, shown: null });
     expect(await harness.control("forward")).toEqual([]);
-    // With the broker's banner telling the user what to do.
-    await expect
-      .poll(() => harness.control("evaluate", login!.id, `document.querySelector("[data-lenses-auth]") !== null`))
-      .toBe(true);
+    // The app's window says what to do; the page has no Lenses banner in it
+    // (the broker would have painted one by now).
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+    expect(await harness.control("evaluate", login!.id, `document.querySelector("[data-lenses-auth]") === null`)).toBe(true);
     return login!;
   }
 
