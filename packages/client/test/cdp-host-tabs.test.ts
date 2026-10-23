@@ -5,7 +5,8 @@ vi.mock("../src/auth-banner.js", () => ({
   showAuthBanner: async () => ({ update: () => {}, dispose: () => {} }),
   clearAuthBanners: async () => {},
 }));
-vi.mock("../src/launch-browser.js", () => ({ raiseChrome: async () => {} }));
+const raised = vi.hoisted(() => ({ order: [] as string[] }));
+vi.mock("../src/launch-browser.js", () => ({ raiseChrome: async () => { raised.order.push("chrome"); } }));
 
 import { createCdpBackend, sameSite } from "../src/cdp-host.js";
 import { TabClosed, TabDisconnected } from "../src/browser-backend.js";
@@ -31,7 +32,7 @@ class SpaPage extends EventEmitter {
   browser() { return this.owner(); }
   mainFrame() { return this; }
   async title() { return "Bank"; }
-  async bringToFront() { this.foregrounded += 1; }
+  async bringToFront() { this.foregrounded += 1; raised.order.push("tab"); }
   async goto(url: string) { this.loads.push(url); this.currentUrl = url; this.booting = true; }
   async reload() { this.reloads += 1; }
   /** Selectors the rendered page currently matches. */
@@ -192,14 +193,22 @@ describe("tab reuse and in-page navigation", () => {
     expect((await session.recordingState()).url).toBe(`${origin}/login`);
   });
 
-  it("brings a reused tab to the front when it needs sign-in", async () => {
+  it("brings a kept sign-in tab to the front only when a sign-in wait begins", async () => {
     const { host, pages } = setup();
+    raised.order.length = 0;
     const session = await host.bind({
       target: `${origin}/account-summary`, reuse: true, inPage: true, navigation: "reuse", loadTimeoutMs: 100,
     });
     await host.finish(session, "keep");
-    expect(pages[0].foregrounded).toBe(1);
+    // Keeping the tab is not yet something for the user to do.
+    expect(raised.order).toEqual([]);
     expect(await host.findAuthGate(origin)).toMatchObject({ target: `${origin}/account-summary` });
+    const watch = await host.watchAuthGate?.(origin, () => {});
+    expect(watch).toBeDefined();
+    // The tab is activated before Chrome is raised, so the user lands on it.
+    expect(raised.order).toEqual(["tab", "chrome"]);
+    expect(pages[0].foregrounded).toBe(1);
+    watch!.dispose();
   });
 
   it("gives a tab without a transport key no id", async () => {
@@ -326,7 +335,8 @@ describe("tabs outside the group", () => {
 
     expect(await host.openAuthGate?.(origin, `${origin}/account-summary`)).toBe(true);
     expect(browser.newPage).toHaveBeenCalledTimes(1);
-    expect(world.tabs.get("100")!.foregrounded).toBe(1);
+    // The wait that follows shows it; opening the gate alone does not.
+    expect(world.tabs.get("100")!.foregrounded).toBe(0);
     expect(await host.findAuthGate(origin)).toMatchObject({ target: `${origin}/account-summary` });
   });
 });
