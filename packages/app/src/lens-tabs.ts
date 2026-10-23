@@ -37,7 +37,7 @@ export function createLensTabs(options: LensTabsOptions) {
     contents.debugger.on("message", (_event, method, params, sessionId) =>
       each((listener) => listener.event(tabId, sessionId || undefined, method, params))
     );
-    // Not fired for our own detach: the page closed, or DevTools took over.
+    // Not fired for our own detach: the page closed, or crashed.
     contents.debugger.on("detach", (_event, reason) => {
       each((listener) => listener.detached(tabId, reason));
       setTimeout(() => {
