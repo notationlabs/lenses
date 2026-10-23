@@ -43,6 +43,8 @@ export interface ElectronTabListener {
   /** A lens tab or popup appeared, or a detached one should be attached again. */
   created(tabId: number): void;
   removed(tabId: number): void;
+  /** The tab's main frame navigated. */
+  updated(tabId: number, url: string): void;
   /** A debugger event; `sessionId` names a child session, absent for the page's own. */
   event(tabId: number, sessionId: string | undefined, method: string, params: unknown): void;
   detached(tabId: number, reason: string): void;
@@ -103,6 +105,7 @@ export function createElectronRelay(tabs: ElectronTabs, log: (message: string) =
       attached.delete(tabId);
       model.onTabRemoved(tabId);
     },
+    updated: (tabId, url) => model.onTabUpdated(tabId, { url }),
     event: (tabId, sessionId, method, params) =>
       model.onDebuggerEvent({ tabId, ...(sessionId ? { sessionId } : {}) }, method, params),
     detached: (tabId, reason) => {

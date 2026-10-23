@@ -44,6 +44,12 @@ export function createLensTabs(options: LensTabsOptions) {
         if (!contents.isDestroyed()) each((listener) => listener.created(tabId));
       }, REANNOUNCE_MS);
     });
+    // Its own debugger never reports the page's URL to the broker; the tab does.
+    const navigated = (url: string) => each((listener) => listener.updated(tabId, url));
+    contents.on("did-navigate", (_event, url) => navigated(url));
+    contents.on("did-navigate-in-page", (_event, url, isMainFrame) => {
+      if (isMainFrame) navigated(url);
+    });
     contents.once("destroyed", () => {
       exposed.delete(tabId);
       each((listener) => listener.removed(tabId));

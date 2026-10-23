@@ -52,6 +52,10 @@ class FakeTabs implements ElectronTabs {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
+  navigate(tabId: number, url: string) {
+    this.urls.set(tabId, url);
+    for (const listener of this.listeners) listener.updated(tabId, url);
+  }
   emit(tabId: number, sessionId: string | undefined, method: string, params: unknown) {
     for (const listener of this.listeners) listener.event(tabId, sessionId, method, params);
   }
@@ -127,6 +131,17 @@ describe("electron relay", () => {
     await created;
     expect(tabs.attached.has(popup)).toBe(true);
     expect((await browser!.pages()).map((page) => page.url())).toContain("https://accounts.example/oauth");
+  });
+
+  it("tells Puppeteer a tab's new URL when the app reports a navigation", async () => {
+    tabs = new FakeTabs();
+    const lens = tabs.open("");
+    await connect();
+    // Announced before its first load: the initial about:blank document.
+    await expect.poll(() => browser!.targets().map((target) => target.url())).toContain("about:blank");
+    const arrived = browser!.waitForTarget((target) => target.url() === "https://example.com/docs");
+    tabs.navigate(lens, "https://example.com/docs");
+    await arrived;
   });
 
   it("routes a child session (an out-of-process iframe) to its tab's debugger", async () => {
