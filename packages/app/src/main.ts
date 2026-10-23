@@ -25,11 +25,14 @@ if (!primary) app.exit(0);
 // The app's own debugging endpoint, which the broker connects to. Port 0
 // picks a free port and records it in DevToolsActivePort.
 else app.commandLine.appendSwitch("remote-debugging-port", "0");
-// Present as plain Chrome: some sign-in pages refuse embedded browsers.
-app.userAgentFallback = app.userAgentFallback
-  .replace(/ Electron\/\S+/, "")
-  .replace(new RegExp(` ${app.getName()}/\\S+`, "i"), "")
-  .replace(/ lenses-app\/\S+/i, "");
+// The debugging switch alone sets navigator.webdriver on every page, the
+// user's sign-in tabs included, and Google refuses to sign in a browser that
+// says it is automated. This keeps the port and drops the flag.
+app.commandLine.appendSwitch("disable-blink-features", "AutomationControlled");
+// Keep Electron's own User-Agent, as T3 Code does. Google's sign-in rejects a
+// User-Agent rewritten to pass for plain Chrome ("This browser or app may not
+// be secure"), likely because the client hints still name Chromium alone, and
+// T3 Code found rewriting it breaks Cloudflare Turnstile.
 
 /** Tabs the broker opened, by CDP target id. */
 const lensTabs = new Map<string, WebContents>();
