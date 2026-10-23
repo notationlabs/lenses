@@ -91,6 +91,15 @@ export function createAppWindow(options: AppWindowOptions) {
         if (page !== undefined) options.done(page);
         return;
     }
+    if (command === "navigate" && page === undefined) {
+      // Typed with no page on show: a new page, as a browser's new tab.
+      const url = typeof address === "string" ? addressToUrl(address) : undefined;
+      if (!url) return;
+      const contents = pages.open(url);
+      display(contents.id);
+      window.webContents.send("select", contents.id);
+      return send();
+    }
     const contents = page !== undefined ? pages.get(page) : undefined;
     if (!contents) return;
     switch (command) {

@@ -45,9 +45,8 @@
   #reload.loading .stop { display: block; }
   #address { flex: 1; min-width: 0; height: 30px; margin-left: 6px; padding: 0 10px; font: inherit; color: inherit; background: var(--hover); border: 1px solid transparent; border-radius: 7px; outline: none; user-select: text; }
   #address:focus { background: var(--surface); border-color: var(--accent); }
-  #heading { flex: 1; min-width: 0; padding: 0 6px; }
-  #heading .main { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  #heading .sub { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #placeholder h1 { font-size: 15px; margin: 0 0 2px; }
+  #placeholder .sub { color: var(--muted); margin-bottom: 12px; }
   #need { display: none; align-items: center; gap: 10px; padding: 8px 14px; background: var(--accent); color: var(--on-accent); }
   #need.on { display: flex; }
   #need span { flex: 1; }
@@ -76,8 +75,7 @@
     <button id="back" class="nav" title="Back (⌘[)" disabled><svg viewBox="0 0 20 20"><path d="M12.5 4.5 7 10l5.5 5.5"/></svg></button>
     <button id="forward" class="nav" title="Forward (⌘])" disabled><svg viewBox="0 0 20 20"><path d="M7.5 4.5 13 10l-5.5 5.5"/></svg></button>
     <button id="reload" class="nav" title="Reload (⌘R)" disabled><svg class="go" viewBox="0 0 20 20"><path d="M15.5 10a5.5 5.5 0 1 1-1.6-3.9"/><path d="M14.5 3v3.6h-3.6"/></svg><svg class="stop" viewBox="0 0 20 20"><path d="m5.5 5.5 9 9m0-9-9 9"/></svg></button>
-    <input id="address" type="text" spellcheck="false" autocomplete="off" placeholder="Search or enter address" hidden>
-    <div id="heading"><div class="main"></div><div class="sub"></div></div>
+    <input id="address" type="text" spellcheck="false" autocomplete="off" placeholder="Search or enter address">
   </div>
   <div id="need"><span></span><button id="done">Done</button></div>
   <div id="page" hidden></div>
@@ -146,22 +144,22 @@
     $("#reload").disabled = !page;
     $("#reload").classList.toggle("loading", !!page?.loading);
     $("#reload").title = page?.loading ? "Stop" : "Reload (⌘R)";
-    $("#address").hidden = !page;
-    $("#heading").hidden = !!page;
     // Leave what the user is typing alone.
-    if (page && document.activeElement !== $("#address")) $("#address").value = page.url;
+    if (document.activeElement !== $("#address")) $("#address").value = page?.url ?? "";
     $("#need").classList.toggle("on", !!item);
     if (item) $("#need span").textContent = `${item.label} — the lens call continues once you're through.`;
 
     if (page) {
-      // The address bar stands in for the heading.
+      // On show in #page.
     } else if (selection.kind === "site") {
       const pages = state.pages.filter((entry) => entry.site === selection.site);
-      $("#heading .main").textContent = selection.site;
-      $("#heading .sub").textContent = pages.length === 1 ? "1 lens page open" : `${pages.length} lens pages open`;
       const cards = document.createElement("div");
       cards.className = "cards";
-      cards.replaceChildren(...pages.map((entry) => {
+      const title = document.createElement("div");
+      title.innerHTML = `<h1></h1><div class="sub"></div>`;
+      title.querySelector("h1").textContent = selection.site;
+      title.querySelector(".sub").textContent = pages.length === 1 ? "1 lens page open" : `${pages.length} lens pages open`;
+      cards.replaceChildren(title, ...pages.map((entry) => {
         const card = row(entry.title || entry.url, entry.url, false, () => select({ kind: "page", page: entry.id }));
         card.classList.add("card");
         return card;
@@ -170,8 +168,6 @@
       $("#placeholder").classList.add("listing");
     } else {
       $("#placeholder").classList.remove("listing");
-      $("#heading .main").textContent = "Lenses";
-      $("#heading .sub").textContent = "";
       $("#placeholder").textContent = state.inbox.length
         ? "Pick an item in the inbox to deal with it."
         : "Nothing needs you. Lenses keeps running in the menu bar.";
@@ -185,8 +181,8 @@
   const address = $("#address");
   address.onfocus = () => address.select();
   address.onkeydown = (event) => {
-    if (event.key === "Enter" && selection.kind === "page") {
-      window.lenses.command("navigate", selection.page, address.value);
+    if (event.key === "Enter") {
+      window.lenses.command("navigate", selection.kind === "page" ? selection.page : undefined, address.value);
       address.blur();
     } else if (event.key === "Escape") {
       address.blur();
@@ -194,9 +190,7 @@
     }
   };
   address.onblur = () => render();
-  window.lenses.onFocusAddress(() => {
-    if (!address.hidden) address.focus();
-  });
+  window.lenses.onFocusAddress(() => address.focus());
   $("#done").onclick = () => {
     const page = state.pages.find((entry) => entry.id === selection.page);
     const item = page && state.inbox.find((entry) => entry.page === page.id || entry.page === page.opener);
