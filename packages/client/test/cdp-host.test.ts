@@ -154,10 +154,11 @@ describe("CDP sign-in gate", () => {
     await host.acquire();
     expect(await host.openAuthGate(origin, target)).toBe(true);
     expect(browser.newPage).toHaveBeenCalledTimes(1);
+    // Opening the gate leaves it in the background; the wait shows it.
+    expect(page.bringToFront).not.toHaveBeenCalled();
     const exits: string[] = [];
     vi.useFakeTimers();
     try {
-      page.bringToFront.mockClear();
       let watch = await host.watchAuthGate(origin, (reason) => exits.push(reason));
       expect(watch).toBeDefined();
       // The wait shows its sign-in tab once; resumed retries leave focus alone.

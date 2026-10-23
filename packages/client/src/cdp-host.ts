@@ -900,9 +900,8 @@ export function createCdpBackend(
       if (recorded !== undefined) {
         const reused = await pageForKey(browser, recorded);
         if (reused && sameSite(reused.url(), origin)) {
+          // Shown by the wait that follows (watchAuthGate), not here.
           keptGates.set(recorded, { page: reused, target, keptUrl: reused.url() });
-          await reused.bringToFront().catch(() => {});
-          await raiseChrome();
           return true;
         }
         if (!reused && transport.tabLink?.(recorded)?.state === "disconnected") {
@@ -915,8 +914,6 @@ export function createCdpBackend(
         page = await browser.newPage({ background: true });
         await settle(page.goto(target, { waitUntil: "load", timeout: 15_000 }));
         keptGates.set(gateKeyOf(page), { page, target, keptUrl: page.url() });
-        await page.bringToFront();
-        await raiseChrome();
         return true;
       } catch {
         if (page) await page.close().catch(() => {});
@@ -1008,8 +1005,10 @@ export function createCdpBackend(
         if (mounted === current) current.prompt = prompt;
         else prompt.dispose();
         // The wait has begun on a tab that may sit behind other tabs and
-        // windows (a gate kept by an earlier call). Show it once per wait, not
-        // on a resumed retry; a browser that refuses must not fail the call.
+        // windows (a gate kept by an earlier call). This is the only place
+        // Chrome is raised: activate the tab first so the user lands on it.
+        // Show it once per wait, not on a resumed retry; a browser that
+        // refuses must not fail the call.
         if (!resume && !disposed) {
           try {
             await page.bringToFront();
@@ -1313,14 +1312,8 @@ export function createCdpBackend(
           target: cdpSession.target,
           keptUrl: cdpSession.page.url(),
         });
-        try {
-          // The page was opened in the background, so without this the
-          // sign-in page sits unseen behind whatever the user is doing.
-          await cdpSession.page.bringToFront();
-          await raiseChrome();
-        } catch {
-          // The user may close the page while its call is still running.
-        }
+        // Stay in the background: only a sign-in wait (watchAuthGate) has
+        // something for the user to do, and it brings this tab forward.
       }
       if (!closes) return;
       try {
