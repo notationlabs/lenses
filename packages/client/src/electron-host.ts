@@ -195,6 +195,8 @@ export function createElectronTransport(host: ElectronHost): CdpTransport {
     targetId === undefined ? undefined : relay?.model.tabIdForTarget(targetId);
   return {
     name: "electron",
+    // The app's window says what a page needs; the page stays as the site made it.
+    authBanner: false,
     pollForConnection: true,
     retryConnect: true,
     looksReady: () => true,

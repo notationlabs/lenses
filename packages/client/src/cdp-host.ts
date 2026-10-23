@@ -127,6 +127,11 @@ export interface CdpTransport {
   /** Attach an attached tab afresh, when its debugger session stopped answering. */
   refreshAttach?(key: string): Promise<TabLink | undefined>;
   onTabLinkChange?(listener: (key: string, link: TabLink) => void): () => void;
+  /**
+   * Whether a sign-in wait paints the Lenses banner into the page. On unless
+   * false: the Lenses app shows what the page needs in its own window.
+   */
+  readonly authBanner?: boolean;
   /** Open a background tab, for browsers whose CDP cannot create targets (Electron). */
   newPage?(browser: Browser): Promise<Page>;
   /**
@@ -1020,9 +1025,11 @@ export function createCdpBackend(
           },
         };
         mounted = current;
-        const prompt = await showAuthBanner(page, new URL(origin).hostname, `__lens_auth_t${key}`);
-        if (mounted === current) current.prompt = prompt;
-        else prompt.dispose();
+        if (transport.authBanner !== false) {
+          const prompt = await showAuthBanner(page, new URL(origin).hostname, `__lens_auth_t${key}`);
+          if (mounted === current) current.prompt = prompt;
+          else prompt.dispose();
+        }
         // Navigation may have continued while a previous attempt was running.
         // Retry that new location rather than waiting for a second navigation.
         const movedWhileRetrying = urlOrigin(page.url()) === origin && (
