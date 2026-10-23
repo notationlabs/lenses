@@ -6,6 +6,9 @@
  *   through the same relay the broker uses (one relay per connection).
  * - /control: the user's side, and what the tests check: open user tabs, run
  *   script in any page as the user would, list every page the app holds.
+ *
+ * With HARNESS_BROKER_PORT set, the real broker also runs here on that port,
+ * driving the lens tabs as it does in the app.
  */
 import { app, BrowserWindow, webContents, type WebContents } from "electron";
 import { mkdtempSync } from "node:fs";
@@ -13,7 +16,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, type WebSocket } from "ws";
-import { createElectronRelay } from "@djgrant/lenses-client/electron-host";
+import { createElectronRelay, setElectronHost } from "@djgrant/lenses-client/electron-host";
 import { createBrowser, type Browser } from "../src/browser.js";
 import { createLensTabs } from "../src/lens-tabs.js";
 
@@ -27,9 +30,14 @@ app.on("window-all-closed", () => {});
 process.on("uncaughtException", (error) => console.error("uncaught:", error));
 
 let browser: Browser;
+/** Pages the broker brought forward for a sign-in, in order. */
+const reveals: number[] = [];
 const lensTabs = createLensTabs({
   open: (url) => browser.openLensTab(url),
-  reveal: (contents) => browser.reveal(contents),
+  reveal: (contents) => {
+    reveals.push(contents.id);
+    browser.reveal(contents);
+  },
 });
 
 export interface PageInfo {
@@ -41,6 +49,8 @@ export interface PageInfo {
   /** Listed for the broker. */
   exposed: boolean;
   visible: boolean;
+  /** The tab on show in the window. */
+  active: boolean;
 }
 
 function pages(): PageInfo[] {
@@ -59,6 +69,7 @@ function pages(): PageInfo[] {
         ...(kind ? { kind } : {}),
         exposed: exposed.has(contents.id),
         visible: owner?.isVisible() ?? false,
+        active: browser.isActive(contents),
       } satisfies PageInfo;
     });
 }
@@ -75,6 +86,7 @@ const control: Record<string, (...args: any[]) => unknown> = {
   /** Script in a page with a user gesture, as the user clicking would. */
   evaluate: (id: number, script: string) => contentsOf(id).executeJavaScript(script, true),
   showWindow: () => browser.show(),
+  reveals: () => reveals,
   close(id: number) {
     contentsOf(id).close();
   },
@@ -110,8 +122,13 @@ function serveCdp(socket: WebSocket): void {
   socket.on("close", () => relay.dispose());
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   browser = createBrowser({ staticDir, changed: () => {}, lensOpened: lensTabs.add });
+  const brokerPort = Number(process.env.HARNESS_BROKER_PORT);
+  if (brokerPort) {
+    setElectronHost({ port: brokerPort, tabs: lensTabs.tabs });
+    await import("@djgrant/lenses-client/broker-daemon");
+  }
   const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
   server.on("connection", (socket, request) => {
     if (request.url === "/cdp") serveCdp(socket);

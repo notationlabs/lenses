@@ -538,6 +538,8 @@ export function createBrowser(options: BrowserOptions) {
     tabs: () => tabs.map(state),
     /** Whether a page is a lens or user tab in the window; undefined for a popup. */
     kindOf: (contents: WebContents): TabKind | undefined => byContents.get(contents.id)?.kind,
+    /** Whether a page is the tab on show in the window. */
+    isActive: (contents: WebContents): boolean => byContents.get(contents.id)?.id === activeId,
     activeId: () => activeId,
     resend: send,
   };
