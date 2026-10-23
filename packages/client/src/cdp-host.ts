@@ -1007,6 +1007,17 @@ export function createCdpBackend(
         const prompt = await showAuthBanner(page, new URL(origin).hostname, `__lens_auth_t${key}`);
         if (mounted === current) current.prompt = prompt;
         else prompt.dispose();
+        // The wait has begun on a tab that may sit behind other tabs and
+        // windows (a gate kept by an earlier call). Show it once per wait, not
+        // on a resumed retry; a browser that refuses must not fail the call.
+        if (!resume && !disposed) {
+          try {
+            await page.bringToFront();
+            await raiseChrome();
+          } catch (error) {
+            log(`could not bring sign-in tab t${key} to the front: ${errorMessage(error)}`);
+          }
+        }
         // Navigation may have continued while a previous attempt was running.
         // Retry that new location rather than waiting for a second navigation.
         const movedWhileRetrying = urlOrigin(page.url()) === origin && (
