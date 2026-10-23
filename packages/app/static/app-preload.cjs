@@ -5,5 +5,6 @@ contextBridge.exposeInMainWorld("lenses", {
   onSelect: (listener) => ipcRenderer.on("select", (_event, page) => listener(page)),
   ready: () => ipcRenderer.send("app:ready"),
   viewport: (rect) => ipcRenderer.send("app:viewport", rect),
-  command: (command, page) => ipcRenderer.send("app:command", command, page),
+  onFocusAddress: (listener) => ipcRenderer.on("focus-address", () => listener()),
+  command: (command, page, address) => ipcRenderer.send("app:command", command, page, address),
 });

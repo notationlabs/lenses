@@ -6,7 +6,7 @@
 import { app, BrowserWindow, ipcMain, Menu, type Rectangle } from "electron";
 import { join } from "node:path";
 import { needLabel, type Inbox } from "./inbox.js";
-import type { Pages } from "./pages.js";
+import { addressToUrl, type Pages } from "./pages.js";
 
 export interface AppWindowOptions {
   staticDir: string;
@@ -79,7 +79,7 @@ export function createAppWindow(options: AppWindowOptions) {
     viewport = rect;
     pages.resize(rect);
   });
-  ipcMain.on("app:command", (event, command: string, page?: number) => {
+  ipcMain.on("app:command", (event, command: string, page?: number, address?: string) => {
     if (!fromWindow(event)) return;
     switch (command) {
       case "select":
@@ -100,6 +100,13 @@ export function createAppWindow(options: AppWindowOptions) {
         return contents.navigationHistory.goForward();
       case "reload":
         return contents.reload();
+      case "stop":
+        return contents.stop();
+      case "navigate": {
+        const url = typeof address === "string" ? addressToUrl(address) : undefined;
+        if (url) void contents.loadURL(url).catch(() => {});
+        return;
+      }
     }
   });
 
@@ -141,6 +148,8 @@ export function createAppWindow(options: AppWindowOptions) {
         {
           label: "View",
           submenu: [
+            { label: "Open Location", accelerator: "CmdOrCtrl+L", click: () => window.webContents.send("focus-address") },
+            { type: "separator" },
             { label: "Reload Page", accelerator: "CmdOrCtrl+R", click: withShown((c) => c.reload()) },
             { label: "Back", accelerator: "CmdOrCtrl+[", click: withShown((c) => c.navigationHistory.goBack()) },
             { label: "Forward", accelerator: "CmdOrCtrl+]", click: withShown((c) => c.navigationHistory.goForward()) },

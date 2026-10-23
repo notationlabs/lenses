@@ -25,6 +25,7 @@ export interface PageState {
   title: string;
   loading: boolean;
   canGoBack: boolean;
+  canGoForward: boolean;
   /** A popup, in a window of its own. */
   popup: boolean;
   /** For a popup, the page that opened it. */
@@ -77,6 +78,23 @@ const isWebUrl = (raw: string) => {
     return false;
   }
 };
+
+/**
+ * What the user typed in the address bar, as a URL: a web URL as it is, a
+ * bare host given https, anything else a search.
+ */
+export function addressToUrl(input: string): string | undefined {
+  const text = input.trim();
+  if (!text) return undefined;
+  if (isWebUrl(text)) return text;
+  // example.com, example.com/path, localhost:3000
+  if (/^(localhost|[\w-]+(\.[\w-]+)+)(:\d+)?(\/\S*)?$/i.test(text)) {
+    return `${/^(localhost|127\.)/.test(text) ? "http" : "https"}://${text}`;
+  }
+  // Not some other scheme (javascript:, file:).
+  if (/^[a-z][a-z0-9+.-]*:\S/i.test(text)) return undefined;
+  return `https://www.google.com/search?q=${encodeURIComponent(text)}`;
+}
 
 /** A page's site: its host, without www. */
 export function siteOf(url: string): string {
@@ -288,6 +306,7 @@ export function createPages(options: PagesOptions) {
       title: contents.getTitle(),
       loading: contents.isLoading(),
       canGoBack: contents.navigationHistory.canGoBack(),
+      canGoForward: contents.navigationHistory.canGoForward(),
       popup,
       ...(popup ? { opener: popups.get(id)?.opener } : {}),
       shown: shown?.id === id || (popup && !!popups.get(id)?.window.isVisible()),
