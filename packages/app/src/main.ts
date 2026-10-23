@@ -4,40 +4,35 @@
  * brought forward when a sign-in needs the user. CLI, MCP, and library
  * clients reach the broker on its usual port.
  */
-import { app, BrowserWindow, ipcMain, Menu, nativeImage, Tray, type WebContents } from "electron";
-import { existsSync, readFileSync } from "node:fs";
+import { app, ipcMain, Menu, nativeImage, Tray } from "electron";
 import { createConnection } from "node:net";
-import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as sleep } from "node:timers/promises";
 import { createLensClient } from "@djgrant/lenses-client";
 import { setElectronHost } from "@djgrant/lenses-client/electron-host";
 import { createBrowser, type Browser } from "./browser.js";
+import { createLensTabs } from "./lens-tabs.js";
 
 const BROKER_PORT = Number(process.env.LENS_BROKER_PORT ?? 4319);
 const staticDir = fileURLToPath(new URL("../static/", import.meta.url));
 
 app.setName("Lenses");
-// Before the debugging switch: a second launch must not overwrite the first
-// one's DevToolsActivePort on its way out.
 const primary = app.requestSingleInstanceLock();
 if (!primary) app.exit(0);
-// The app's own debugging endpoint, which the broker connects to. Port 0
-// picks a free port and records it in DevToolsActivePort.
-else app.commandLine.appendSwitch("remote-debugging-port", "0");
-// The debugging switch alone sets navigator.webdriver on every page, the
-// user's sign-in tabs included, and Google refuses to sign in a browser that
-// says it is automated. This keeps the port and drops the flag.
-app.commandLine.appendSwitch("disable-blink-features", "AutomationControlled");
+// No remote debugging port: the broker drives lens tabs through their own
+// debuggers (see lens-tabs.ts). A port would let any local process drive the
+// user's signed-in tabs, and it sets navigator.webdriver on every page, which
+// Google's sign-in refuses.
 // Keep Electron's own User-Agent, as T3 Code does. Google's sign-in rejects a
 // User-Agent rewritten to pass for plain Chrome ("This browser or app may not
 // be secure"), likely because the client hints still name Chromium alone, and
 // T3 Code found rewriting it breaks Cloudflare Turnstile.
 
-/** Tabs the broker opened, by CDP target id. */
-const lensTabs = new Map<string, WebContents>();
 let browser: Browser | undefined;
-let hostPage: BrowserWindow | undefined;
+const lensTabs = createLensTabs({
+  open: (url) => browser!.openLensTab(url),
+  reveal: (contents) => browser?.reveal(contents),
+});
 let tray: Tray | undefined;
 let brokerStatus: unknown;
 let readStatus: (() => unknown) | undefined;
@@ -51,7 +46,7 @@ app.on("window-all-closed", () => {});
 app.whenReady().then(async () => {
   if (!primary) return;
   app.dock?.hide();
-  browser = createBrowser({ staticDir, changed: () => refresh() });
+  browser = createBrowser({ staticDir, changed: () => refresh(), lensOpened: lensTabs.add });
   createTray();
   try {
     await startBroker();
@@ -65,14 +60,9 @@ app.whenReady().then(async () => {
 
 async function startBroker(): Promise<void> {
   if (await portInUse(BROKER_PORT)) await retireBroker();
-  const browserURL = `http://127.0.0.1:${await debuggingPort()}`;
-  hostPage = await createHostPage();
   setElectronHost({
-    browserURL,
     port: BROKER_PORT,
-    hostTargetId: await targetId(hostPage.webContents),
-    openWindow,
-    reveal,
+    tabs: lensTabs.tabs,
     status: (frame) => {
       brokerStatus = frame;
       refresh();
@@ -108,80 +98,6 @@ function portInUse(port: number): Promise<boolean> {
     });
     socket.once("error", () => resolve(false));
   });
-}
-
-async function debuggingPort(): Promise<number> {
-  const file = join(app.getPath("userData"), "DevToolsActivePort");
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    if (existsSync(file)) {
-      const port = Number(readFileSync(file, "utf8").split("\n")[0]);
-      if (Number.isSafeInteger(port) && port > 0) return port;
-    }
-    await sleep(50);
-  }
-  throw new Error("the app's remote debugging endpoint did not start");
-}
-
-/**
- * A hidden page that opens every lens tab, so the broker can tell lens tabs
- * (and their popups) from tabs the user opened: CDP names each page's
- * opener. Each window it opens becomes a background tab in the browser.
- */
-async function createHostPage(): Promise<BrowserWindow> {
-  const window = new BrowserWindow({ show: false });
-  window.webContents.setWindowOpenHandler(() => ({
-    action: "allow",
-    createWindow: (options) => {
-      const contents = browser!.adoptLensTab(options);
-      pendingTab?.(contents);
-      pendingTab = undefined;
-      return contents;
-    },
-  }));
-  await window.loadURL("data:text/html,<title>Lenses host</title>");
-  return window;
-}
-
-let opening = Promise.resolve();
-let pendingTab: ((contents: WebContents) => void) | undefined;
-
-/** One at a time: each window.open is matched to the next tab created. */
-function openWindow(): Promise<string> {
-  const next = opening.then(openLensTab);
-  opening = next.then(
-    () => {},
-    () => {}
-  );
-  return next;
-}
-
-async function openLensTab(): Promise<string> {
-  const host = hostPage!.webContents;
-  const created = new Promise<WebContents>((resolve) => {
-    pendingTab = resolve;
-  });
-  await host.executeJavaScript(`window.open("about:blank", "_blank", "noopener")`, true);
-  const contents = await created;
-  const id = await targetId(contents);
-  lensTabs.set(id, contents);
-  contents.once("destroyed", () => lensTabs.delete(id));
-  return id;
-}
-
-/** The CDP target id the broker's Puppeteer connection knows this page by. */
-async function targetId(contents: WebContents): Promise<string> {
-  contents.debugger.attach("1.3");
-  try {
-    const { targetInfo } = await contents.debugger.sendCommand("Target.getTargetInfo");
-    return targetInfo.targetId as string;
-  } finally {
-    contents.debugger.detach();
-  }
-}
-
-function reveal(id: string): void {
-  const contents = lensTabs.get(id);
-  if (contents && !contents.isDestroyed()) browser?.reveal(contents);
 }
 
 function createTray(): void {

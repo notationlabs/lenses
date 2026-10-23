@@ -19,8 +19,8 @@ broker already on its port to shut down.
 The browser follows T3 Code's in-app browser: a tab strip, a chrome row (back,
 forward, reload, address bar), real popup windows for OAuth, a permission
 allowlist, and a context menu. Each tab is a `WebContentsView` rather than a
-`<webview>`, because the broker tells its tabs apart by CDP opener and a
-guest has none. Inactive tabs are parked off-screen at full size, not
+`<webview>`: the main process owns every tab, and so decides which the broker
+may attach to. Inactive tabs are parked off-screen at full size, not
 hidden, so lens tabs keep painting and can be screenshotted. Closing the
 window hides it: lens tabs live there. ⇧⌘S shows broker status.
 
@@ -28,10 +28,15 @@ Sessions live in the app's profile (`~/Library/Application Support/Lenses`),
 separate from Chrome.
 
 Not yet: password and passkey filling, packaging and signing, downloads, tab
-reordering. Electron's remote debugging port is open on localhost while
-the app runs, as Chrome's is when remote debugging is enabled.
+reordering.
 
-Sign-in pages see an ordinary browser: the app keeps Electron's own
-User-Agent and turns off the `navigator.webdriver` flag the debugging port
-would otherwise set on every page. Either one alone makes Google refuse to sign
-in ("This browser or app may not be secure").
+The app opens no remote debugging port. The broker drives each lens tab
+through its own debugger (`webContents.debugger`), behind an in-process relay
+that shows Puppeteer one browser: the Playwright Extension relay's tab model,
+with the app in the extension's place. Only lens tabs and their popups are
+handed to it, so nothing, the broker included, can attach to a tab you opened.
+
+Sign-in pages see an ordinary browser: Electron's own User-Agent, and no
+`navigator.webdriver` flag (a debugging port sets it on every page). Either a
+User-Agent passing for plain Chrome or the flag makes Google refuse to sign in
+("This browser or app may not be secure").
