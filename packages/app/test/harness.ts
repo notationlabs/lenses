@@ -17,7 +17,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, type WebSocket } from "ws";
 import { createElectronRelay, setElectronHost } from "@djgrant/lenses-client/electron-host";
-import { createBrowser, type Browser } from "../src/browser.js";
+import { createBrowser, prepareChromium, type Browser } from "../src/browser.js";
 import { createLensTabs } from "../src/lens-tabs.js";
 
 // Compiled to dist-test/test/, so static/ is two levels up.
@@ -26,6 +26,7 @@ const staticDir = fileURLToPath(new URL("../../static/", import.meta.url));
 // A fresh profile: no cookies from earlier runs, and no clash with a running app.
 app.setPath("userData", mkdtempSync(join(tmpdir(), "lenses-app-test-")));
 app.on("window-all-closed", () => {});
+prepareChromium();
 // To stderr, which the tests show, rather than a dialog.
 process.on("uncaughtException", (error) => console.error("uncaught:", error));
 
@@ -86,6 +87,8 @@ const control: Record<string, (...args: any[]) => unknown> = {
   /** Script in a page with a user gesture, as the user clicking would. */
   evaluate: (id: number, script: string) => contentsOf(id).executeJavaScript(script, true),
   showWindow: () => browser.show(),
+  hideWindow: () => browser.window.hide(),
+
   reveals: () => reveals,
   close(id: number) {
     contentsOf(id).close();

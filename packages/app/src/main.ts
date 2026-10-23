@@ -10,13 +10,14 @@ import { fileURLToPath } from "node:url";
 import { setTimeout as sleep } from "node:timers/promises";
 import { createLensClient } from "@djgrant/lenses-client";
 import { setElectronHost } from "@djgrant/lenses-client/electron-host";
-import { createBrowser, type Browser } from "./browser.js";
+import { createBrowser, prepareChromium, type Browser } from "./browser.js";
 import { createLensTabs } from "./lens-tabs.js";
 
 const BROKER_PORT = Number(process.env.LENS_BROKER_PORT ?? 4319);
 const staticDir = fileURLToPath(new URL("../static/", import.meta.url));
 
 app.setName("Lenses");
+prepareChromium();
 const primary = app.requestSingleInstanceLock();
 if (!primary) app.exit(0);
 // No remote debugging port: the broker drives lens tabs through their own
