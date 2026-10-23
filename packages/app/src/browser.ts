@@ -76,6 +76,8 @@ const TAB_PREFERENCES = {
   sandbox: true,
   contextIsolation: true,
   nodeIntegration: false,
+  // No DevTools: opening them on a lens tab would take its debugger from the broker.
+  devTools: false,
   // Lens tabs run behind the tab on show, and while the window is hidden.
   backgroundThrottling: false,
   disableHtmlFullscreenWindowResize: true,
@@ -87,7 +89,7 @@ const POPUP_OPTIONS: BrowserWindowConstructorOptions = {
   show: false,
   width: 520,
   height: 680,
-  webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
+  webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, devTools: false },
 };
 
 const isWebUrl = (raw: string) => {
@@ -403,9 +405,7 @@ export function createBrowser(options: BrowserOptions) {
       template.push(
         { label: "Back", enabled: history.canGoBack(), click: () => history.goBack() },
         { label: "Forward", enabled: history.canGoForward(), click: () => history.goForward() },
-        { label: "Reload", click: () => contents.reload() },
-        { type: "separator" },
-        { label: "Inspect Element", click: () => contents.inspectElement(params.x, params.y) }
+        { label: "Reload", click: () => contents.reload() }
       );
       Menu.buildFromTemplate(template).popup({ window });
     });
@@ -439,13 +439,6 @@ export function createBrowser(options: BrowserOptions) {
               accelerator: "CmdOrCtrl+Shift+R",
               click: withActive((c) => c.reloadIgnoringCache()),
             },
-            { type: "separator" },
-            {
-              label: "Developer Tools",
-              accelerator: "Alt+CmdOrCtrl+I",
-              click: withActive((c) => c.toggleDevTools()),
-            },
-            { label: "Lenses Developer Tools", click: () => window.webContents.toggleDevTools() },
             { type: "separator" },
             { label: "Toggle Status Panel", accelerator: "CmdOrCtrl+Shift+S", click: () => togglePanel() },
             { type: "separator" },
@@ -530,8 +523,6 @@ export function createBrowser(options: BrowserOptions) {
         return contents?.reload();
       case "stop":
         return contents?.stop();
-      case "devtools":
-        return contents?.toggleDevTools();
     }
   });
 
