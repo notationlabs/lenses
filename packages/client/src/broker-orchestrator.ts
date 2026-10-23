@@ -57,7 +57,7 @@ export interface BrokerOrchestrator {
   handle(
     message: Exclude<LensBridgeRequest, { type: "control" }>,
     emit: (frame: BrokerFrame) => void,
-    options?: { authRetry?: boolean }
+    options?: { authRetry?: boolean; retry?: AuthRetryState }
   ): Promise<void>;
   /** Browser work that outlived its caller deadline; new calls must not overlap it. */
   busy(): { id: string; type: "call" | "observe"; lens?: string; startedAt: number } | undefined;
@@ -67,6 +67,15 @@ export interface BrokerOrchestrator {
     onExit: (reason: "moved" | "closed" | "cancelled") => void,
     resume?: boolean
   ): Promise<{ update(expiresAt: number, count: number): void; dispose(): void } | undefined>;
+}
+
+/**
+ * One call's sign-in wait, across its retries: where the sign-in tab was when
+ * a retry last did browser work, so the call runs once per place the tab
+ * reaches, not once per poll.
+ */
+export interface AuthRetryState {
+  ranAt?: string;
 }
 
 export function createBrokerOrchestrator(
@@ -167,7 +176,8 @@ export function createBrokerOrchestrator(
     progress: (text: string) => void,
     mutation?: MutationTracker,
     authRetry = false,
-    onPerformStarted: () => void = () => {}
+    onPerformStarted: () => void = () => {},
+    retry?: AuthRetryState
   ): Promise<LensResult> {
     // The client timeout covers the complete call, including recorder setup
     // and final capture; screenshot RPCs must use its remaining budget rather
@@ -216,12 +226,28 @@ export function createBrokerOrchestrator(
     const requiredCapabilities = capabilitiesForSpec(message.spec);
     const needsPageSession =
       performs || message.spec.resolve.some((resolver) => resolver.kind !== "http");
-    if (needsPageSession) {
+    const needsUser = (place: { url: string; title: string }) =>
+      pageNeedsUser(message.spec, place, message.params).catch(() => false);
+    /**
+     * The sign-in this call must not disturb, for an origin. The gate is
+     * derived from the browser, not remembered here: a kept tab still sitting
+     * where a needs_* outcome left it, or any tab on a page this lens's needs_*
+     * rule matches (the user signing in), blocks its whole site, and keeps
+     * doing so across broker restarts. A call never navigates, fetches from,
+     * or evaluates in that tab; it reports the sign-in instead, and the
+     * broker's wait watches the tab passively. An auth retry is blocked only
+     * while the tab is still on the sign-in pages.
+     */
+    const signInGate = async (backend: BrowserBackend, origin: string) => {
+      const gate = await findGateQuietly(backend, origin, needsUser);
+      if (!gate || !authRetry) return gate;
+      return (await needsUser({ url: gate.url, title: "" })) ? gate : undefined;
+    };
+    /** Set when a tier found a sign-in under way: the call reports it rather than any tier error. */
+    let blockedBy: { url: string } | undefined;
+    if (needsPageSession && !authRetry) {
       sessionBackend = await selectBackend(callDeadline, requiredCapabilities);
-      // The gate is derived from the browser, not remembered here: a kept tab
-      // still sitting where a needs_* outcome left it blocks its whole site,
-      // and it keeps doing so across broker restarts.
-      const gate = authRetry ? undefined : await findGateQuietly(sessionBackend, gateKey(target));
+      const gate = await signInGate(sessionBackend, gateKey(target));
       if (gate) {
         progress(
           `a sign-in tab is already open at ${gate.url}; complete it there to unblock this site`
@@ -235,6 +261,16 @@ export function createBrokerOrchestrator(
     // can disrupt the form the user is filling out.
     if (authRetry) {
       sessionBackend ??= await selectBackend(callDeadline, requiredCapabilities);
+      // While the sign-in tab is on the login pages, a retry does nothing at
+      // all: the wait polls, and the tab's own navigation (watched passively)
+      // tells it when the user has moved on. Then the call runs once per
+      // place the tab reaches.
+      const gate = await findGateQuietly(sessionBackend, gateKey(target), needsUser);
+      if (gate) {
+        if (await needsUser({ url: gate.url, title: "" })) return gateOutcome(message.spec, gate.url);
+        if (retry?.ranAt === gate.url) return gateOutcome(message.spec, gate.url);
+        if (retry) retry.ranAt = gate.url;
+      }
       try {
         if (!await sessionBackend.hasOpenTarget?.(target, choice)) return gateOutcome(message.spec, target);
       } catch (error) {
@@ -250,6 +286,12 @@ export function createBrokerOrchestrator(
     const ensureSession = async (): Promise<BrowserSession> => {
       if (session) return session;
       sessionBackend ??= await selectBackend(callDeadline);
+      // A sign-in may have begun since the call started (between tiers).
+      const gate = await signInGate(sessionBackend, gateKey(target));
+      if (gate) {
+        blockedBy = gate;
+        throw new Error(`a sign-in is under way at ${gate.url}; not touching its tab`);
+      }
       progress(`binding browser page for ${target} via ${sessionBackend.name}`);
       session = await sessionBackend.bind({
         target,
@@ -304,6 +346,13 @@ export function createBrokerOrchestrator(
         }
         throw error;
       }
+      // A credentialed request runs in (or shares the cookies of) a tab on the
+      // site: never while the user is signing in there.
+      const gate = await signInGate(requestBackend, gateKey(request.url));
+      if (gate) {
+        blockedBy = gate;
+        throw new Error(`a sign-in is under way at ${gate.url}; not fetching with its cookies`);
+      }
       progress(
         request.credentials === "same-origin-page"
           ? `executing credentialed ${request.method} in same-origin page context via ${requestBackend.name}`
@@ -339,6 +388,11 @@ export function createBrokerOrchestrator(
     let result: LensResult | undefined;
     try {
       result = await executeLens(message.spec, message.params, io);
+      if (blockedBy) {
+        progress(`a sign-in is under way at ${blockedBy.url}; complete it there to unblock this site`);
+        result = gateOutcome(message.spec, blockedBy.url);
+        return result;
+      }
       // Name the tab only when it outlives this call: an ordinary created tab
       // is closed on the way out, and its id would point nowhere.
       const disposition = authRetry ? "close-if-created" : dispositionFor(result);
@@ -353,6 +407,11 @@ export function createBrokerOrchestrator(
       result = await deliver(result);
       return result;
     } catch (error) {
+      if (blockedBy) {
+        progress(`a sign-in is under way at ${blockedBy.url}; complete it there to unblock this site`);
+        result = gateOutcome(message.spec, blockedBy.url);
+        return result;
+      }
       if (authRetry && error instanceof AuthPageUnavailable) {
         return gateOutcome(message.spec, target);
       }
@@ -486,7 +545,7 @@ export function createBrokerOrchestrator(
             : undefined;
         const work =
           message.type === "call"
-            ? call(message, progress, mutation, options.authRetry, () => { performStarted = true; })
+            ? call(message, progress, mutation, options.authRetry, () => { performStarted = true; }, options.retry)
             : observe(message, progress);
         const result =
           message.type === "call"
@@ -887,10 +946,11 @@ function gateKey(target: string): string {
 
 async function findGateQuietly(
   backend: BrowserBackend,
-  origin: string
+  origin: string,
+  needsUser?: (place: { url: string; title: string }) => Promise<boolean>
 ): Promise<{ url: string; target: string } | undefined> {
   try {
-    return await backend.findAuthGate(origin);
+    return await backend.findAuthGate(origin, needsUser);
   } catch {
     // An unanswerable probe must not veto the call; bind and find out.
     return undefined;

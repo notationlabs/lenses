@@ -7,7 +7,7 @@
 import { WebSocket, WebSocketServer } from "ws";
 import { expandUrl, urlOrigin, type LensBridgeRequest } from "@djgrant/lenses-core";
 import { createBrokerAuthLeases } from "./auth-leases.js";
-import { createBrokerOrchestrator } from "./broker-orchestrator.js";
+import { createBrokerOrchestrator, type AuthRetryState } from "./broker-orchestrator.js";
 import { createCdpBackend } from "./cdp-host.js";
 import { createPlaywrightExtensionBackend } from "./playwright-extension-backend.js";
 import { playwrightExtensionInstalled } from "./chrome-paths.js";
@@ -373,6 +373,8 @@ function onClientMessage(client: WebSocket, raw: string): void {
     const authLeaseMs = message.type === "call" ? message.authLeaseMs ?? 0 : 0;
     let attempt = 0;
     let resumeGate = false;
+    // Where the sign-in tab was when a retry last did browser work.
+    const retryState: AuthRetryState = {};
     let authOutcome: Extract<import("./broker-orchestrator.js").BrokerFrame, { type: "result" }> | undefined;
     for (;;) {
       queuedCalls++;
@@ -438,7 +440,7 @@ function onClientMessage(client: WebSocket, raw: string): void {
                 intercepted = frame;
               } else send(client, frame);
             },
-            { authRetry: attempt > 0 }
+            { authRetry: attempt > 0, retry: retryState }
           );
           return intercepted;
         } finally {

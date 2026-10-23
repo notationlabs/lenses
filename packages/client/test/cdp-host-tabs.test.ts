@@ -341,6 +341,37 @@ describe("tabs outside the group", () => {
   });
 });
 
+describe("a sign-in the user started", () => {
+  it("keeps the user's login tab as the gate and watches it without touching it", async () => {
+    const { host, browser, pages } = setup();
+    await host.acquire();
+    // The user is part-way through signing in; no call kept this tab.
+    const tab = new SpaPage(() => browser);
+    tab.currentUrl = `${origin}/login/step-two`;
+    pages.push(tab);
+    const evaluate = vi.spyOn(tab, "evaluate");
+    const needsUser = async (place: { url: string }) => place.url.includes("/login");
+
+    expect(await host.findAuthGate(origin)).toBeUndefined();
+    expect(await host.findAuthGate(origin, needsUser)).toEqual({
+      url: `${origin}/login/step-two`, target: `${origin}/login/step-two`,
+    });
+    // The wait signs in there: no second login tab, no navigation.
+    expect(await host.openAuthGate?.(origin, `${origin}/account-summary`)).toBe(true);
+    const leases = createAuthLeases((o, _target, onExit, resume) => host.watchAuthGate!(o, onExit, resume));
+    leases.retain(origin);
+    const waiting = leases.wait(origin, `${origin}/account-summary`, Date.now() + 10_000);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(browser.newPage).not.toHaveBeenCalled();
+    expect(tab.loads).toEqual([]);
+    expect(tab.reloads).toBe(0);
+    expect(evaluate).not.toHaveBeenCalled();
+    expect(await host.findAuthGate(origin)).toMatchObject({ url: `${origin}/login/step-two` });
+    expect(await waiting).toBe("poll");
+    leases.close(origin);
+  });
+});
+
 describe("same-site reuse", () => {
   it("treats a bank's logout host as the same site, and other sites as not", () => {
     expect(sameSite("https://www.rbs.co.uk/business/logout.html", origin)).toBe(false); // bank.example fixture
