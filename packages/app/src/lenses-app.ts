@@ -51,7 +51,6 @@ export function createLensesApp(options: LensesAppOptions) {
     staticDir: options.staticDir,
     pages,
     inbox,
-    done: (page) => inbox.remove(page),
     status: options.status,
   });
   const notice = createNotice({

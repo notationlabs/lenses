@@ -19,7 +19,7 @@ built around two things:
 - **Sites**: the lens pages open, grouped by domain.
 - **The inbox**: pages that need you, such as a sign-in a lens call stopped
   at (a `needs_*` outcome). A page leaves the inbox when a later call on it
-  gets through, when it closes, or when you mark it done.
+  gets through, or when it closes.
 
 When a page joins the inbox, a notice drops down under the menu bar icon,
 "Action required", with **Open** and **Ignore**. The app never comes forward

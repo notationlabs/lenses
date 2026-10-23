@@ -12,8 +12,6 @@ export interface AppWindowOptions {
   staticDir: string;
   pages: Pages;
   inbox: Inbox;
-  /** The user is done with an inbox item. */
-  done(page: number): void;
   /** Broker status, for the window's footer. */
   status(): unknown;
 }
@@ -87,9 +85,6 @@ export function createAppWindow(options: AppWindowOptions) {
         return;
       case "clear":
         return pages.park();
-      case "done":
-        if (page !== undefined) options.done(page);
-        return;
     }
     if (command === "navigate" && page === undefined) {
       // Typed with no page on show: a new page, as a browser's new tab.
