@@ -83,4 +83,17 @@ describe.skipIf(!canRun)("the address bar and back and forward", () => {
     expect(await pageUrl()).toBe(`${origin}/second`);
     if (process.env.HARNESS_CAPTURE) await harness.control("capture", "window", process.env.HARNESS_CAPTURE);
   });
+
+  it("is there with no page on show, and opens a new page where the user types", async () => {
+    await harness.control("closeWindow");
+    await harness.control("open");
+    await expect.poll(() => harness.control("window")).toEqual({ visible: true, shown: null });
+    expect(await harness.control("windowEvaluate", `getComputedStyle(document.querySelector("#address")).display`)).not.toBe("none");
+    await expect.poll(header).toEqual({ address: "", back: false, forward: false });
+
+    await harness.control("windowEvaluate", type(`${origin}/typed`));
+    await expect.poll(async () => (await harness.pages()).find((entry) => entry.url === `${origin}/typed`)).toMatchObject({ shown: true });
+    await expect.poll(header).toMatchObject({ address: `${origin}/typed` });
+    expect((await harness.pages()).find((entry) => entry.id === id)).toMatchObject({ url: `${origin}/second`, shown: false });
+  });
 });
