@@ -14,6 +14,7 @@
     "@pokit/core": "^0.6.0",
     "@pokit/terminal": "^0.6.0",
     "pok-plugins": "github:djgrant/pok-plugins",
-    "pokit": "^0.3.2"
+    "pokit": "^0.3.2",
+    "zod": "^4.4.3"
   }
 }
