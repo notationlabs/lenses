@@ -40,6 +40,7 @@ function oauthServer(): Server {
         case "/":
           return html(`<title>Site</title>
             <button id="signin">Sign in with Provider</button>
+            <button id="blank">Sign in with Provider (blank first)</button>
             <a id="docs" href="/docs" target="_blank">Docs</a>
             <script>
               const provider = location.href.replace("127.0.0.1", "localhost");
@@ -47,6 +48,12 @@ function oauthServer(): Server {
               document.querySelector("#signin").onclick = () => window.open(
                 new URL("/authorize?state=s1&redirect_uri=" + encodeURIComponent(callback), provider),
                 "oauth", "popup,width=480,height=640");
+              document.querySelector("#blank").onclick = () => {
+                const popup = window.open("", "oauth", "popup,width=480,height=640");
+                setTimeout(() => {
+                  popup.location.href = new URL("/authorize?state=s1&redirect_uri=" + encodeURIComponent(callback), provider);
+                }, 100);
+              };
               addEventListener("message", (event) => {
                 if (event.origin === location.origin && event.data?.type === "oauth")
                   location.href = "/signed-in?code=" + event.data.code;
@@ -186,5 +193,19 @@ describe.skipIf(!canRun)("OAuth popups", () => {
     const tab = await (await docs).page();
     expect(await tab!.title()).toBe("Docs");
     expect(await pageAt(site("/docs"))).toMatchObject({ where: "tab", kind: "lens", exposed: true });
+  });
+
+  it("a popup opened blank reaches the broker, and its URL follows it to the provider", async () => {
+    const page = await broker.newPage({ background: true });
+    await page.goto(site("/"));
+    const popup = new Promise<Page | null>((resolve) => page.once("popup", resolve));
+    await click(page, "#blank");
+    const opened = (await popup)!;
+    await opened.waitForSelector("#allow");
+    await expect.poll(() => opened.target().url()).toMatch(provider("/login?"));
+    const closed = new Promise((resolve) => opened.once("close", resolve));
+    await click(opened, "#allow");
+    await closed;
+    await page.waitForFunction(() => location.pathname === "/signed-in");
   });
 });

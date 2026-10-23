@@ -18,12 +18,15 @@ function signInServer(): Server {
     const html = (body: string) => res.writeHead(200, { "content-type": "text/html" }).end(body);
     const site = `http://127.0.0.1:${url.port}`;
     const provider = `http://localhost:${url.port}`;
-    const authorize = (back: string) => `${provider}/authorize?state=s1&redirect_uri=${encodeURIComponent(site + back)}`;
+    const authorize = (back: string, page = "signin") =>
+      `${provider}/authorize?state=s1&page=${page}&redirect_uri=${encodeURIComponent(site + back)}`;
     if (url.hostname === "localhost") {
       switch (url.pathname) {
         case "/authorize":
-          return res.writeHead(302, { location: `/signin${url.search}` }).end();
+          // page=login: a provider whose page the lens's needs_auth (/login) matches too.
+          return res.writeHead(302, { location: `/${url.searchParams.get("page") === "login" ? "oauth/login" : "signin"}${url.search}` }).end();
         case "/signin":
+        case "/oauth/login":
           return html(`<title>Provider</title>
             <form action="/approve">
               <input type="hidden" name="redirect_uri" value="${url.searchParams.get("redirect_uri")}">
@@ -44,10 +47,18 @@ function signInServer(): Server {
         case "/login":
           return html(`<title>Login</title>
             <button id="popup">Sign in with Provider</button>
+            <button id="blank-popup">Sign in with Provider (blank first)</button>
             <a id="redirect" href="${authorize("/session")}">Continue with Provider</a>
+            <a id="redirect-login" href="${authorize("/session", "login")}">Continue with Provider (its login page)</a>
             <script>
               document.querySelector("#popup").onclick = () =>
                 window.open(${JSON.stringify(authorize("/callback"))}, "oauth", "popup,width=480,height=640");
+              // As OAuth libraries do: open the popup inside the click, then
+              // point it at the provider once the URL is ready.
+              document.querySelector("#blank-popup").onclick = () => {
+                const popup = window.open("", "oauth", "popup,width=480,height=640");
+                setTimeout(() => { popup.location.href = ${JSON.stringify(authorize("/callback"))}; }, 100);
+              };
               addEventListener("message", (event) => {
                 if (event.origin === location.origin && event.data?.type === "oauth")
                   location.href = "/session?code=" + event.data.code;
@@ -185,6 +196,29 @@ describe.skipIf(!canRun)("signing in while a lens call waits", () => {
     expect(await pageAt(site("/login"))).toMatchObject({ id: login.id, active: true });
     await userClicks(site("/login"), "#redirect");
     await userClicks(provider("/signin"), "#allow");
+    await expect.poll(() => result(id), { timeout: 15_000 }).toBeDefined();
+    expect(result(id)!.result).toMatchObject({ kind: "value" });
+  });
+
+  it("the user signs in with a popup opened blank and then sent to the provider", async () => {
+    const id = call();
+    await waitingForSignIn(id);
+    await userClicks(site("/login"), "#blank-popup");
+    await userClicks(provider("/signin"), "#allow");
+    await expect.poll(() => result(id), { timeout: 15_000 }).toBeDefined();
+    expect(result(id)!.result).toMatchObject({ kind: "value" });
+  });
+
+  it("the broker leaves the tab alone while it is on a provider page its needs_auth also matches", async () => {
+    const id = call();
+    const login = await waitingForSignIn(id);
+    await userClicks(site("/login"), "#redirect-login");
+    await expect.poll(async () => (await pageAt(provider("/oauth/login")))?.id).toBe(login.id);
+    // Past a few of the broker's one-second sign-in checks: still there, no result.
+    await new Promise((resolve) => setTimeout(resolve, 3_000));
+    expect((await pageAt(provider("/oauth/login")))?.id).toBe(login.id);
+    expect(result(id)).toBeUndefined();
+    await userClicks(provider("/oauth/login"), "#allow");
     await expect.poll(() => result(id), { timeout: 15_000 }).toBeDefined();
     expect(result(id)!.result).toMatchObject({ kind: "value" });
   });
