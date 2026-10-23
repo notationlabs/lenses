@@ -31,7 +31,7 @@ const PIXEL = Buffer.from(
   "base64"
 );
 
-describe.skipIf(!canRun)("a lens tab renders while in the background", () => {
+describe.skipIf(!canRun)("a lens page renders while out of sight", () => {
   let harness: Harness;
   let server: Server;
   let origin: string;
@@ -63,26 +63,34 @@ describe.skipIf(!canRun)("a lens tab renders while in the background", () => {
 
   afterEach(async () => {
     await broker.disconnect().catch(() => {});
+    await harness.control("closeWindow");
     for (const page of await harness.pages()) await harness.control("close", page.id).catch(() => {});
     await expect.poll(() => harness.pages()).toEqual([]);
   });
 
+  /** A lens page on the feed, out of sight, and its id in the app. */
   async function openFeed() {
+    const before = new Set((await harness.pages()).map((entry) => entry.id));
     const page = await broker.newPage({ background: true });
     await page.goto(`${origin}/feed`);
-    expect(await harness.pages()).toEqual([expect.objectContaining({ kind: "lens", active: false })]);
-    return page;
+    const id = (await harness.pages()).find((entry) => !before.has(entry.id))!.id;
+    expect(await harness.pages()).toContainEqual(expect.objectContaining({ id, shown: false }));
+    return Object.assign(page, { appId: id });
   }
 
-  it("runs animation frames", async () => {
-    const page = await openFeed();
-    // Chromium takes a moment to judge a new tab's visibility.
+  /** Animation frames the page ran in half a second, once it has started. */
+  async function frameRate(page: Awaited<ReturnType<typeof openFeed>>) {
     const frames = () => page.evaluate(() => (window as any).frames_ as number);
     await expect.poll(frames, { timeout: 5_000 }).toBeGreaterThan(0);
     const before = await frames();
     await new Promise((resolve) => setTimeout(resolve, 500));
-    // Near the display's rate: 60 a second would be 30.
-    expect((await frames()) - before).toBeGreaterThan(20);
+    return (await frames()) - before;
+  }
+
+  it("runs animation frames", async () => {
+    // Chromium takes a moment to judge a new page's visibility; near the
+    // display's rate after that (60 a second would be 30).
+    expect(await frameRate(await openFeed())).toBeGreaterThan(20);
   });
 
   it("loads more of a feed when the broker scrolls to its end", async () => {
@@ -98,28 +106,23 @@ describe.skipIf(!canRun)("a lens tab renders while in the background", () => {
     await expect.poll(() => page.$eval("#lazy", (image) => (image as HTMLImageElement).complete && (image as HTMLImageElement).naturalWidth), { timeout: 5_000 }).toBe(1);
   });
 
-  it("keeps rendering under a user's tab on show, while the user's background tabs draw nothing", async () => {
-    const background = await harness.control<number>("openUserTab", `${origin}/feed`);
-    const page = await openFeedBehind(await harness.control<number>("openUserTab", `${origin}/feed`));
-    const frames = () => page.evaluate(() => (window as any).frames_ as number);
-    await expect.poll(frames, { timeout: 5_000 }).toBeGreaterThan(0);
+  it("keeps rendering while another page is on show in the window", async () => {
+    const other = await openFeed();
+    const page = await openFeed();
+    await harness.control("open", other.appId);
+    await expect.poll(() => harness.control("window")).toEqual({ visible: true, shown: other.appId });
+    // Near the display's rate: 60 a second would be 30.
+    expect(await frameRate(page)).toBeGreaterThan(20);
     await page.evaluate(() => document.querySelector("#sentinel")!.scrollIntoView());
     await expect.poll(() => page.$$eval("#items p", (items) => items.length), { timeout: 5_000 }).toBe(2);
-    const userFrames = () => harness.control<number>("evaluate", background, "window.frames_");
-    const before = await userFrames();
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    // Not drawn, though Chromium still reports it visible (as it did when tabs were parked).
-    expect((await userFrames()) - before).toBe(0);
   });
 
-  /** A lens tab opened while a user's tab is on show. */
-  async function openFeedBehind(shown: number) {
-    const page = await broker.newPage({ background: true });
-    await page.goto(`${origin}/feed`);
-    expect(await harness.pages()).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: shown, kind: "user", active: true }),
-      expect.objectContaining({ kind: "lens", active: false }),
-    ]));
-    return page;
-  }
+  it("keeps rendering after the user has looked at it and closed the window", async () => {
+    const page = await openFeed();
+    await harness.control("open", page.appId);
+    await expect.poll(() => harness.control("window")).toEqual({ visible: true, shown: page.appId });
+    await harness.control("closeWindow");
+    await expect.poll(() => harness.control("window")).toEqual({ visible: false, shown: null });
+    expect(await frameRate(page)).toBeGreaterThan(20);
+  });
 });

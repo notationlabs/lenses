@@ -1,14 +1,14 @@
 /**
- * The app's browser and lens tabs, run in Electron for the end-to-end tests.
- * Two endpoints, on a port printed as `HARNESS <port>`:
+ * The app, run in Electron for the end-to-end tests: the same parts wired the
+ * same way (createLensesApp), with no menu bar icon. Two endpoints, on a port
+ * printed as `HARNESS <port>`:
  *
- * - /cdp: the broker's view, a browser-level CDP endpoint over the lens tabs
+ * - /cdp: the broker's view, a browser-level CDP endpoint over the lens pages
  *   through the same relay the broker uses (one relay per connection).
- * - /control: the user's side, and what the tests check: open user tabs, run
- *   script in any page as the user would, list every page the app holds.
+ * - /control: the user's side, and what the tests check: the inbox, the
+ *   notice and its buttons, the window, script in any page as the user would.
  *
- * With HARNESS_BROKER_PORT set, the real broker also runs here on that port,
- * driving the lens tabs as it does in the app.
+ * With HARNESS_BROKER_PORT set, the real broker also runs here on that port.
  */
 import { app, BrowserWindow, webContents, type WebContents } from "electron";
 import { mkdtempSync } from "node:fs";
@@ -17,8 +17,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, type WebSocket } from "ws";
 import { createElectronRelay, setElectronHost } from "@djgrant/lenses-client/electron-host";
-import { createBrowser, prepareChromium, type Browser } from "../src/browser.js";
-import { createLensTabs } from "../src/lens-tabs.js";
+import { createLensesApp, type LensesApp } from "../src/lenses-app.js";
+import { prepareChromium } from "../src/pages.js";
 
 // Compiled to dist-test/test/, so static/ is two levels up.
 const staticDir = fileURLToPath(new URL("../../static/", import.meta.url));
@@ -27,17 +27,33 @@ const staticDir = fileURLToPath(new URL("../../static/", import.meta.url));
 app.setPath("userData", mkdtempSync(join(tmpdir(), "lenses-app-test-")));
 app.on("window-all-closed", () => {});
 prepareChromium();
+
+/** Every time the app tried to come forward: shown a window, or taken focus. */
+const forward: string[] = [];
+const titleOf = (window: BrowserWindow) => window.webContents.getURL().split("/").pop() || window.getTitle();
+const show = BrowserWindow.prototype.show;
+const focus = BrowserWindow.prototype.focus;
+const appFocus = app.focus.bind(app);
 // Run without taking the user's focus: the app can never become the active
-// app, so its show() and reveal() cannot pull it to the front, and its
-// windows, popups included, are see-through and let clicks pass. They still
-// render as shown windows do. HARNESS_VISIBLE=1 shows them, for debugging.
-if (!process.env.HARNESS_VISIBLE) {
+// app, its windows open without activating, and they are see-through and let
+// clicks pass. They still render as shown windows do. HARNESS_VISIBLE=1
+// shows them, for debugging.
+const quiet = !process.env.HARNESS_VISIBLE;
+BrowserWindow.prototype.show = function (this: BrowserWindow) {
+  forward.push(`show ${titleOf(this)}`);
+  if (quiet) this.showInactive();
+  else show.call(this);
+};
+BrowserWindow.prototype.focus = function (this: BrowserWindow) {
+  forward.push(`focus ${titleOf(this)}`);
+  if (!quiet) focus.call(this);
+};
+app.focus = (options) => {
+  forward.push("app.focus");
+  if (!quiet) appFocus(options);
+};
+if (quiet) {
   app.on("ready", () => app.setActivationPolicy?.("prohibited"));
-  app.focus = () => {};
-  BrowserWindow.prototype.focus = function () {};
-  BrowserWindow.prototype.show = function (this: BrowserWindow) {
-    this.showInactive();
-  };
   app.once("web-contents-created", (_event, contents) => {
     Object.getPrototypeOf(contents).focus = function () {};
   });
@@ -49,49 +65,30 @@ if (!process.env.HARNESS_VISIBLE) {
 // To stderr, which the tests show, rather than a dialog.
 process.on("uncaughtException", (error) => console.error("uncaught:", error));
 
-let browser: Browser;
-/** Pages the broker brought forward for a sign-in, in order. */
-const reveals: number[] = [];
-const lensTabs = createLensTabs({
-  open: (url) => browser.openLensTab(url),
-  reveal: (contents) => {
-    reveals.push(contents.id);
-    browser.reveal(contents);
-  },
-});
+let lenses: LensesApp;
 
 export interface PageInfo {
   id: number;
   url: string;
-  /** A tab in the browser window, or a popup in a window of its own. */
-  where: "tab" | "popup";
-  kind?: "lens" | "user";
+  site: string;
+  popup: boolean;
+  /** On show to the user: displayed in the app's window, or a popup's window shown. */
+  shown: boolean;
   /** Listed for the broker. */
   exposed: boolean;
-  visible: boolean;
-  /** The tab on show in the window. */
-  active: boolean;
 }
 
 function pages(): PageInfo[] {
-  const exposed = new Set(lensTabs.tabs.list());
-  return webContents
-    .getAllWebContents()
-    .filter((contents) => !contents.isDestroyed() && contents !== browser.window.webContents)
-    .filter((contents) => !contents.getURL().startsWith("devtools:"))
-    .map((contents) => {
-      const kind = browser.kindOf(contents);
-      const owner = kind ? browser.window : BrowserWindow.fromWebContents(contents);
-      return {
-        id: contents.id,
-        url: contents.getURL(),
-        where: kind ? "tab" : "popup",
-        ...(kind ? { kind } : {}),
-        exposed: exposed.has(contents.id),
-        visible: owner?.isVisible() ?? false,
-        active: browser.isActive(contents),
-      } satisfies PageInfo;
-    });
+  const exposed = new Set(lenses.lensTabs.tabs.list());
+  const windowVisible = lenses.appWindow.window.isVisible();
+  return lenses.pages.list().map((page) => ({
+    id: page.id,
+    url: page.url,
+    site: page.site,
+    popup: page.popup,
+    shown: page.popup ? page.shown : page.shown && windowVisible,
+    exposed: exposed.has(page.id),
+  }));
 }
 
 function contentsOf(id: number): WebContents {
@@ -100,20 +97,50 @@ function contentsOf(id: number): WebContents {
   return contents;
 }
 
+const click = (contents: WebContents, selector: string) =>
+  contents.executeJavaScript(`document.querySelector(${JSON.stringify(selector)}).click()`, true);
+
 const control: Record<string, (...args: any[]) => unknown> = {
   pages,
-  openUserTab: (url: string) => browser.openUserTab(url).id,
+  inbox: () => lenses.inbox.items(),
+  notice: () => {
+    const state = lenses.notice.state();
+    return state ? { ...state, focusable: lenses.notice.window.isFocusable() } : null;
+  },
+  /** The text the notice shows. */
+  noticeText: () => lenses.notice.window.webContents.executeJavaScript(`document.querySelector("#card").innerText`),
+  /** The user clicks the notice's Open or Ignore. */
+  noticeClick: (button: "open" | "ignore") => click(lenses.notice.window.webContents, `#${button}`),
+  /** The window: whether it is open, and the page on show. */
+  window: () => ({ visible: lenses.appWindow.window.isVisible(), shown: lenses.pages.shown() ?? null }),
+  /** Script in the window's own page, as the user using it. */
+  windowEvaluate: (script: string) => lenses.appWindow.window.webContents.executeJavaScript(script, true),
+  closeWindow: () => lenses.appWindow.window.close(),
+  /** The user opens the window, on a page or not (as from the menu bar). */
+  open: (page?: number) => lenses.open(page ?? undefined),
+  /** Every time the app tried to come forward since the last ask. */
+  forward: () => forward.splice(0),
+  /** The broker says a page needs the user. */
+  attention: (id: number, need: string) => lenses.lensTabs.tabs.attention(id, need),
+  /** A PNG of the window (with the page on show drawn in), the notice, or a page, to `path`. */
+  async capture(target: "window" | "notice" | number, path: string) {
+    const { writeFileSync } = await import("node:fs");
+    if (target === "window") {
+      const window = lenses.appWindow.window;
+      const base = await window.webContents.capturePage();
+      const shownId = lenses.pages.shown();
+      const shown = shownId !== undefined ? lenses.pages.get(shownId) : undefined;
+      writeFileSync(path, base.toPNG());
+      if (shown) writeFileSync(path.replace(/\.png$/, "-page.png"), (await shown.capturePage()).toPNG());
+      return;
+    }
+    const contents = target === "notice" ? lenses.notice.window.webContents : contentsOf(target);
+    writeFileSync(path, (await contents.capturePage()).toPNG());
+  },
   /** Script in a page with a user gesture, as the user clicking would. */
   evaluate: (id: number, script: string) => contentsOf(id).executeJavaScript(script, true),
-  showWindow: () => browser.show(),
-  hideWindow: () => browser.window.hide(),
-
-  reveals: () => reveals,
   close(id: number) {
     contentsOf(id).close();
-  },
-  reveal(id: number) {
-    lensTabs.tabs.reveal(id);
   },
 };
 
@@ -131,7 +158,7 @@ function serveControl(socket: WebSocket): void {
 }
 
 function serveCdp(socket: WebSocket): void {
-  const relay = createElectronRelay(lensTabs.tabs, (message) => console.error(message));
+  const relay = createElectronRelay(lenses.lensTabs.tabs, (message) => console.error(message));
   const trace = process.env.HARNESS_TRACE ? (line: string) => console.error(line.slice(0, 400)) : () => {};
   relay.transport.onmessage = (message) => {
     trace(`<- ${message}`);
@@ -145,10 +172,10 @@ function serveCdp(socket: WebSocket): void {
 }
 
 app.whenReady().then(async () => {
-  browser = createBrowser({ staticDir, changed: () => {}, lensOpened: lensTabs.add });
+  lenses = createLensesApp({ staticDir, anchor: () => undefined, status: () => ({ line: "Test" }) });
   const brokerPort = Number(process.env.HARNESS_BROKER_PORT);
   if (brokerPort) {
-    setElectronHost({ port: brokerPort, tabs: lensTabs.tabs });
+    setElectronHost({ port: brokerPort, tabs: lenses.lensTabs.tabs });
     await import("@djgrant/lenses-client/broker-daemon");
   }
   const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });

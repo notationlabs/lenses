@@ -129,8 +129,14 @@ export interface CdpTransport {
   onTabLinkChange?(listener: (key: string, link: TabLink) => void): () => void;
   /** Open a background tab, for browsers whose CDP cannot create targets (Electron). */
   newPage?(browser: Browser): Promise<Page>;
-  /** Put a tab in front of the user. Defaults to bringing it to front in Chrome. */
-  reveal?(page: Page): Promise<void>;
+  /**
+   * The page needs the user (`need`: a needs_* outcome, e.g. needs_auth).
+   * Defaults to bringing it to front in Chrome; the Lenses app puts it in
+   * its inbox instead.
+   */
+  reveal?(page: Page, need: string): Promise<void>;
+  /** A call on a page ended without needing the user: whatever it needed is done. */
+  settled?(page: Page): void;
   /** Transport cleanup before a session or temporary page is released. */
   preparePageRelease?(
     browser: Browser,
@@ -224,8 +230,8 @@ export function createCdpBackend(
 
   const openPage = (current: Browser) =>
     transport.newPage ? transport.newPage(current) : current.newPage({ background: true });
-  async function reveal(page: Page): Promise<void> {
-    if (transport.reveal) return transport.reveal(page);
+  async function reveal(page: Page, need = "needs_auth"): Promise<void> {
+    if (transport.reveal) return transport.reveal(page, need);
     await page.bringToFront();
     await raiseChrome();
   }
@@ -1278,7 +1284,8 @@ export function createCdpBackend(
     },
     async finish(
       session: BrowserSession,
-      disposition: FinishDisposition
+      disposition: FinishDisposition,
+      need?: string
     ): Promise<void> {
       const cdpSession = session as CdpSession;
       cdpSession.closed = true;
@@ -1315,10 +1322,12 @@ export function createCdpBackend(
         try {
           // The page was opened in the background, so without this the
           // sign-in page sits unseen behind whatever the user is doing.
-          await reveal(cdpSession.page);
+          await reveal(cdpSession.page, need);
         } catch {
           // The user may close the page while its call is still running.
         }
+      } else if (!need && !cdpSession.page.isClosed()) {
+        transport.settled?.(cdpSession.page);
       }
       if (!closes) return;
       try {

@@ -29,8 +29,10 @@ export interface ElectronTabs {
   /** Open a background lens tab; it is announced (onCreated) before this resolves. */
   create(url?: string): Promise<number>;
   close(tabId: number): Promise<void>;
-  /** Show the tab and bring the app forward, for a sign-in. */
-  reveal(tabId: number): void;
+  /** The tab needs the user (`need`: a needs_* outcome, e.g. needs_auth). */
+  attention(tabId: number, need: string): void;
+  /** A call on the tab ended without needing the user. */
+  settled(tabId: number): void;
   attach(tabId: number): Promise<void>;
   detach(tabId: number): Promise<void>;
   /** A command on the tab's debugger, or on one of its child sessions (an iframe). */
@@ -225,9 +227,13 @@ export function createElectronTransport(host: ElectronHost): CdpTransport {
       linkListeners.add(listener);
       return () => linkListeners.delete(listener);
     },
-    async reveal(page) {
+    async reveal(page, need) {
       const tabId = tabIdOf(pageTargetId(page));
-      if (tabId !== undefined) host.tabs.reveal(tabId);
+      if (tabId !== undefined) host.tabs.attention(tabId, need);
+    },
+    settled(page) {
+      const tabId = tabIdOf(pageTargetId(page));
+      if (tabId !== undefined) host.tabs.settled(tabId);
     },
     dispose() {
       relay?.dispose();
