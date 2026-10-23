@@ -38,7 +38,13 @@
 
   #main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
   #header { height: 52px; flex: none; display: flex; align-items: center; gap: 4px; padding: 0 12px; border-bottom: 1px solid var(--line); -webkit-app-region: drag; }
-  #header button { -webkit-app-region: no-drag; }
+  #header button, #address { -webkit-app-region: no-drag; }
+  .nav { width: 30px; height: 30px; padding: 0; display: grid; place-items: center; flex: none; }
+  .nav svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  #reload .stop, #reload.loading .go { display: none; }
+  #reload.loading .stop { display: block; }
+  #address { flex: 1; min-width: 0; height: 30px; margin-left: 6px; padding: 0 10px; font: inherit; color: inherit; background: var(--hover); border: 1px solid transparent; border-radius: 7px; outline: none; user-select: text; }
+  #address:focus { background: var(--surface); border-color: var(--accent); }
   #heading { flex: 1; min-width: 0; padding: 0 6px; }
   #heading .main { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #heading .sub { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -67,8 +73,10 @@
 </nav>
 <main id="main">
   <div id="header">
-    <button id="back" title="Back" disabled>‹</button>
-    <button id="reload" title="Reload" disabled>↻</button>
+    <button id="back" class="nav" title="Back (⌘[)" disabled><svg viewBox="0 0 20 20"><path d="M12.5 4.5 7 10l5.5 5.5"/></svg></button>
+    <button id="forward" class="nav" title="Forward (⌘])" disabled><svg viewBox="0 0 20 20"><path d="M7.5 4.5 13 10l-5.5 5.5"/></svg></button>
+    <button id="reload" class="nav" title="Reload (⌘R)" disabled><svg class="go" viewBox="0 0 20 20"><path d="M15.5 10a5.5 5.5 0 1 1-1.6-3.9"/><path d="M14.5 3v3.6h-3.6"/></svg><svg class="stop" viewBox="0 0 20 20"><path d="m5.5 5.5 9 9m0-9-9 9"/></svg></button>
+    <input id="address" type="text" spellcheck="false" autocomplete="off" placeholder="Search or enter address" hidden>
     <div id="heading"><div class="main"></div><div class="sub"></div></div>
   </div>
   <div id="need"><span></span><button id="done">Done</button></div>
@@ -134,13 +142,19 @@
     $("#page").hidden = !page;
     $("#placeholder").hidden = !!page;
     $("#back").disabled = !page?.canGoBack;
+    $("#forward").disabled = !page?.canGoForward;
     $("#reload").disabled = !page;
+    $("#reload").classList.toggle("loading", !!page?.loading);
+    $("#reload").title = page?.loading ? "Stop" : "Reload (⌘R)";
+    $("#address").hidden = !page;
+    $("#heading").hidden = !!page;
+    // Leave what the user is typing alone.
+    if (page && document.activeElement !== $("#address")) $("#address").value = page.url;
     $("#need").classList.toggle("on", !!item);
     if (item) $("#need span").textContent = `${item.label} — the lens call continues once you're through.`;
 
     if (page) {
-      $("#heading .main").textContent = page.title || page.site || "Page";
-      $("#heading .sub").textContent = page.url;
+      // The address bar stands in for the heading.
     } else if (selection.kind === "site") {
       const pages = state.pages.filter((entry) => entry.site === selection.site);
       $("#heading .main").textContent = selection.site;
@@ -165,7 +179,24 @@
   }
 
   $("#back").onclick = () => selection.kind === "page" && window.lenses.command("back", selection.page);
-  $("#reload").onclick = () => selection.kind === "page" && window.lenses.command("reload", selection.page);
+  $("#forward").onclick = () => selection.kind === "page" && window.lenses.command("forward", selection.page);
+  $("#reload").onclick = () =>
+    selection.kind === "page" && window.lenses.command($("#reload").classList.contains("loading") ? "stop" : "reload", selection.page);
+  const address = $("#address");
+  address.onfocus = () => address.select();
+  address.onkeydown = (event) => {
+    if (event.key === "Enter" && selection.kind === "page") {
+      window.lenses.command("navigate", selection.page, address.value);
+      address.blur();
+    } else if (event.key === "Escape") {
+      address.blur();
+      render();
+    }
+  };
+  address.onblur = () => render();
+  window.lenses.onFocusAddress(() => {
+    if (!address.hidden) address.focus();
+  });
   $("#done").onclick = () => {
     const page = state.pages.find((entry) => entry.id === selection.page);
     const item = page && state.inbox.find((entry) => entry.page === page.id || entry.page === page.opener);
