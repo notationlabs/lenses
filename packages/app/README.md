@@ -23,7 +23,7 @@ allowlist, and a context menu. Each tab is a `WebContentsView` rather than a
 may attach to. Lens tabs stay in place under the tab on show, so they keep
 rendering (animation frames, lazy loading) while in the background or while
 the window is hidden; a view moved off the window or hidden renders nothing.
-A user's background tabs are hidden and draw nothing. Closing the
+A user's background tabs are parked off the window and draw nothing. Closing the
 window hides it: lens tabs live there. ⇧⌘S shows broker status.
 
 Sessions live in the app's profile (`~/Library/Application Support/Lenses`),
@@ -42,3 +42,9 @@ Sign-in pages see an ordinary browser: Electron's own User-Agent, and no
 `navigator.webdriver` flag (a debugging port sets it on every page). Either a
 User-Agent passing for plain Chrome or the flag makes Google refuse to sign in
 ("This browser or app may not be secure").
+
+`pnpm test` runs the app's browser and lens tabs in Electron
+(`test/harness.ts`), with the real broker for the sign-in tests, against local
+sites: OAuth popups, signing in while a call waits, and lens tabs rendering in
+the background. Its windows are see-through and the app never becomes active,
+so the tests leave your focus alone; `HARNESS_VISIBLE=1` shows them.

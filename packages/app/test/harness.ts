@@ -27,6 +27,25 @@ const staticDir = fileURLToPath(new URL("../../static/", import.meta.url));
 app.setPath("userData", mkdtempSync(join(tmpdir(), "lenses-app-test-")));
 app.on("window-all-closed", () => {});
 prepareChromium();
+// Run without taking the user's focus: the app can never become the active
+// app, so its show() and reveal() cannot pull it to the front, and its
+// windows, popups included, are see-through and let clicks pass. They still
+// render as shown windows do. HARNESS_VISIBLE=1 shows them, for debugging.
+if (!process.env.HARNESS_VISIBLE) {
+  app.on("ready", () => app.setActivationPolicy?.("prohibited"));
+  app.focus = () => {};
+  BrowserWindow.prototype.focus = function () {};
+  BrowserWindow.prototype.show = function (this: BrowserWindow) {
+    this.showInactive();
+  };
+  app.once("web-contents-created", (_event, contents) => {
+    Object.getPrototypeOf(contents).focus = function () {};
+  });
+  app.on("browser-window-created", (_event, window) => {
+    window.setOpacity(0);
+    window.setIgnoreMouseEvents(true);
+  });
+}
 // To stderr, which the tests show, rather than a dialog.
 process.on("uncaughtException", (error) => console.error("uncaught:", error));
 

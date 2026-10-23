@@ -62,6 +62,8 @@ interface Insets {
 
 /** Room around the views for the tab strip and chrome row, until the renderer measures it. */
 const DEFAULT_INSETS: Insets = { top: 80, right: 0, bottom: 0, left: 0 };
+/** How far off the window a user's background tab is parked, so it draws nothing. */
+const PARKED_OFFSET = 20_000;
 
 /**
  * As T3 Code: clipboard writes need `clipboard-sanitized-write` in both
@@ -81,6 +83,8 @@ const TAB_PREFERENCES = {
 
 /** A real window for scripted popups: OAuth needs `window.opener` to post its result back. */
 const POPUP_OPTIONS: BrowserWindowConstructorOptions = {
+  // Shown once adopted (did-create-window), through BrowserWindow.show.
+  show: false,
   width: 520,
   height: 680,
   webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
@@ -97,10 +101,14 @@ const isWebUrl = (raw: string) => {
 /**
  * T3 Code's split: `new-window` is a scripted popup, a link to a new tab
  * becomes a tab, and anything a new tab could not carry (a POST body, an odd
- * scheme) loads in place.
+ * scheme) loads in place. Unlike T3 Code, a blank popup is allowed.
  */
 function windowOpenAction(details: HandlerDetails): "popup" | "tab" | "navigate" | "deny" {
-  if (details.url === "" || details.url === "about:blank") return "deny";
+  const blank = details.url === "" || details.url === "about:blank";
+  // OAuth libraries open the popup blank inside the click, so no popup
+  // blocker stops it, then point it at the provider: keep those. A blank tab
+  // is not worth opening.
+  if (blank) return details.disposition === "new-window" ? "popup" : "deny";
   if (!isWebUrl(details.url)) return "navigate";
   if (details.disposition === "new-window") return "popup";
   if (details.postBody) return "navigate";
@@ -222,14 +230,14 @@ export function createBrowser(options: BrowserOptions) {
     // On quit the window goes first, then each tab's destroyed handler lands here.
     if (window.isDestroyed()) return;
     const bounds = viewportBounds();
-    // A view that is hidden, or outside the window's bounds, is never
-    // composited: no animation frames, no IntersectionObserver, so feeds
-    // never load more and lazy images never load. Lens tabs stay in place,
-    // covered by the tab on show, and render for the broker (see
-    // prepareChromium). A user's background tabs are hidden and draw nothing.
+    // A view outside the window's bounds is never composited: no animation
+    // frames, no IntersectionObserver. Lens tabs stay in place, covered by
+    // the tab on show, and render for the broker (see prepareChromium). A
+    // user's background tabs are parked off to the side and draw nothing;
+    // merely hidden, with occlusion backgrounding off, they may keep drawing.
     for (const tab of tabs) {
-      tab.view.setBounds(bounds);
-      tab.view.setVisible(tab.id === activeId || tab.kind === "lens");
+      const parked = tab.id !== activeId && tab.kind === "user";
+      tab.view.setBounds(parked ? { ...bounds, x: bounds.x - PARKED_OFFSET } : bounds);
     }
     const active = find(activeId);
     // Adding a child view again raises it to the top.
@@ -268,6 +276,7 @@ export function createBrowser(options: BrowserOptions) {
     contents.on("did-create-window", (popup) => {
       // As T3 Code: one popup deep. Nothing in an OAuth flow opens a second.
       popup.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+      popup.show();
       installContextMenu(popup.webContents);
       if (tab.kind === "lens") options.lensOpened(popup.webContents);
     });
