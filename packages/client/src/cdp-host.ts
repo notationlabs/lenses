@@ -1064,8 +1064,9 @@ export function createCdpBackend(
       }
       return false;
     },
-    async findAuthGate(origin: string): Promise<AuthGate | undefined> {
+    async findAuthGate(origin, needsUser) {
       if (!browser?.connected) return undefined;
+      const current = browser;
       const watched = watchedGateOrigins.has(origin);
       for (const [key, kept] of keptGates) {
         const page = await gatePage(browser, key, kept);
@@ -1083,6 +1084,18 @@ export function createCdpBackend(
         if (sameGatePlace(page.url(), kept.keptUrl) || watched) {
           return { url: page.url(), target: kept.target };
         }
+      }
+      if (!needsUser) return undefined;
+      // A tab the user is signing in on, though no call kept it: the site's
+      // login form is open, and touching the tab (or fetching with the site's
+      // cookies) can send the user back to its first step. Keep it as the
+      // gate, so the wait watches it instead of opening another.
+      for (const page of await current.pages()) {
+        if (!usable(page, current) || urlOrigin(page.url()) !== origin) continue;
+        const url = page.url();
+        if (!(await needsUser({ url, title: "" }))) continue;
+        keptGates.set(gateKeyOf(page), { page, target: url, keptUrl: url });
+        return { url, target: url };
       }
       return undefined;
     },
