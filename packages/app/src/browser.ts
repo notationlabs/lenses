@@ -1,10 +1,9 @@
 /**
  * The app's browser: one window of tabs, each a WebContentsView. Lens tabs
- * are opened by the hidden host page, so CDP names it as their opener and the
- * broker attaches to them alone; tabs the user opens have no such opener and
- * are never driven. Modelled on T3 Code's in-app browser (chrome row, popup
- * policy, permission allowlist, context menu), with views instead of
- * <webview> guests because a guest loses its opener.
+ * (and their popups) are handed to the broker as they open; tabs the user
+ * opens never are, so nothing can attach to them. Modelled on T3 Code's
+ * in-app browser: chrome row, popup policy, permission allowlist, context
+ * menu.
  */
 import {
   app,
@@ -50,6 +49,8 @@ export interface BrowserOptions {
   staticDir: string;
   /** Anything outside the tabs changed; the app pushes fresh state. */
   changed(): void;
+  /** A lens tab, or a popup or tab a lens tab opened: the broker's to drive. */
+  lensOpened(contents: WebContents): void;
 }
 
 interface Insets {
@@ -249,6 +250,7 @@ export function createBrowser(options: BrowserOptions) {
       // As T3 Code: one popup deep. Nothing in an OAuth flow opens a second.
       popup.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
       installContextMenu(popup.webContents);
+      if (tab.kind === "lens") options.lensOpened(popup.webContents);
     });
     installContextMenu(contents);
     // The broker closing a page, or the page calling window.close().
@@ -257,6 +259,7 @@ export function createBrowser(options: BrowserOptions) {
     if (activate) activeId = tab.id;
     layout();
     send();
+    if (kind === "lens") options.lensOpened(contents);
     return tab;
   }
 
@@ -508,21 +511,26 @@ export function createBrowser(options: BrowserOptions) {
     show,
     togglePanel,
     openUserTab,
-    /** A lens tab the host page opened; it stays in the background. */
-    adoptLensTab(windowOptions: BrowserWindowConstructorOptions): WebContents {
-      const view = new WebContentsView({
-        webContents: (windowOptions as { webContents?: WebContents }).webContents,
-        webPreferences: { ...windowOptions.webPreferences, ...TAB_PREFERENCES },
-      });
+    /** A background tab for the broker. */
+    openLensTab(url = "about:blank"): WebContents {
+      const view = new WebContentsView({ webPreferences: TAB_PREFERENCES });
       adopt(view, "lens", false);
+      void view.webContents.loadURL(url).catch(() => {});
       return view.webContents;
     },
-    /** Bring a lens tab forward, for a sign-in. */
+    /** Bring a lens tab or popup forward, for a sign-in. */
     reveal(contents: WebContents): void {
       const tab = byContents.get(contents.id);
-      if (!tab) return;
-      activate(tab.id);
-      show();
+      if (tab) {
+        activate(tab.id);
+        show();
+        return;
+      }
+      const popup = BrowserWindow.fromWebContents(contents);
+      if (!popup || popup === window) return;
+      popup.show();
+      popup.focus();
+      app.focus({ steal: true });
     },
     tabs: () => tabs.map(state),
     activeId: () => activeId,

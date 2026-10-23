@@ -1,30 +1,51 @@
-import puppeteer, { type Browser, type Page, type Target } from "puppeteer-core";
+import puppeteer, { type ConnectionTransport } from "puppeteer-core";
 import { pageTargetId, type CdpTransport } from "./cdp-host.js";
+import { BrowserModel, type CDPMessage, type TabLink } from "./playwright-relay/browser-model.js";
 
 /**
  * What the Lenses app provides when it runs the broker in its own main
- * process. The app's Chromium is the browser: tabs are app windows, hidden
- * until a sign-in needs the user.
+ * process. The app's Chromium is the browser, but it opens no debugging port:
+ * the broker reaches only the tabs the app hands it, each through its own
+ * debugger (Electron's webContents.debugger), as the Playwright Extension
+ * hands over Chrome tabs through chrome.debugger.
  */
 export interface ElectronHost {
-  /** The app's remote debugging endpoint, e.g. http://127.0.0.1:9222. */
-  browserURL: string;
   /** Broker port to listen on. */
   port: number;
-  /**
-   * The hidden page that opens lens tabs. The broker attaches only to pages
-   * it opened, and their popups: windows the user opens to sign in are never
-   * driven or instrumented.
-   */
-  hostTargetId: string;
-  /** Open a hidden window from the host page and resolve its CDP target id. */
-  openWindow(): Promise<string>;
-  /** Show the window holding this target and bring the app forward. */
-  reveal(targetId: string): void;
+  tabs: ElectronTabs;
   /** Each broker status frame, for the app's control panel. */
   status?(frame: unknown): void;
   /** Called once the broker is listening, with a way to read its status. */
   started?(broker: { status(): unknown }): void;
+}
+
+/**
+ * The tabs the broker may drive: lens tabs and their popups. Tabs the user
+ * opens are never listed, so they cannot be attached at all.
+ */
+export interface ElectronTabs {
+  /** Lens tabs open now, e.g. when the broker reconnects. */
+  list(): number[];
+  /** Open a background lens tab; it is announced (onCreated) before this resolves. */
+  create(url?: string): Promise<number>;
+  close(tabId: number): Promise<void>;
+  /** Show the tab and bring the app forward, for a sign-in. */
+  reveal(tabId: number): void;
+  attach(tabId: number): Promise<void>;
+  detach(tabId: number): Promise<void>;
+  /** A command on the tab's debugger, or on one of its child sessions (an iframe). */
+  send(tabId: number, sessionId: string | undefined, method: string, params?: object): Promise<unknown>;
+  userAgent(): string;
+  listen(listener: ElectronTabListener): () => void;
+}
+
+export interface ElectronTabListener {
+  /** A lens tab or popup appeared, or a detached one should be attached again. */
+  created(tabId: number): void;
+  removed(tabId: number): void;
+  /** A debugger event; `sessionId` names a child session, absent for the page's own. */
+  event(tabId: number, sessionId: string | undefined, method: string, params: unknown): void;
+  detached(tabId: number, reason: string): void;
 }
 
 const HOST = Symbol.for("lenses.electron-host");
@@ -38,65 +59,176 @@ export function setElectronHost(host: ElectronHost): void {
   (globalThis as { [HOST]?: ElectronHost })[HOST] = host;
 }
 
-const targetId = (target: Target) =>
-  (target as unknown as { _targetId?: unknown })._targetId;
-const openerId = (target: Target) =>
-  (target as unknown as { _getTargetInfo(): { openerId?: string } })._getTargetInfo().openerId;
+interface CdpCommand {
+  id: number;
+  method: string;
+  params?: any;
+  sessionId?: string;
+}
 
 /**
- * Electron's CDP does not support Target.createTarget, so new tabs come from
- * the app, which opens a window and names its target.
+ * A browser-level CDP endpoint over the app's tabs, in process: Puppeteer
+ * talks to it through a transport, not a socket. The tab bookkeeping is the
+ * Playwright Extension relay's (BrowserModel), with the app in the
+ * extension's place.
  */
-export function createElectronTransport(host: ElectronHost): CdpTransport {
-  /** Lens tabs and the popups they opened, by target id. */
-  const owned = new Set<string>();
-  // Puppeteer attaches to each new target, asks this, and detaches from a
-  // refused one before its page runs. Child targets (out-of-process frames)
-  // are only found through an attached page, so they follow their page.
-  const targetFilter = (target: Target): boolean => {
-    if (target.type() === "shared_worker") return false;
-    if (target.type() !== "page") return true;
-    const id = targetId(target);
-    if (typeof id === "string" && owned.has(id)) return true;
-    const opener = openerId(target);
-    if (opener === undefined || (opener !== host.hostTargetId && !owned.has(opener))) return false;
-    if (typeof id === "string") owned.add(id);
-    return true;
-  };
-  const probeLive = async () => {
-    try {
-      const response = await fetch(`${host.browserURL}/json/version`, {
-        signal: AbortSignal.timeout(1_000),
-      });
-      return response.ok;
-    } catch {
-      return false;
+export function createElectronRelay(tabs: ElectronTabs, log: (message: string) => void = () => {}) {
+  let closed = false;
+  const attached = new Set<number>();
+  const model = new BrowserModel(async (method, args) => {
+    const [first, ...rest] = args as [any, ...any[]];
+    switch (method) {
+      case "chrome.debugger.attach":
+        await tabs.attach(first.tabId);
+        attached.add(first.tabId);
+        return;
+      case "chrome.debugger.detach":
+        attached.delete(first.tabId);
+        return tabs.detach(first.tabId);
+      case "chrome.debugger.sendCommand":
+        return tabs.send(first.tabId, first.sessionId, rest[0], rest[1]);
+      case "chrome.tabs.create":
+        return { id: await tabs.create(first?.url), index: 0, windowId: 0, active: false, pinned: false };
+      case "chrome.tabs.remove":
+        return tabs.close(first);
     }
+    throw new Error(`not supported by the Lenses app: ${method}`);
+  }, log);
+
+  const announce = (tabId: number) =>
+    model.onTabCreated({ id: tabId, index: 0, windowId: 0, active: false, pinned: false });
+  const unlisten = tabs.listen({
+    created: announce,
+    removed: (tabId) => {
+      attached.delete(tabId);
+      model.onTabRemoved(tabId);
+    },
+    event: (tabId, sessionId, method, params) =>
+      model.onDebuggerEvent({ tabId, ...(sessionId ? { sessionId } : {}) }, method, params),
+    detached: (tabId, reason) => {
+      if (!attached.delete(tabId)) return;
+      // A closing tab detaches first; anything else is worth a line.
+      if (reason !== "target closed") log(`debugger detached from tab ${tabId}: ${reason}`);
+      model.onDebuggerDetach({ tabId });
+    },
+  });
+  for (const tabId of tabs.list()) announce(tabId);
+
+  async function handle(command: CdpCommand): Promise<unknown> {
+    const { method, params, sessionId } = command;
+    if (!sessionId) {
+      switch (method) {
+        case "Browser.getVersion":
+          return { protocolVersion: "1.3", product: "Lenses", revision: "", userAgent: tabs.userAgent(), jsVersion: "" };
+        case "Target.getBrowserContexts":
+          return { browserContextIds: [] };
+        case "Target.setDiscoverTargets":
+          // Tabs arrive as the app announces them.
+          return {};
+        case "Target.setAutoAttach":
+          await model.enableAutoAttach();
+          return {};
+        case "Target.createTarget":
+          return model.createTarget(params?.url, params?.background === true);
+        case "Target.closeTarget":
+          return model.closeTarget(params?.targetId);
+      }
+      return model.sendBrowserCommand(method, params);
+    }
+    const own = method === "Target.getTargetInfo" ? model.getTargetInfo(sessionId) : undefined;
+    if (own) return { targetInfo: own };
+    return model.sendCommand(sessionId, method, params);
+  }
+
+  const transport: ConnectionTransport = {
+    send(raw) {
+      if (closed) return;
+      const command = JSON.parse(raw) as CdpCommand;
+      const route = command.sessionId ? { sessionId: command.sessionId } : {};
+      // Replies leave as commands finish, as Chromium's do.
+      void handle(command).then(
+        (result) => deliver({ id: command.id, result: result ?? {}, ...route }),
+        (error: unknown) =>
+          deliver({
+            id: command.id,
+            error: { code: -32000, message: error instanceof Error ? error.message : String(error) },
+            ...route,
+          })
+      );
+    },
+    close() {
+      dispose();
+    },
   };
+  // Never synchronous: Puppeteer expects a reply after send returns.
+  function deliver(message: CDPMessage): void {
+    if (closed) return;
+    setImmediate(() => {
+      if (!closed) transport.onmessage?.(JSON.stringify(message));
+    });
+  }
+  model.connectOverCDP(deliver);
+
+  function dispose(): void {
+    if (closed) return;
+    closed = true;
+    unlisten();
+    for (const tabId of attached) void tabs.detach(tabId).catch(() => {});
+    attached.clear();
+    setImmediate(() => transport.onclose?.());
+  }
+
+  return { transport, model, dispose };
+}
+
+type ElectronRelay = ReturnType<typeof createElectronRelay>;
+
+export function createElectronTransport(host: ElectronHost): CdpTransport {
+  let relay: ElectronRelay | undefined;
+  const linkListeners = new Set<(key: string, link: TabLink) => void>();
+  const tabIdOf = (targetId: string | undefined) =>
+    targetId === undefined ? undefined : relay?.model.tabIdForTarget(targetId);
   return {
     name: "electron",
     pollForConnection: true,
     retryConnect: true,
     looksReady: () => true,
-    probeLive,
+    probeLive: async () => true,
     connectHint: () => "connecting to the Lenses app browser",
     staleHint: () => "The Lenses app browser is not responding; restart the app.",
     async connect() {
-      return puppeteer.connect({ browserURL: host.browserURL, defaultViewport: null, targetFilter });
-    },
-    tabKey: pageTargetId,
-    async newPage(browser: Browser): Promise<Page> {
-      const id = await host.openWindow();
-      const target = await browser.waitForTarget((candidate) => targetId(candidate) === id, {
-        timeout: 10_000,
+      relay?.dispose();
+      const next = createElectronRelay(host.tabs, (message) => console.error(message));
+      relay = next;
+      next.model.onTabLinkChange((tabId, link) => {
+        if (relay !== next) return;
+        for (const listener of linkListeners) listener(String(tabId), link);
       });
-      const page = await target.page();
-      if (!page) throw new Error("the app window has no page");
-      return page;
+      try {
+        return await puppeteer.connect({ transport: next.transport, defaultViewport: null });
+      } catch (error) {
+        next.dispose();
+        throw error;
+      }
     },
-    async reveal(page: Page) {
-      const id = pageTargetId(page);
-      if (id) host.reveal(id);
+    tabKey(page) {
+      const tabId = tabIdOf(pageTargetId(page));
+      return tabId === undefined ? undefined : String(tabId);
+    },
+    tabLink: (key) => relay?.model.tabLink(Number(key)),
+    retryAttach: async (key) => relay?.model.retryAttach(Number(key)),
+    refreshAttach: async (key) => relay?.model.refreshAttach(Number(key)),
+    onTabLinkChange(listener) {
+      linkListeners.add(listener);
+      return () => linkListeners.delete(listener);
+    },
+    async reveal(page) {
+      const tabId = tabIdOf(pageTargetId(page));
+      if (tabId !== undefined) host.tabs.reveal(tabId);
+    },
+    dispose() {
+      relay?.dispose();
+      relay = undefined;
     },
   };
 }
