@@ -30,3 +30,8 @@ separate from Chrome.
 Not yet: password and passkey filling, packaging and signing, downloads, tab
 reordering. Electron's remote debugging port is open on localhost while
 the app runs, as Chrome's is when remote debugging is enabled.
+
+Sign-in pages see an ordinary browser: the app keeps Electron's own
+User-Agent and turns off the `navigator.webdriver` flag the debugging port
+would otherwise set on every page. Either one alone makes Google refuse to sign
+in ("This browser or app may not be secure").
