@@ -20,8 +20,10 @@ The browser follows T3 Code's in-app browser: a tab strip, a chrome row (back,
 forward, reload, address bar), real popup windows for OAuth, a permission
 allowlist, and a context menu. Each tab is a `WebContentsView` rather than a
 `<webview>`: the main process owns every tab, and so decides which the broker
-may attach to. Inactive tabs are parked off-screen at full size, not
-hidden, so lens tabs keep painting and can be screenshotted. Closing the
+may attach to. Lens tabs stay in place under the tab on show, so they keep
+rendering (animation frames, lazy loading) while in the background or while
+the window is hidden; a view moved off the window or hidden renders nothing.
+A user's background tabs are hidden and draw nothing. Closing the
 window hides it: lens tabs live there. ⇧⌘S shows broker status.
 
 Sessions live in the app's profile (`~/Library/Application Support/Lenses`),

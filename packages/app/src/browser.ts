@@ -62,8 +62,6 @@ interface Insets {
 
 /** Room around the views for the tab strip and chrome row, until the renderer measures it. */
 const DEFAULT_INSETS: Insets = { top: 80, right: 0, bottom: 0, left: 0 };
-/** Inactive tabs keep their size off to the side: a hidden view stops painting, and the broker screenshots them. */
-const PARKED_OFFSET = 20_000;
 
 /**
  * As T3 Code: clipboard writes need `clipboard-sanitized-write` in both
@@ -76,7 +74,7 @@ const TAB_PREFERENCES = {
   sandbox: true,
   contextIsolation: true,
   nodeIntegration: false,
-  // Lens tabs run while parked or while the window is hidden.
+  // Lens tabs run behind the tab on show, and while the window is hidden.
   backgroundThrottling: false,
   disableHtmlFullscreenWindowResize: true,
 } as const;
@@ -109,6 +107,17 @@ function windowOpenAction(details: HandlerDetails): "popup" | "tab" | "navigate"
   return details.disposition === "foreground-tab" || details.disposition === "background-tab"
     ? "tab"
     : "navigate";
+}
+
+/**
+ * Before the app is ready. Chromium stops drawing a page it judges covered
+ * (by the tab on show, or because the window is hidden), while the page
+ * still reports itself visible: lens tabs, always covered, would never run
+ * an animation frame or IntersectionObserver, so feeds would never load
+ * more and lazy images never load. backgroundThrottling alone does not stop it.
+ */
+export function prepareChromium(): void {
+  app.commandLine.appendSwitch("disable-backgrounding-occluded-windows");
 }
 
 /** Address bar input: a URL as typed, a bare host, or a search. */
@@ -213,10 +222,18 @@ export function createBrowser(options: BrowserOptions) {
     // On quit the window goes first, then each tab's destroyed handler lands here.
     if (window.isDestroyed()) return;
     const bounds = viewportBounds();
+    // A view that is hidden, or outside the window's bounds, is never
+    // composited: no animation frames, no IntersectionObserver, so feeds
+    // never load more and lazy images never load. Lens tabs stay in place,
+    // covered by the tab on show, and render for the broker (see
+    // prepareChromium). A user's background tabs are hidden and draw nothing.
     for (const tab of tabs) {
-      const parked = tab.id !== activeId;
-      tab.view.setBounds(parked ? { ...bounds, x: bounds.x - PARKED_OFFSET } : bounds);
+      tab.view.setBounds(bounds);
+      tab.view.setVisible(tab.id === activeId || tab.kind === "lens");
     }
+    const active = find(activeId);
+    // Adding a child view again raises it to the top.
+    if (active && window.contentView.children.at(-1) !== active.view) window.contentView.addChildView(active.view);
   }
 
   /** Each tab, whoever made it: listeners, popups, shortcuts, menu. */
