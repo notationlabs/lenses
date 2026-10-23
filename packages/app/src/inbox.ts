@@ -1,8 +1,8 @@
 /**
  * The inbox: pages that need the user, in the order they asked. A page joins
  * when a lens call stops at it with a needs_* outcome (a sign-in, say), and
- * leaves when a later call on it gets through, when it closes, or when the
- * user marks it done. Ignoring an item only quiets its notice.
+ * leaves when a later call on it gets through or when it closes. Ignoring an
+ * item only quiets its notice.
  */
 export interface InboxItem {
   /** The page's id (its webContents id). */
