@@ -242,6 +242,35 @@ export class BrowserModel {
     }
     const sessionId = source.sessionId || tabSession.sessionId;
     this._emit({ sessionId, method, params });
+    if (!source.sessionId) this._trackUrl(tabSession, method, params);
+  }
+
+  /**
+   * A tab's own debugger never reports Target.targetInfoChanged, which is how
+   * a client learns a page's URL (Puppeteer: target.url(), waitForTarget).
+   * Take it from the main frame's navigations, when the client has turned on
+   * Page events, and from the tab itself (onTabUpdated).
+   */
+  private _trackUrl(tabSession: TabSession, method: string, params: any): void {
+    const url =
+      method === "Page.frameNavigated" && !params?.frame?.parentId
+        ? params.frame.url
+        : method === "Page.navigatedWithinDocument" && params?.frameId === tabSession.targetInfo?.targetId
+          ? params.url
+          : undefined;
+    if (typeof url === "string") this._setUrl(tabSession, url);
+  }
+
+  /** As chrome.tabs.onUpdated: the tab's URL changed, whether or not a client watches its Page events. */
+  onTabUpdated(tabId: number, change: { url?: string }): void {
+    const tabSession = this._tabs.get(tabId)?.session;
+    if (tabSession && change.url) this._setUrl(tabSession, change.url);
+  }
+
+  private _setUrl(tabSession: TabSession, url: string): void {
+    if (!tabSession.targetInfo || tabSession.targetInfo.url === url) return;
+    tabSession.targetInfo = { ...tabSession.targetInfo, url };
+    this._emit({ method: "Target.targetInfoChanged", params: { targetInfo: { ...tabSession.targetInfo, attached: true } } });
   }
 
   onDebuggerDetach(source: Debuggee): void {
@@ -383,10 +412,14 @@ export class BrowserModel {
       }
       state.expectedTargetId = undefined;
 
+      // A popup attached as it opens has committed nothing yet, and reports
+      // no URL. Puppeteer counts a page as ready only once it has one; until
+      // its first load, it is showing the initial about:blank document.
+      const targetInfo = result?.targetInfo && { ...result.targetInfo, url: result.targetInfo.url || "about:blank" };
       const tabSession: TabSession = {
         tabId,
         sessionId: `pw-tab-${this._nextSessionId++}`,
-        targetInfo: result?.targetInfo,
+        targetInfo,
         childSessions: new Set(),
       };
       state.session = tabSession;

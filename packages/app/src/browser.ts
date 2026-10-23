@@ -210,6 +210,8 @@ export function createBrowser(options: BrowserOptions) {
   }
 
   function layout(): void {
+    // On quit the window goes first, then each tab's destroyed handler lands here.
+    if (window.isDestroyed()) return;
     const bounds = viewportBounds();
     for (const tab of tabs) {
       const parked = tab.id !== activeId;
@@ -315,13 +317,14 @@ export function createBrowser(options: BrowserOptions) {
     app.focus({ steal: true });
   }
 
-  function openUserTab(url?: string): void {
+  function openUserTab(url?: string): WebContents {
     const view = new WebContentsView({ webPreferences: TAB_PREFERENCES });
     const tab = adopt(view, "user", true);
     if (url) void view.webContents.loadURL(normaliseAddress(url)).catch(() => {});
     else focusAddress();
     show();
     if (url) tab.view.webContents.focus();
+    return view.webContents;
   }
 
   function focusAddress(): void {
@@ -533,6 +536,8 @@ export function createBrowser(options: BrowserOptions) {
       app.focus({ steal: true });
     },
     tabs: () => tabs.map(state),
+    /** Whether a page is a lens or user tab in the window; undefined for a popup. */
+    kindOf: (contents: WebContents): TabKind | undefined => byContents.get(contents.id)?.kind,
     activeId: () => activeId,
     resend: send,
   };
