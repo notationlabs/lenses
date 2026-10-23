@@ -3,7 +3,9 @@
  * connects to it as the broker (Puppeteer over /cdp) and as the user (/control).
  */
 import { spawn, type ChildProcess } from "node:child_process";
+import { createHmac } from "node:crypto";
 import { existsSync } from "node:fs";
+import { createServer, type AddressInfo } from "node:net";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import puppeteer, { type Browser } from "puppeteer-core";
@@ -27,8 +29,8 @@ export interface Harness {
   stop(): Promise<void>;
 }
 
-export async function startHarness(): Promise<Harness> {
-  const env = { ...process.env };
+export async function startHarness(extraEnv: Record<string, string> = {}): Promise<Harness> {
+  const env = { ...process.env, ...extraEnv };
   // Set in some shells (and by Electron-based editors); Electron would run as Node.
   delete env.ELECTRON_RUN_AS_NODE;
   const child = spawn(electronPath, [harnessMain], { cwd: appDir, env, stdio: ["ignore", "pipe", "pipe"] });
@@ -71,6 +73,74 @@ export async function startHarness(): Promise<Harness> {
     pages: () => control<PageInfo[]>("pages"),
     stop: () => stop(child, socket),
   };
+}
+
+/** A free port on this machine, for the broker. */
+export async function freePort(): Promise<number> {
+  const server = createServer();
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as AddressInfo;
+  await new Promise((resolve) => server.close(resolve));
+  return port;
+}
+
+export interface BrokerFrame {
+  type: string;
+  id?: string;
+  message?: string;
+  nonce?: string;
+  result?: any;
+}
+
+export interface BrokerClient {
+  frames: BrokerFrame[];
+  send(frame: object): void;
+  /** The frames of one call. */
+  framesFor(id: string): BrokerFrame[];
+  close(): void;
+}
+
+/** Talk to the broker as the CLI does: authenticate with the shared token, then send frames. */
+export async function connectBroker(port: number, token: string): Promise<BrokerClient> {
+  let socket: WebSocket | undefined;
+  // The broker starts listening a moment after the harness reports in.
+  for (let attempt = 0; !socket; attempt++) {
+    const candidate = new WebSocket(`ws://127.0.0.1:${port}`);
+    try {
+      await new Promise((resolve, reject) => candidate.once("open", resolve).once("error", reject));
+      socket = candidate;
+    } catch (error) {
+      if (attempt > 50) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+  const frames: BrokerFrame[] = [];
+  const open = socket;
+  open.on("message", (raw) => frames.push(JSON.parse(String(raw))));
+  const until = async (found: () => BrokerFrame | undefined) => {
+    for (let waited = 0; waited < 10_000; waited += 50) {
+      const frame = found();
+      if (frame) return frame;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    throw new Error("the broker did not answer");
+  };
+  const nonce = "harness-client-nonce-that-is-long-enough";
+  open.send(JSON.stringify({ type: "client-auth", nonce }));
+  const challenge = await until(() => frames.find((frame) => frame.type === "auth-challenge"));
+  open.send(JSON.stringify({ type: "auth-response", proof: authProof(token, nonce, challenge.nonce!) }));
+  await until(() => frames.find((frame) => frame.type === "status"));
+  return {
+    frames,
+    send: (frame) => open.send(JSON.stringify(frame)),
+    framesFor: (id) => frames.filter((frame) => frame.id === id),
+    close: () => open.close(),
+  };
+}
+
+/** As the client's broker-auth.ts proves itself. */
+function authProof(token: string, clientNonce: string, serverNonce: string): string {
+  return createHmac("sha256", token).update(`lenses-v1:client:${clientNonce}:${serverNonce}`).digest("base64url");
 }
 
 async function stop(child: ChildProcess, socket: WebSocket): Promise<void> {
