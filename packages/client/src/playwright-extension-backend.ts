@@ -214,6 +214,10 @@ function createPlaywrightExtensionTransport(
         // The controlled status page is now the lease anchor; the extension's
         // one-shot connection UI is no longer needed.
         await connectPage?.close().catch(() => {});
+        // The extension reports itself initialized before it activates the
+        // connect tab and focuses Chrome, so the restore above can land first.
+        // Nothing here needs the user: restore again once connected.
+        await restoreForegroundApplication(foreground);
         return connected;
       } catch (error) {
         dispose();

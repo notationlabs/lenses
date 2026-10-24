@@ -923,8 +923,8 @@ export function createCdpBackend(
       if (recorded !== undefined) {
         const reused = await pageForKey(browser, recorded);
         if (reused && sameSite(reused.url(), origin)) {
+          // Shown by the wait that follows (watchAuthGate), not here.
           keptGates.set(recorded, { page: reused, target, keptUrl: reused.url() });
-          await reveal(reused).catch(() => {});
           return true;
         }
         if (!reused && transport.tabLink?.(recorded)?.state === "disconnected") {
@@ -937,7 +937,6 @@ export function createCdpBackend(
         page = await openPage(browser);
         await settle(page.goto(target, { waitUntil: "load", timeout: 15_000 }));
         keptGates.set(gateKeyOf(page), { page, target, keptUrl: page.url() });
-        await reveal(page);
         return true;
       } catch {
         if (page) await page.close().catch(() => {});
@@ -1030,6 +1029,18 @@ export function createCdpBackend(
           if (mounted === current) current.prompt = prompt;
           else prompt.dispose();
         }
+        // The wait has begun on a tab that may sit behind other tabs and
+        // windows (a gate kept by an earlier call). This is the only place
+        // Chrome is raised: activate the tab first so the user lands on it.
+        // Show it once per wait, not on a resumed retry; a browser that
+        // refuses must not fail the call.
+        if (!resume && !disposed) {
+          try {
+            await reveal(page);
+          } catch (error) {
+            log(`could not bring sign-in tab t${key} to the front: ${errorMessage(error)}`);
+          }
+        }
         // Navigation may have continued while a previous attempt was running.
         // Retry that new location rather than waiting for a second navigation.
         const movedWhileRetrying = urlOrigin(page.url()) === origin && (
@@ -1077,8 +1088,9 @@ export function createCdpBackend(
       }
       return false;
     },
-    async findAuthGate(origin: string): Promise<AuthGate | undefined> {
+    async findAuthGate(origin, needsUser) {
       if (!browser?.connected) return undefined;
+      const current = browser;
       const watched = watchedGateOrigins.has(origin);
       for (const [key, kept] of keptGates) {
         const page = await gatePage(browser, key, kept);
@@ -1096,6 +1108,18 @@ export function createCdpBackend(
         if (sameGatePlace(page.url(), kept.keptUrl) || watched) {
           return { url: page.url(), target: kept.target };
         }
+      }
+      if (!needsUser) return undefined;
+      // A tab the user is signing in on, though no call kept it: the site's
+      // login form is open, and touching the tab (or fetching with the site's
+      // cookies) can send the user back to its first step. Keep it as the
+      // gate, so the wait watches it instead of opening another.
+      for (const page of await current.pages()) {
+        if (!usable(page, current) || urlOrigin(page.url()) !== origin) continue;
+        const url = page.url();
+        if (!(await needsUser({ url, title: "" }))) continue;
+        keptGates.set(gateKeyOf(page), { page, target: url, keptUrl: url });
+        return { url, target: url };
       }
       return undefined;
     },
@@ -1326,12 +1350,15 @@ export function createCdpBackend(
           target: cdpSession.target,
           keptUrl: cdpSession.page.url(),
         });
-        try {
-          // The page was opened in the background, so without this the
-          // sign-in page sits unseen behind whatever the user is doing.
-          await reveal(cdpSession.page, need);
-        } catch {
-          // The user may close the page while its call is still running.
+        // Stay in the background: only a sign-in wait (watchAuthGate) has
+        // something for the user to do, and it brings this tab forward. The
+        // Lenses app raises nothing; it lists the page in its inbox.
+        if (need && transport.reveal) {
+          try {
+            await transport.reveal(cdpSession.page, need);
+          } catch {
+            // The user may close the page while its call is still running.
+          }
         }
       } else if (!need && !cdpSession.page.isClosed()) {
         transport.settled?.(cdpSession.page);
