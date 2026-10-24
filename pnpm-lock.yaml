@@ -27,11 +27,11 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
 
-  packages/app:
+  app:
     dependencies:
       '@djgrant/lenses-client':
         specifier: workspace:*
-        version: link:../client
+        version: link:../packages/client
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
