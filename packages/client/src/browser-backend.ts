@@ -174,8 +174,17 @@ export interface BrowserBackend {
    * A sign-in gate for this origin: a tab a needs_* outcome kept open that is
    * still at the place it was kept. Must not launch a browser or open a tab;
    * an unreachable browser reports none.
+   *
+   * `needsUser` is the calling lens's needs_* rule: an open tab on the origin
+   * that it matches (the user part-way through signing in, with no gate kept
+   * yet) is a gate too, and is kept as one so the sign-in wait watches it
+   * rather than opening another. Only the tab's URL is read; the page is not
+   * touched.
    */
-  findAuthGate(origin: string): Promise<AuthGate | undefined>;
+  findAuthGate(
+    origin: string,
+    needsUser?: (place: { url: string; title: string }) => Promise<boolean>
+  ): Promise<AuthGate | undefined>;
   /** Read-only presence check. An auth retry must not open a browser tab. */
   hasOpenTarget?(target: string, choice?: TabChoice): Promise<boolean>;
   /** Show a sign-in tab for a needs_auth result, including HTTP-only calls. */

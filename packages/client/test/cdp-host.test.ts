@@ -133,7 +133,7 @@ describe("CDP sign-in gate", () => {
       isClosed() { return this.closed; }
       mainFrame() { return this; }
       async goto(url: string) { this.currentUrl = url; }
-      async bringToFront() {}
+      bringToFront = vi.fn(async () => {});
       async close() { this.closed = true; this.emit("close"); }
       navigate(url: string) { this.currentUrl = url; this.emit("framenavigated", this); }
     }
@@ -154,11 +154,15 @@ describe("CDP sign-in gate", () => {
     await host.acquire();
     expect(await host.openAuthGate(origin, target)).toBe(true);
     expect(browser.newPage).toHaveBeenCalledTimes(1);
+    // Opening the gate leaves it in the background; the wait shows it.
+    expect(page.bringToFront).not.toHaveBeenCalled();
     const exits: string[] = [];
     vi.useFakeTimers();
     try {
       let watch = await host.watchAuthGate(origin, (reason) => exits.push(reason));
       expect(watch).toBeDefined();
+      // The wait shows its sign-in tab once; resumed retries leave focus alone.
+      expect(page.bringToFront).toHaveBeenCalledTimes(1);
       page.navigate(`${origin}/login/password?step=1`);
       await vi.advanceTimersByTimeAsync(750);
       expect(exits).toEqual(["moved"]);
@@ -189,9 +193,15 @@ describe("CDP sign-in gate", () => {
       expect(exits).toEqual(["moved", "moved"]);
       watch!.dispose();
       expect(await host.findAuthGate(origin)).toBeUndefined();
+      expect(page.bringToFront).toHaveBeenCalledTimes(1);
       vi.useRealTimers();
       expect(await host.openAuthGate(origin, target)).toBe(true);
       expect(browser.newPage).toHaveBeenCalledTimes(2);
+      // A browser that refuses to raise the tab must not fail the wait.
+      page.bringToFront.mockRejectedValueOnce(new Error("no focus"));
+      watch = await host.watchAuthGate(origin, () => {});
+      expect(watch).toBeDefined();
+      watch!.dispose();
     } finally {
       await host.release();
     }

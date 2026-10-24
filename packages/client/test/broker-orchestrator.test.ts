@@ -215,6 +215,144 @@ describe("broker orchestration", () => {
     expect(backend.session.reloads).toBe(0);
   });
 
+  describe("while the user is signing in", () => {
+    const login = "https://example.com/login/step-two";
+    const home = "https://example.com/account";
+    // The HL shape: http, then a dom probe, then http again.
+    const signInSpec = () => domSpec({
+      url: home,
+      exceptions: {
+        needs_auth: { matches: "$contains($page.url, '/login') or $contains($res.url, '/login')" },
+      },
+      resolve: [
+        { kind: "http", credentials: true, request: { method: "GET", url: "https://example.com/api/account" }, map: "$res.body" },
+        { kind: "dom", fields: { title: { selector: "title" } } },
+        { kind: "http", credentials: true, request: { method: "GET", url: "https://example.com/api/account" }, map: "$res.body" },
+      ],
+    });
+    const signingIn = (gateUrl: string) => {
+      const backend = new FakeBackend("cdp");
+      backend.authGate = { url: gateUrl, target: home };
+      const fetches: string[] = [];
+      backend.httpFetch = async (request) => {
+        fetches.push(request.url);
+        return { url: request.url, method: request.method, status: 200, body: '{"ok":true}', timestamp: Date.now() };
+      };
+      const presence: string[] = [];
+      backend.hasOpenTarget = async (target) => {
+        presence.push(target);
+        return true;
+      };
+      return { backend, fetches, presence };
+    };
+    const result = (frames: BrokerFrame[]) => frames.find((frame) => frame.type === "result");
+
+    it("a retry neither binds, fetches nor looks for the tab while it is on the login pages", async () => {
+      const { backend, fetches, presence } = signingIn(login);
+      const frames: BrokerFrame[] = [];
+      await createBrokerOrchestrator([backend]).handle(
+        { type: "call", id: "retry", spec: signInSpec(), params: {}, timeoutMs: 500 },
+        (frame) => frames.push(frame), { authRetry: true, retry: {} }
+      );
+      expect(result(frames)).toMatchObject({ result: { kind: "outcome", name: "needs_auth", value: { url: login } }, authReplaySafe: true });
+      expect(backend.binds).toHaveLength(0);
+      expect(fetches).toHaveLength(0);
+      expect(presence).toHaveLength(0);
+    });
+
+    it("a second call waits on the sign-in instead of touching the tab", async () => {
+      const { backend, fetches } = signingIn(login);
+      const frames: BrokerFrame[] = [];
+      await createBrokerOrchestrator([backend]).handle(
+        { type: "call", id: "second", spec: signInSpec(), params: {}, timeoutMs: 500 },
+        (frame) => frames.push(frame)
+      );
+      expect(result(frames)).toMatchObject({ result: { kind: "outcome", name: "needs_auth" }, authReplaySafe: true });
+      expect(backend.binds).toHaveLength(0);
+      expect(fetches).toHaveLength(0);
+
+      // An http-only lens on the site does not fetch with its cookies either.
+      const httpOnly = { ...signInSpec(), resolve: [signInSpec().resolve[0]] };
+      const httpFrames: BrokerFrame[] = [];
+      await createBrokerOrchestrator([backend]).handle(
+        { type: "call", id: "http-only", spec: httpOnly, params: {}, timeoutMs: 500 },
+        (frame) => httpFrames.push(frame)
+      );
+      expect(result(httpFrames)).toMatchObject({ result: { kind: "outcome", name: "needs_auth", value: { url: login } } });
+      expect(fetches).toHaveLength(0);
+    });
+
+    it("a fresh call adopts the tab the user is signing in on, by its URL alone", async () => {
+      const { backend, fetches } = signingIn(login);
+      backend.authGate = undefined;
+      const places: string[] = [];
+      backend.findAuthGate = async (origin, needsUser) => {
+        if (origin !== "https://example.com" || !needsUser) return undefined;
+        places.push(login);
+        return (await needsUser({ url: login, title: "" })) ? { url: login, target: login } : undefined;
+      };
+      const frames: BrokerFrame[] = [];
+      await createBrokerOrchestrator([backend]).handle(
+        { type: "call", id: "fresh", spec: signInSpec(), params: {}, timeoutMs: 500 },
+        (frame) => frames.push(frame)
+      );
+      expect(places).not.toHaveLength(0);
+      expect(result(frames)).toMatchObject({ result: { kind: "outcome", name: "needs_auth", value: { url: login } } });
+      expect(backend.binds).toHaveLength(0);
+      expect(fetches).toHaveLength(0);
+    });
+
+    it("retries once after the tab leaves the login pages, then not again at the same place", async () => {
+      const { backend, fetches } = signingIn(login);
+      const orchestrator = createBrokerOrchestrator([backend]);
+      const retry = {};
+      const attempt = async () => {
+        const frames: BrokerFrame[] = [];
+        await orchestrator.handle(
+          { type: "call", id: "retry", spec: signInSpec(), params: {}, timeoutMs: 500 },
+          (frame) => frames.push(frame), { authRetry: true, retry }
+        );
+        return result(frames);
+      };
+      await attempt();
+      await attempt();
+      expect(fetches).toHaveLength(0);
+
+      // The user lands on a page that still reports needs_auth (an
+      // intermediate step the rule does not name): run once, then hold.
+      backend.authGate = { url: "https://example.com/security-check", target: home };
+      backend.httpFetch = async (request) => {
+        fetches.push(request.url);
+        return { url: "https://example.com/login/step-one", method: request.method, status: 200, body: "{}", timestamp: Date.now() };
+      };
+      expect(await attempt()).toMatchObject({ result: { kind: "outcome", name: "needs_auth" } });
+      expect(fetches).toHaveLength(1);
+      expect(await attempt()).toMatchObject({ result: { kind: "outcome", name: "needs_auth" } });
+      expect(fetches).toHaveLength(1);
+
+      // Signed in: the next place runs the call.
+      backend.authGate = { url: home, target: home };
+      backend.httpFetch = async (request) => {
+        fetches.push(request.url);
+        return { url: request.url, method: request.method, status: 200, body: '{"ok":true}', timestamp: Date.now() };
+      };
+      expect(await attempt()).toMatchObject({ result: { kind: "value", value: { ok: true } } });
+      expect(fetches).toHaveLength(2);
+    });
+
+    it("leaves the signed-in path alone", async () => {
+      const { backend, fetches } = signingIn(login);
+      backend.authGate = undefined;
+      const frames: BrokerFrame[] = [];
+      await createBrokerOrchestrator([backend]).handle(
+        { type: "call", id: "normal", spec: signInSpec(), params: {}, timeoutMs: 500 },
+        (frame) => frames.push(frame)
+      );
+      expect(result(frames)).toMatchObject({ result: { kind: "value", value: { ok: true } } });
+      expect(fetches).toHaveLength(1);
+    });
+  });
+
   it.each([
     {
       location: "document",
