@@ -725,4 +725,27 @@ describe("tabs the debugger loses", () => {
     await vi.waitFor(() => expect(exits).toEqual(["moved"]));
     prompt!.dispose();
   });
+
+  it("opens a new sign-in tab once a wait ends with the old one still detached", async () => {
+    const chrome = relayChrome();
+    const host = createCdpBackend(() => {}, chrome.transport as never);
+    const target = `${origin}/account-summary`;
+    const first = await host.bind(reuse(`${origin}/login`));
+    await host.finish(first, "keep");
+    chrome.detach("100");
+    chrome.retryFails("100");
+
+    // The wait watches the detached tab, unseen, and expires with it still detached.
+    await expect(host.bind(reuse())).rejects.toBeInstanceOf(TabDisconnected);
+    expect(await host.openAuthGate!(origin, target)).toBe(true);
+    const prompt = await host.watchAuthGate!(origin, () => {});
+    expect(prompt).toBeDefined();
+    prompt!.dispose();
+
+    // The next call leaves it behind and signs in on a tab of its own.
+    expect(await host.findAuthGate(origin)).toBeUndefined();
+    const next = await host.bind(reuse());
+    expect(next.tab).toBe("t101");
+    expect(next.created).toBe(true);
+  });
 });

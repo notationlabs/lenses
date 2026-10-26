@@ -586,6 +586,19 @@ export function createCdpBackend(
     return `tab ${id} is closed or no longer in the Lenses tab group`;
   }
 
+  /**
+   * Leave a detached sign-in tab behind: no gate, no reuse. The extension may
+   * re-attach it later; until then the origin's calls open a tab of their own.
+   */
+  function forgetTab(origin: string, key: string): void {
+    keptGates.delete(key);
+    signInRetries.delete(key);
+    if (reuseKeys.get(origin) === key) {
+      reuseKeys.delete(origin);
+      reuseTabs.delete(origin);
+    }
+  }
+
   function rememberReuse(origin: string, page: Page): void {
     reuseTabs.set(origin, page);
     const key = transport.tabKey?.(page);
@@ -1066,6 +1079,13 @@ export function createCdpBackend(
           mounted?.unmount();
           unlisten?.();
           currentBrowser.off("disconnected", browserGone);
+          // A detached tab can show no banner and cannot be raised, so a later
+          // wait on it would pass unseen. A wait that ends with the tab still
+          // detached leaves it behind; the next call opens one the user sees.
+          if (transport.tabLink?.(key)?.state === "disconnected") {
+            log(`sign-in tab t${key} is still detached after the wait; the next call opens another`);
+            forgetTab(origin, key);
+          }
         },
       };
     },
