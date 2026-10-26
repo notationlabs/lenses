@@ -4,3 +4,5 @@ packages:
 allowBuilds:
   electron: true
   esbuild: true
+minimumReleaseAgeExclude:
+  - '@pokit/*'
