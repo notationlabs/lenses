@@ -11,7 +11,6 @@ export default defineConfig({
       packages: [
         { file: 'packages/lenses/package.json', build: 'pnpm --filter @djgrant/lenses run build' },
       ],
-      verdaccio: true,
     }),
   ],
 });
