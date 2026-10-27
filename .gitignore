@@ -11,3 +11,6 @@ packages/lenses/SKILL.md
 benchmarks
 web
 .playwright-mcp/
+
+# Local post:publish hook (installs the published CLI into ~/npmbin)
+commands/publish.ts
