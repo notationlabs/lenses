@@ -204,6 +204,7 @@ export function createCdpBackend(
   let browserVersion = "";
   let connecting: Promise<Browser> | undefined;
   let endpointPresent = false;
+  let endpointProbing = false;
   let endpointPoll: ReturnType<typeof setInterval> | undefined;
   let released = false;
   let reconnectDelayMs = CONNECT_RETRY_MS;
@@ -378,6 +379,9 @@ export function createCdpBackend(
       }
     }
     browser = connected;
+    // A connection that works has no problem to report: drop any failure an
+    // earlier attempt recorded, so clients stop seeing it in status.
+    lastConnectionError = undefined;
     browserVersion = await connected.version();
     reconnectDelayMs = CONNECT_RETRY_MS;
     nextReconnectAt = 0;
@@ -412,20 +416,35 @@ export function createCdpBackend(
     }
     const fresh = !endpointPresent;
     endpointPresent = true;
-    if (released || available() || connecting) return;
+    if (released || available() || connecting || endpointProbing) return;
     if (!fresh && Date.now() < nextReconnectAt) return;
-    nextReconnectAt = Date.now() + reconnectDelayMs;
-    reconnectDelayMs = Math.min(
-      reconnectDelayMs * 2,
-      RECONNECT_BACKOFF_MAX_MS
-    );
-    void ensureBrowser(() => {}).catch((error) => {
-      log(
-        `cdp connection failed: ${
-          error instanceof Error ? error.message : String(error)
-        }`
-      );
-    });
+    endpointProbing = true;
+    void (async () => {
+      try {
+        // The endpoint file outlives Chrome and any debugging session, so
+        // its presence alone is not a connection waiting to happen. A dead
+        // endpoint is simply absence — remote debugging may not even be a
+        // transport this broker needs — so background polling must not
+        // record it as a connection error for clients to see. Only an
+        // explicit acquire (a call that actually needs this transport)
+        // reports a stale endpoint, via connectBrowser's probe.
+        if (!(await endpointLive())) return;
+        nextReconnectAt = Date.now() + reconnectDelayMs;
+        reconnectDelayMs = Math.min(
+          reconnectDelayMs * 2,
+          RECONNECT_BACKOFF_MAX_MS
+        );
+        await ensureBrowser(() => {});
+      } catch (error) {
+        log(
+          `cdp connection failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
+      } finally {
+        endpointProbing = false;
+      }
+    })();
   }
 
   async function reloadPage(page: Page, loadTimeoutMs: number): Promise<void> {

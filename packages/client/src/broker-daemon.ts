@@ -119,6 +119,7 @@ let inFlight = 0;
 let queuedCalls = 0;
 let activeCall: { id: string; type: "call" | "observe"; lens?: string; startedAt: number } | undefined;
 let lastBackendError: string | undefined;
+let lastBackendErrorSource: string | undefined;
 let idleTimer: ReturnType<typeof setTimeout> | undefined;
 let leaseReleaseRequested = false;
 let leaseReleaseInFlight: Promise<void> | undefined;
@@ -602,6 +603,11 @@ function currentStatus() {
   const backendInfo = backends.map((backend) => ({
     ...backend.info(),
     available: backend.available(),
+    // A working backend means another transport's last failure — e.g. the
+    // CDP fallback's stale remote-debugging endpoint, which nobody needs
+    // while the extension is connected — is not a problem that exists.
+    // Don't send it to clients as one.
+    ...(preferred.available() ? { diagnostic: undefined } : {}),
   }));
   const selected = preferred.available() ? preferred.info() : undefined;
   return {
@@ -619,8 +625,9 @@ function currentStatus() {
       concurrency: "serial_queue",
       activeCall: reportedActiveCall,
       queuedCalls,
-      lastBackendError:
-        lastBackendError ?? backendInfo.find((backend) => backend.diagnostic)?.diagnostic,
+      lastBackendError: preferred.available()
+        ? undefined
+        : lastBackendError ?? backendInfo.find((backend) => backend.diagnostic)?.diagnostic,
       reconnectAttempts: cdp.info().reconnectAttempts ?? 0,
     },
     advice: host ? undefined : describeGap(),
@@ -640,8 +647,16 @@ function describeGap(): string | undefined {
 }
 
 function rememberBackendError(backend: { info(): { name: string; diagnostic?: string } }): void {
-  const diagnostic = backend.info().diagnostic;
-  if (diagnostic) lastBackendError = `${backend.info().name}: ${diagnostic}`;
+  const info = backend.info();
+  if (info.diagnostic) {
+    lastBackendError = `${info.name}: ${info.diagnostic}`;
+    lastBackendErrorSource = info.name;
+  } else if (lastBackendErrorSource === info.name) {
+    // The backend that reported the remembered error has recovered; the
+    // problem no longer exists, so stop sending it to clients.
+    lastBackendError = undefined;
+    lastBackendErrorSource = undefined;
+  }
 }
 
 host?.started?.({ status: currentStatus });

@@ -301,6 +301,42 @@ describe("CDP host connection lifecycle", () => {
     expect(state.connect).not.toHaveBeenCalled();
   });
 
+  it("does not publish a stale endpoint found by background polling", async () => {
+    // Chrome leaves DevToolsActivePort behind when it quits, and remote
+    // debugging is only the fallback transport: a dead endpoint found by
+    // the background poll is absence, not a problem to show clients.
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new Error("connection refused");
+    }));
+    state.endpointAvailable = true;
+    state.connect = vi.fn(async () => fakeBrowser());
+    const host = createCdpBackend();
+    host.start();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    host.stop();
+
+    expect(state.connect).not.toHaveBeenCalled();
+    expect(host.available()).toBe(false);
+    expect(host.info().diagnostic).toBeUndefined();
+  });
+
+  it("stops reporting an earlier connection error once connected", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new Error("connection refused");
+    }));
+    state.endpointAvailable = true;
+    state.connect = vi.fn(async () => fakeBrowser());
+    const host = createCdpBackend();
+    await expect(host.acquire()).rejects.toThrow("not responding");
+    expect(host.info().diagnostic).toContain("not responding");
+
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 200 })));
+    await host.acquire();
+    expect(host.available()).toBe(true);
+    expect(host.info().diagnostic).toBeUndefined();
+    host.stop();
+  });
+
   it("shares an in-flight connection between monitoring and a request", async () => {
     const browser = fakeBrowser();
     let resolveConnection!: (browser: FakeBrowser) => void;
