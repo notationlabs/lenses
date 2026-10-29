@@ -372,6 +372,60 @@ describe("a sign-in the user started", () => {
   });
 });
 
+describe("a sign-in tab from an earlier connection", () => {
+  it("is forgotten once its tab is gone, so the next wait opens one the user sees", async () => {
+    // The extension reconnects; the old connection's page never hears that its tab closed.
+    const make = () => {
+      const pages: SpaPage[] = [];
+      const browser = Object.assign(new EventEmitter(), {
+        connected: true,
+        version: async () => "Chrome/144.0.0.0",
+        newPage: vi.fn(async () => {
+          const page = new SpaPage(() => browser);
+          pages.push(page);
+          return page;
+        }),
+        pages: async () => pages.filter((page) => !page.closed),
+      });
+      return { browser, pages };
+    };
+    let current = make();
+    const first = current;
+    let next = 0;
+    const keys = new WeakMap<SpaPage, string>();
+    const host = createCdpBackend(() => {}, {
+      name: "test", pollForConnection: false, retryConnect: false,
+      looksReady: () => true, probeLive: async () => true,
+      connect: async () => current.browser as never,
+      connectHint: () => "test", staleHint: () => "test",
+      tabKey: (page: SpaPage) => {
+        if (!keys.has(page)) keys.set(page, String(++next));
+        return keys.get(page);
+      },
+    } as never);
+    const session = await host.bind({
+      target: `${origin}/account-summary`, reuse: true, inPage: true, navigation: "reuse", loadTimeoutMs: 100,
+    });
+    await host.finish(session, "keep");
+    expect(await host.findAuthGate(origin)).toBeDefined();
+
+    first.browser.connected = false;
+    first.browser.emit("disconnected");
+    current = make();
+    await host.acquire();
+
+    expect(await host.findAuthGate(origin)).toBeUndefined();
+    expect(await host.openAuthGate?.(origin, `${origin}/account-summary`)).toBe(true);
+    expect(current.browser.newPage).toHaveBeenCalledTimes(1);
+    raised.order.length = 0;
+    const watch = await host.watchAuthGate?.(origin, () => {});
+    expect(watch).toBeDefined();
+    expect(current.pages[0].foregrounded).toBe(1);
+    expect(first.pages[0].foregrounded).toBe(0);
+    watch!.dispose();
+  });
+});
+
 describe("same-site reuse", () => {
   it("treats a bank's logout host as the same site, and other sites as not", () => {
     expect(sameSite("https://www.rbs.co.uk/business/logout.html", origin)).toBe(false); // bank.example fixture

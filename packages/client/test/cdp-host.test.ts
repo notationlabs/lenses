@@ -131,6 +131,7 @@ describe("CDP sign-in gate", () => {
       closed = false;
       url() { return this.currentUrl; }
       isClosed() { return this.closed; }
+      browser() { return browser; }
       mainFrame() { return this; }
       async goto(url: string) { this.currentUrl = url; }
       bringToFront = vi.fn(async () => {});

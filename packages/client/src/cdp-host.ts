@@ -500,9 +500,12 @@ export function createCdpBackend(
     return kept && !kept.detached ? kept : undefined;
   }
 
-  /** A kept gate's tab: its live page, "detached" while the group still holds it, or undefined once gone. */
+  /**
+   * A kept gate's tab: its live page, "detached" while the group still holds it, or undefined once gone.
+   * A page from an earlier connection is not live, even if it never saw its tab close: it is re-found by key.
+   */
   async function gatePage(current: Browser, key: string, kept: KeptGate): Promise<Page | "detached" | undefined> {
-    if (kept.page && !kept.page.isClosed()) return kept.page;
+    if (usable(kept.page, current)) return kept.page;
     const found = await pageForKey(current, key);
     if (found) {
       kept.page = found;

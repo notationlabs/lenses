@@ -472,6 +472,12 @@ class FakePage {
   reloadCount = 0;
   private responseListener?: (response: FakeResponse) => void;
 
+  constructor(private readonly owner: FakeBrowser) {}
+
+  browser(): FakeBrowser {
+    return this.owner;
+  }
+
   url(): string {
     return this.currentUrl;
   }
@@ -607,7 +613,7 @@ class FakeBrowser {
   }
 
   async newPage(): Promise<FakePage> {
-    const page = new FakePage();
+    const page = new FakePage(this);
     this.pagesCreated.push(page);
     return page;
   }
