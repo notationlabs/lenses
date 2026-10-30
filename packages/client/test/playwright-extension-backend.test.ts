@@ -50,7 +50,29 @@ describe("Playwright broker anchor", () => {
     expect(requested).toHaveBeenCalledOnce();
   });
 
-  it("closes the anchor without turning intentional release into another request", async () => {
+  it("schedules window.close on intentional release to let the extension ungroup cleanly", async () => {
+    let closeListener: (() => void) | undefined;
+    const page = {
+      on: (_event: string, listener: () => void) => {
+        closeListener = listener;
+      },
+      off: vi.fn(),
+      isClosed: () => false,
+      evaluate: vi.fn(async () => {}),
+      close: vi.fn(async () => closeListener?.()),
+    };
+    const requested = vi.fn();
+    const anchor = retainPlaywrightAnchor(page as never, requested);
+
+    await anchor.release();
+
+    expect(page.evaluate).toHaveBeenCalledOnce();
+    expect(page.close).not.toHaveBeenCalled();
+    expect(page.off).toHaveBeenCalledWith("close", closeListener);
+    expect(requested).not.toHaveBeenCalled();
+  });
+
+  it("falls back to closing the anchor when evaluate fails", async () => {
     let closeListener: (() => void) | undefined;
     const page = {
       on: (_event: string, listener: () => void) => {

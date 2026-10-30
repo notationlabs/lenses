@@ -274,7 +274,15 @@ export function retainPlaywrightAnchor(
     },
     async release() {
       dispose();
-      if (!page.isClosed()) await page.close().catch(() => {});
+      if (!page.isClosed()) {
+        try {
+          await page.evaluate(() => {
+            setTimeout(() => window.close(), 150);
+          });
+        } catch {
+          await page.close().catch(() => {});
+        }
+      }
     },
   };
 }
