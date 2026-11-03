@@ -1,5 +1,5 @@
 import { defineConfig } from '@pokit/core';
-import { release } from 'pok-plugins';
+import { docs, release } from 'pok-plugins';
 
 export default defineConfig({
   commandsDir: './commands',
@@ -12,5 +12,6 @@ export default defineConfig({
         { file: 'packages/lenses/package.json', build: 'pnpm --filter @djgrant/lenses run build' },
       ],
     }),
+    docs({ name: 'lenses-docs' }),
   ],
 });

@@ -11,3 +11,6 @@ packages/lenses/SKILL.md
 benchmarks
 web
 .playwright-mcp/
+docs/.generated
+docs/dist
+docs/.wrangler
