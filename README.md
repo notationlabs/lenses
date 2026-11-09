@@ -36,7 +36,7 @@ This simplified lens returns plan details and usage limits from claude.ai:
 
 ## Setup
 
-Lenses needs Node.js 22.12 and a Chrome browser with the Puppeteer extension.
+Lenses needs Node.js 22.12 and a Chrome browser with the Playwright extension.
 
 ```sh
 npm install @notation/lenses
