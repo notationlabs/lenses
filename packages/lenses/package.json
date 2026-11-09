@@ -65,10 +65,6 @@
     "zod": "^4.0.0"
   },
   "devDependencies": {
-    "@notation/lenses-cli": "workspace:*",
-    "@notation/lenses-client": "workspace:*",
-    "@notation/lenses-core": "workspace:*",
-    "@notation/lenses-mcp": "workspace:*",
     "tsup": "^8.5.1",
     "typescript": "^5.9.3"
   }
