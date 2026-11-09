@@ -8,6 +8,7 @@ artifacts/
 packages/cli/SKILL.md
 packages/lenses/README.md
 packages/lenses/SKILL.md
+packages/lenses/LICENSE
 benchmarks
 web
 .playwright-mcp/

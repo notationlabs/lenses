@@ -38,6 +38,7 @@ export default defineConfig({
   async onSuccess() {
     await Promise.all([
       cp(resolve(here, "../../README.md"), resolve(here, "README.md")),
+      cp(resolve(here, "../../LICENSE"), resolve(here, "LICENSE")),
       cp(resolve(here, "../../skill/SKILL.md"), resolve(here, "SKILL.md")),
       cp(resolve(here, "../core/src/page-functions.ts"), resolve(here, "dist/page-functions.ts")),
     ]);
