@@ -9,7 +9,7 @@ export default defineConfig({
       // The source packages remain separate private workspaces. One bundled
       // package is the complete public surface and the only publishable unit.
       packages: [
-        { file: 'packages/lenses/package.json', build: 'pnpm --filter @djgrant/lenses run build' },
+        { file: 'packages/lenses/package.json', build: 'pnpm --filter @notation/lenses run build' },
       ],
     }),
     docs({ name: 'lenses-docs' }),

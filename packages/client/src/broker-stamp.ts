@@ -71,7 +71,7 @@ function isModule(name: string): boolean {
 function coreModuleDir(): string | undefined {
   if (process.env.LENSES_BUNDLED === "1") return undefined;
   try {
-    return dirname(fileURLToPath(import.meta.resolve("@djgrant/lenses-core")));
+    return dirname(fileURLToPath(import.meta.resolve("@notation/lenses-core")));
   } catch {
     return undefined;
   }

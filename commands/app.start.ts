@@ -11,7 +11,7 @@ export const command = defineCommand({
     },
   },
   run: async (r, ctx) => {
-    await r.exec("pnpm --filter @djgrant/lenses-core --filter @djgrant/lenses-client --filter @djgrant/lenses-app build");
+    await r.exec("pnpm --filter @notation/lenses-core --filter @notation/lenses-client --filter @notation/lenses-app build");
     r.reporter.info(`Broker on ws://127.0.0.1:${ctx.context.port}. Try: lens call hn/top --catalog ./examples --port ${ctx.context.port}`);
     // Some shells (and Electron-based editors) set ELECTRON_RUN_AS_NODE, which runs Electron as plain Node.
     await r.exec(`cd app && env -u ELECTRON_RUN_AS_NODE LENS_BROKER_PORT=${ctx.context.port} npx electron .`);

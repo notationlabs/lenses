@@ -5,7 +5,7 @@
  * relay first, direct Chrome remote debugging as fallback.
  */
 import { WebSocket, WebSocketServer } from "ws";
-import { expandUrl, urlOrigin, type LensBridgeRequest } from "@djgrant/lenses-core";
+import { expandUrl, urlOrigin, type LensBridgeRequest } from "@notation/lenses-core";
 import { createBrokerAuthLeases } from "./auth-leases.js";
 import { createBrokerOrchestrator, type AuthRetryState } from "./broker-orchestrator.js";
 import { createCdpBackend } from "./cdp-host.js";

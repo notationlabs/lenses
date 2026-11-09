@@ -10,7 +10,7 @@ import {
   type InterceptedResponse,
   type LensResult,
   type LensSpec,
-} from "@djgrant/lenses-core";
+} from "@notation/lenses-core";
 
 const cdpState = vi.hoisted(() => ({
   browser: undefined as FakeBrowser | undefined,

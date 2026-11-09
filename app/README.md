@@ -6,7 +6,7 @@ app's broker on the usual port (4319), so nothing else changes.
 
 ```sh
 pnpm install && pnpm build
-pnpm --filter @djgrant/lenses-app start
+pnpm --filter @notation/lenses-app start
 ```
 
 Set `LENS_BROKER_PORT` to run beside an existing broker, then pass the same

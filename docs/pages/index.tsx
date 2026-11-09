@@ -22,7 +22,7 @@ export const Route = createFileRoute("/")({
 
 const github = "https://github.com/notationlabs/lenses";
 const examples = "git:github.com/notationlabs/lenses#main/examples";
-const install = "npm install -g @djgrant/lenses";
+const install = "npm install -g @notation/lenses";
 
 const frame = "page-wrap";
 const lead = "text-[18px] md:text-[20px] leading-[1.6] text-ink-2";
@@ -627,7 +627,7 @@ const interfaces: Tab[] = [
     label: "TypeScript",
     doc: { path: "manual/typescript", label: "Read the manual: TypeScript" },
     title: "src/top.ts",
-    source: `import { createLensClient } from "@djgrant/lenses";
+    source: `import { createLensClient } from "@notation/lenses";
 
 await using lenses = createLensClient({ catalog: ["./examples"] });
 

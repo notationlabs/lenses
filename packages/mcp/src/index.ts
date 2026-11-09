@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
-import { createLensClient, errorMessage } from "@djgrant/lenses-client";
+import { createLensClient, errorMessage } from "@notation/lenses-client";
 import { createLensMcpServer } from "./server.js";
 
 async function main(): Promise<void> {

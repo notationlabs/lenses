@@ -3,7 +3,7 @@
 The `lens` command runs lenses from a terminal or a script. Install it from npm:
 
 ```sh
-npm install @djgrant/lenses
+npm install @notation/lenses
 ```
 
 `lens --help` lists all commands, and `lens <command> --help` prints the help for one.

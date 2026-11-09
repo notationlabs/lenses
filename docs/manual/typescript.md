@@ -1,9 +1,9 @@
 # TypeScript
 
-Call lenses from Node.js 22.12 or later with `@djgrant/lenses`. `lens gen ts-sdk` generates types for your catalog, so results are typed.
+Call lenses from Node.js 22.12 or later with `@notation/lenses`. `lens gen ts-sdk` generates types for your catalog, so results are typed.
 
 ```sh
-npm install @djgrant/lenses
+npm install @notation/lenses
 ```
 
 ## Calling a lens
@@ -11,7 +11,7 @@ npm install @djgrant/lenses
 Call `hn/top` and branch on the result:
 
 ```ts
-import { createLensClient } from "@djgrant/lenses";
+import { createLensClient } from "@notation/lenses";
 
 await using lenses = createLensClient({ catalog: ["./examples"] });
 
@@ -91,7 +91,7 @@ try {
 
 To handle outcomes as branches instead of exceptions, use `call()`. It returns the same result object as the plain client, with the `value` branch typed.
 
-**The typed client cannot yet pass `allowWrites` or `tab`.** For lenses that change things, such as `chatgpt/send`, or calls that continue in an existing tab, use the plain client from `@djgrant/lenses`.
+**The typed client cannot yet pass `allowWrites` or `tab`.** For lenses that change things, such as `chatgpt/send`, or calls that continue in an existing tab, use the plain client from `@notation/lenses`.
 
 ## Recording a run
 

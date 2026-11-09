@@ -86,17 +86,17 @@ A query drives your browser, which is signed in to your accounts, so anything th
 
 ## Using the schema from code
 
-`@djgrant/lenses/graphql` exports the schema the CLI serves. It needs `graphql` 17:
+`@notation/lenses/graphql` exports the schema the CLI serves. It needs `graphql` 17:
 
 ```sh
-npm install @djgrant/lenses graphql@17
+npm install @notation/lenses graphql@17
 ```
 
 Run a query from a script:
 
 ```ts
-import { createLensClient, LensStore } from "@djgrant/lenses";
-import { buildLensSchema, createContext } from "@djgrant/lenses/graphql";
+import { createLensClient, LensStore } from "@notation/lenses";
+import { buildLensSchema, createContext } from "@notation/lenses/graphql";
 import { graphql } from "graphql";
 
 const client = createLensClient({ catalog: "./examples" });

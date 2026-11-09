@@ -13,7 +13,7 @@ import {
   type LensSpec,
   type ParamLensDefault,
   type ValidationIssue,
-} from "@djgrant/lenses-core";
+} from "@notation/lenses-core";
 import {
   BrowserBridge,
   type BrokerControlAction,

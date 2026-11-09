@@ -1,4 +1,4 @@
-import type { HttpFetchBody } from "@djgrant/lenses-core";
+import type { HttpFetchBody } from "@notation/lenses-core";
 
 /** Turn the protocol-safe body representation into the host's native BodyInit. */
 export function materialiseHttpBody(

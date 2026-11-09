@@ -9,7 +9,7 @@ import {
   type SavedFile,
   type LensResult,
   type LensSpec,
-} from "@djgrant/lenses-core";
+} from "@notation/lenses-core";
 
 /** Responses a file lens may read are far larger than ordinary JSON. */
 export const MAX_FILE_BODY_BYTES = 32 * 1024 * 1024;

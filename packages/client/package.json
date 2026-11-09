@@ -1,5 +1,5 @@
 {
-  "name": "@djgrant/lenses-client",
+  "name": "@notation/lenses-client",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -30,7 +30,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@djgrant/lenses-core": "workspace:*",
+    "@notation/lenses-core": "workspace:*",
     "puppeteer-core": "^25.3.0",
     "ws": "^8.18.0"
   },

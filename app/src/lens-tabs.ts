@@ -4,7 +4,7 @@
  * else is refused, the app's own windows included.
  */
 import { app, type WebContents } from "electron";
-import type { ElectronTabListener, ElectronTabs } from "@djgrant/lenses-client/electron-host";
+import type { ElectronTabListener, ElectronTabs } from "@notation/lenses-client/electron-host";
 
 /** As the Playwright Extension asks for a tab back after Chrome detaches its debugger. */
 const REANNOUNCE_MS = 150;

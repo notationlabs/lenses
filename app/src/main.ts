@@ -9,8 +9,8 @@ import { app, Menu, nativeImage, Tray } from "electron";
 import { createConnection } from "node:net";
 import { fileURLToPath } from "node:url";
 import { setTimeout as sleep } from "node:timers/promises";
-import { createLensClient } from "@djgrant/lenses-client";
-import { setElectronHost } from "@djgrant/lenses-client/electron-host";
+import { createLensClient } from "@notation/lenses-client";
+import { setElectronHost } from "@notation/lenses-client/electron-host";
 import { needLabel } from "./inbox.js";
 import { createLensesApp, type LensesApp } from "./lenses-app.js";
 import { prepareChromium } from "./pages.js";
@@ -75,7 +75,7 @@ async function startBroker(): Promise<void> {
       readStatus = broker.status;
     },
   });
-  await import("@djgrant/lenses-client/broker-daemon");
+  await import("@notation/lenses-client/broker-daemon");
 }
 
 /** A broker from a CLI or library client holds the port: ask it to go. */

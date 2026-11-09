@@ -7,7 +7,7 @@ Give an AI agent your lenses by adding the `lens-mcp` server to its MCP config. 
 Install the package globally, because the agent host runs `lens-mcp` as its own process:
 
 ```sh
-npm install -g @djgrant/lenses
+npm install -g @notation/lenses
 ```
 
 Add the server to the agent's MCP config:
@@ -89,11 +89,11 @@ It covers calling lenses, following `$lens` references, handling `needs_auth` an
 
 ## Embedding the server
 
-`createLensMcpServer` from `@djgrant/lenses/mcp` builds the same server around a client you configure. It returns an `McpServer` from `@modelcontextprotocol/server` with no transport attached:
+`createLensMcpServer` from `@notation/lenses/mcp` builds the same server around a client you configure. It returns an `McpServer` from `@modelcontextprotocol/server` with no transport attached:
 
 ```ts
-import { createLensClient } from "@djgrant/lenses";
-import { createLensMcpServer } from "@djgrant/lenses/mcp";
+import { createLensClient } from "@notation/lenses";
+import { createLensMcpServer } from "@notation/lenses/mcp";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 
 const client = createLensClient({ catalog: ["/Users/me/lenses/examples"] });

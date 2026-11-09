@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocket } from "ws";
-import type { LensBridgeRequest, LensResult, LensSpec } from "@djgrant/lenses-core";
+import type { LensBridgeRequest, LensResult, LensSpec } from "@notation/lenses-core";
 import { coordinateRespawn } from "./broker-respawn.js";
 import { BROKER_PROTOCOL, brokerBuild, type BrokerBuild } from "./broker-stamp.js";
 import { authProof, loadBrokerAuth, proofMatches } from "./broker-auth.js";

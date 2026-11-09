@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import puppeteer from "puppeteer-core";
 import { describe, expect, it, vi } from "vitest";
-import type { LensBridgeRequest, LensResult } from "@djgrant/lenses-core";
+import type { LensBridgeRequest, LensResult } from "@notation/lenses-core";
 import { createCdpBackend } from "../src/cdp-host.js";
 import { createBrokerOrchestrator, type BrokerFrame } from "../src/broker-orchestrator.js";
 

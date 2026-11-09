@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { defineConfig } from "tsup";
 
 const here = import.meta.dirname;
-const internalPackages = /^@djgrant\/lenses-(?:core|client)(?:\/|$)/;
+const internalPackages = /^@notation\/lenses-(?:core|client)(?:\/|$)/;
 
 export default defineConfig({
   entry: {
@@ -20,7 +20,7 @@ export default defineConfig({
   platform: "node",
   target: "node22",
   dts: true,
-  splitting: false,
+  splitting: true,
   sourcemap: true,
   clean: true,
   treeshake: true,
@@ -29,10 +29,10 @@ export default defineConfig({
   define: { "process.env.LENSES_BUNDLED": '"1"' },
   esbuildOptions(options) {
     options.alias = {
-      "@djgrant/lenses-core/graphql": resolve(here, "../core/src/graphql.ts"),
-      "@djgrant/lenses-core/page-stamp": resolve(here, "../core/src/page-stamp.ts"),
-      "@djgrant/lenses-core": resolve(here, "../core/src/index.ts"),
-      "@djgrant/lenses-client": resolve(here, "../client/src/index.ts"),
+      "@notation/lenses-core/graphql": resolve(here, "../core/src/graphql.ts"),
+      "@notation/lenses-core/page-stamp": resolve(here, "../core/src/page-stamp.ts"),
+      "@notation/lenses-core": resolve(here, "../core/src/index.ts"),
+      "@notation/lenses-client": resolve(here, "../client/src/index.ts"),
     };
   },
   async onSuccess() {

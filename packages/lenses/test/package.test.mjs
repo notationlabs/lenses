@@ -9,7 +9,7 @@ const packageRoot = resolve(here, "..");
 const dist = join(packageRoot, "dist");
 
 test("the public root exposes the client", async () => {
-  const lenses = await import("@djgrant/lenses");
+  const lenses = await import("@notation/lenses");
   assert.equal(typeof lenses.createLensClient, "function");
   const client = lenses.createLensClient({ catalog: [] });
   assert.deepEqual(await client.list(), []);
@@ -17,9 +17,9 @@ test("the public root exposes the client", async () => {
 });
 
 test("public subpaths expose core and MCP APIs", async () => {
-  const core = await import("@djgrant/lenses/core");
-  const mcp = await import("@djgrant/lenses/mcp");
-  const { pageFunctionsStamp } = await import("@djgrant/lenses/page-stamp");
+  const core = await import("@notation/lenses/core");
+  const mcp = await import("@notation/lenses/mcp");
+  const { pageFunctionsStamp } = await import("@notation/lenses/page-stamp");
   assert.equal(typeof core.evaluate, "function");
   assert.equal(typeof mcp.createLensMcpServer, "function");
   assert.match(pageFunctionsStamp(), /^[0-9a-f]{16}$/);
@@ -29,7 +29,7 @@ test("bundled output has no private workspace imports", async () => {
   for (const path of await files(dist)) {
     if (extname(path) !== ".js" && !path.endsWith(".d.ts")) continue;
     const contents = await readFile(path, "utf8");
-    assert.doesNotMatch(contents, /@djgrant\/lenses-(?:core|client|cli|mcp)(?:["/])/);
+    assert.doesNotMatch(contents, /@notation\/lenses-(?:core|client|cli|mcp)(?:["/])/);
   }
 });
 
