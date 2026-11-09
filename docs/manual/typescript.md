@@ -91,7 +91,7 @@ try {
 
 To handle outcomes as branches instead of exceptions, use `call()`. It returns the same result object as the plain client, with the `value` branch typed.
 
-**The typed client cannot yet pass `allowWrites` or `tab`.** For lenses that change things, such as `chatgpt/send`, or calls that continue in an existing tab, use the plain client from `@notation/lenses`.
+The typed client accepts the same call options as the plain client, including `allowWrites` and `tab`.
 
 ## Recording a run
 

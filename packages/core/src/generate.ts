@@ -63,6 +63,7 @@ export function generateTsSdk(specs: LensSpec[]): string {
 import { createLensClient as createBaseClient } from "@notation/lenses";
 export { LensOutcomeError, LensResultError } from "@notation/lenses";
 import type {
+  LensCall as BaseLensCall,
   LensCallResult as BaseLensCallResult,
   LensClient as BaseLensClient,
   LensClientOptions,
@@ -87,6 +88,8 @@ type RequiredKeys<P> = {
 
 type ParamsArg<P> = [RequiredKeys<P>] extends [never] ? { params?: P } : { params: P };
 
+type CallOptions = Omit<BaseLensCall, "lens" | "params">;
+
 /** A call result whose value branch is narrowed to the lens's declared shape. */
 export type LensCallResult<Result> =
   | (Extract<BaseLensCallResult, { kind: "value" }> & { value: Result })
@@ -95,11 +98,11 @@ export type LensCallResult<Result> =
 /** The client from \`@notation/lenses\` with \`call\` and \`value\` typed against the generated lens map. */
 export interface LensClient extends Omit<BaseLensClient, "call" | "value"> {
   call<Name extends LensName>(
-    input: { lens: Name; timeoutMs?: number; strict?: boolean; noCache?: boolean; authLeaseMs?: number; outDir?: string } & ParamsArg<Lenses[Name]["params"]>
+    input: { lens: Name } & CallOptions & ParamsArg<Lenses[Name]["params"]>
   ): Promise<LensCallResult<Lenses[Name]["result"]>>;
   /** \`call()\` unwrapped: the value, or a thrown LensOutcomeError / LensResultError. */
   value<Name extends LensName>(
-    input: { lens: Name; timeoutMs?: number; strict?: boolean; noCache?: boolean; authLeaseMs?: number; outDir?: string } & ParamsArg<Lenses[Name]["params"]>
+    input: { lens: Name } & CallOptions & ParamsArg<Lenses[Name]["params"]>
   ): Promise<Lenses[Name]["result"]>;
 }
 
