@@ -14,10 +14,15 @@ export default defineConfig({
       pagesDirectory: "pages",
       logo: "./views/logo.tsx",
       version: { packageJson: "packages/lenses/package.json" },
+      basePath: "/lenses",
       deployment: {
         name: "lenses-docs", // Cloudflare Worker name
         compatibilityDate: "2025-09-24",
         compatibilityFlags: ["nodejs_compat"],
+        routes: [
+          { pattern: "notation.dev/lenses", zoneName: "notation.dev" },
+          { pattern: "notation.dev/lenses/*", zoneName: "notation.dev" },
+        ],
       },
     }),
   ],
