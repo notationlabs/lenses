@@ -21,7 +21,6 @@ export default defineConfig({
   target: "node22",
   dts: true,
   splitting: true,
-  sourcemap: true,
   clean: true,
   treeshake: true,
   noExternal: [internalPackages],
