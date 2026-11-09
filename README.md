@@ -117,13 +117,6 @@ pnpm build
 pnpm test   # needs Bun
 ```
 
-| Path | Contents |
-|---|---|
-| `packages/lenses` | `@notation/lenses`, the public package |
-| `packages/core` | Lens specs, validation, and the resolver engine |
-| `packages/client` | The client and the broker |
-| `packages/cli` | The `lens` CLI |
-| `packages/mcp` | The MCP server |
-| `examples` | Example lenses |
+The public package `@notation/lenses` bundles the private workspace packages in `packages/`. Example lenses are in `examples/`.
 
 Planned work is in [ROADMAP.md](./ROADMAP.md).
