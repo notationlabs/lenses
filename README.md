@@ -51,10 +51,12 @@ Calls go through a local broker process on port 4319.
 
 ## TypeScript
 
+Call a lens with the client:
+
 ```ts
 import { createLensClient } from "@notation/lenses";
 
-await using lenses = await createLensClient({
+await using lenses = createLensClient({
   catalog: ["git:github.com/notationlabs/lenses#main/examples"],
 });
 
@@ -63,11 +65,28 @@ const result = await lenses.call({ lens: "claude/usage" });
 
 A catalog is a directory or git repository of lens documents. `call` returns one of three things:
 
-- a `value` that matches the lens's `returns` type
+- a `value`, typed as `unknown`
 - a named `outcome`, such as `needs_auth`
 - an `error`
 
-`lens gen ts-sdk` generates a client with typed parameters and results for each lens in a catalog.
+### Typed client
+
+To get typed parameters and results, generate a client from the catalog:
+
+```sh
+lens gen ts-sdk ./examples -o src/lenses.gen.ts
+```
+
+```ts
+import { createLensClient } from "./lenses.gen.js";
+
+await using lenses = createLensClient({ catalog: ["./examples"] });
+
+const usage = await lenses.value({ lens: "claude/usage" });
+usage.plan; // string
+```
+
+`value()` returns the value and throws on an outcome or an error. Run the generator again after you change a lens.
 
 ## CLI
 
