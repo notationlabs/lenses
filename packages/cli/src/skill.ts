@@ -4,10 +4,9 @@ import { fileURLToPath } from "node:url";
 /**
  * Agent skill for the lens CLI, printed by `lens skill` in SKILL.md format.
  * The canonical source is `skill/SKILL.md` at the repo root (kept there so it is
- * discoverable on GitHub). `build` copies it to this package's root so the
- * published tarball is self-contained; the repo-root path is the fallback for
- * running from source (bun) before a build has run. Both `src/` and `dist/` sit
- * one level under the package, so the packaged copy resolves the same from each.
+ * discoverable on GitHub). The @notation/lenses build copies it next to `dist/`,
+ * so the published tarball is self-contained. Running from source falls back
+ * to the repo-root path.
  */
 function loadSkill(): string {
   const packaged = new URL("../SKILL.md", import.meta.url);

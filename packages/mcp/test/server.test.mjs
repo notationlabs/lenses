@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { InMemoryTransport } from "@modelcontextprotocol/server";
-import { createLensMcpServer } from "../dist/server.js";
+import { createLensMcpServer } from "../src/server.ts";
 
 async function connect(server) {
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
