@@ -55,14 +55,14 @@ Chrome 144+ remote debugging is always available as the fallback. Enable it at `
 
 ## TypeScript client
 
-`@djgrant/lenses` is the single public package. Its root export is the primary client API:
+`@notation/lenses` is the single public package. Its root export is the primary client API:
 
 ```sh
-npm install @djgrant/lenses
+npm install @notation/lenses
 ```
 
 ```ts
-import { createLensClient } from "@djgrant/lenses";
+import { createLensClient } from "@notation/lenses";
 
 await using lenses = await createLensClient({
   catalog: [
@@ -143,7 +143,7 @@ const observation = await lenses.observe({
 
 ## CLI
 
-`@djgrant/lenses` also installs the `lens` command. It prints JSON to stdout and uses a
+`@notation/lenses` also installs the `lens` command. It prints JSON to stdout and uses a
 non-zero exit status for command and lens errors. Pass `--verbose` to write timestamped
 broker and call diagnostics to stderr without contaminating the JSON output. Every
 command has focused help, for example `lens call --help`.
@@ -197,7 +197,7 @@ if (result.kind === "outcome") result.name; // e.g. "needs_auth"
 `value()` throws `LensOutcomeError` (`{outcome, value, hint}` — `hint` carries the
 remediation text declared in the lens document's `exceptions`) for outcome results, and
 `LensResultError` (`{message, issues, lens, callId}`) for error results. Broker timeout messages also include the recording call ID (when recording) and last reported progress. A non-idempotent perform timeout additionally carries `mutation`: `performStarted`, `lastAcknowledgedStep`, `submissionMayHaveHappened`, and `performed` (`"no"`, `"yes"`, or `"unknown"`). Treat `performed: "unknown"` as unsafe to retry without checking the target application. Both classes are exported
-from `@djgrant/lenses` and from the generated SDK, so callers can catch and
+from `@notation/lenses` and from the generated SDK, so callers can catch and
 branch on `error.outcome`.
 
 Resolved values are validated against the same derived schema. A violation is an
@@ -226,7 +226,7 @@ bun packages/cli/src/index.ts call hn/top
 
 ## MCP
 
-The `lens-mcp` binary in `@djgrant/lenses` is a thin stdio adapter over the client. After installing
+The `lens-mcp` binary in `@notation/lenses` is a thin stdio adapter over the client. After installing
 the package globally, configure it with the lens catalog:
 
 ```json
@@ -266,7 +266,7 @@ expression can be iterated on offline before it goes into a lens document.
 
 ```text
 application ─┐                                              ┌─ Playwright Extension ─► Chrome
-lens CLI ────┼─► @djgrant/lenses ── WebSocket ──► broker ┤
+lens CLI ────┼─► @notation/lenses ── WebSocket ──► broker ┤
 lens MCP ────┘                           │             └─ CDP fallback
                               core resolver engine
 ```
@@ -483,7 +483,7 @@ Run `pok lens validate` to validate every document under `examples/`.
 
 | path | package | responsibility |
 |---|---|---|
-| `packages/lenses` | `@djgrant/lenses` | Bundled public package: client, core, CLI, and MCP |
+| `packages/lenses` | `@notation/lenses` | Bundled public package: client, core, CLI, and MCP |
 | `packages/core` | private workspace | Specs, validation, JSONata, resolver engine |
 | `packages/client` | private workspace | Lens orchestration and persistent browser broker |
 | `packages/cli` | private workspace | JSON command-line adapter |

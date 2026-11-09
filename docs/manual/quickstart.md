@@ -106,11 +106,11 @@ Sign in to claude.ai in Chrome and run it again to get your usage.
 ## Call from TypeScript
 
 ```sh
-npm install @djgrant/lenses
+npm install @notation/lenses
 ```
 
 ```ts
-import { createLensClient } from "@djgrant/lenses";
+import { createLensClient } from "@notation/lenses";
 
 await using lenses = createLensClient({ catalog: "git:github.com/notationlabs/lenses#main/examples" });
 

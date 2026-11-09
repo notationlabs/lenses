@@ -33,7 +33,7 @@ import {
   type PerformResult,
   type PerformStep,
   type PerformWait,
-} from "@djgrant/lenses-core";
+} from "@notation/lenses-core";
 import type {
   BackendHttpRequest,
   BindRequest,

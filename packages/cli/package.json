@@ -1,5 +1,5 @@
 {
-  "name": "@djgrant/lenses-cli",
+  "name": "@notation/lenses-cli",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -15,8 +15,8 @@
     "build": "cp ../../skill/SKILL.md ./SKILL.md && tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@djgrant/lenses-core": "workspace:*",
-    "@djgrant/lenses-client": "workspace:*",
+    "@notation/lenses-core": "workspace:*",
+    "@notation/lenses-client": "workspace:*",
     "graphql": "^17.0.2"
   },
   "devDependencies": {

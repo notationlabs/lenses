@@ -1,17 +1,17 @@
 # TypeScript Client
 
-`@djgrant/lenses` calls lenses from Node.js.
+`@notation/lenses` calls lenses from Node.js.
 
 The package is ESM only and needs Node.js 22.12.0 or later:
 
 ```sh
-npm install @djgrant/lenses
+npm install @notation/lenses
 ```
 
 Print the Hacker News front page:
 
 ```ts
-import { createLensClient } from "@djgrant/lenses";
+import { createLensClient } from "@notation/lenses";
 
 await using lenses = createLensClient({ catalog: "./examples" });
 
@@ -162,7 +162,7 @@ class LensResultError extends Error {
 Catch a signed-out page:
 
 ```ts
-import { LensOutcomeError } from "@djgrant/lenses";
+import { LensOutcomeError } from "@notation/lenses";
 
 try {
   await lenses.value({ lens: "claude/usage" });
@@ -266,10 +266,10 @@ shutdownBroker(timeoutMs?: number): Promise<{ shuttingDown: boolean }>
 
 ## Subpath exports
 
-- `@djgrant/lenses/core` works on lens files without a browser. It includes `validateSpec`, which checks a lens file, and `generateTsSdk`, which writes the typed SDK below.
-- `@djgrant/lenses/graphql` exports `buildLensSchema(specs)`, which builds a GraphQL schema from lens files, and `createContext(client, maxCalls)`. See [GraphQL](../manual/graphql.md).
-- `@djgrant/lenses/mcp` exports `createLensMcpServer(client)`, an MCP server that offers the client's lenses as tools. See [Agents](../manual/agents.md).
-- `@djgrant/lenses/page-stamp` exports `pageFunctionsStamp()`, a hash of the code the broker runs inside pages.
+- `@notation/lenses/core` works on lens files without a browser. It includes `validateSpec`, which checks a lens file, and `generateTsSdk`, which writes the typed SDK below.
+- `@notation/lenses/graphql` exports `buildLensSchema(specs)`, which builds a GraphQL schema from lens files, and `createContext(client, maxCalls)`. See [GraphQL](../manual/graphql.md).
+- `@notation/lenses/mcp` exports `createLensMcpServer(client)`, an MCP server that offers the client's lenses as tools. See [Agents](../manual/agents.md).
+- `@notation/lenses/page-stamp` exports `pageFunctionsStamp()`, a hash of the code the broker runs inside pages.
 
 ## Generated SDK
 
@@ -295,7 +295,7 @@ TypeScript rejects an unknown lens name or a wrong parameter type. The module al
 **The typed `call` and `value` do not accept `allowWrites` or `tab`.** To call a lens that changes things, such as `chatgpt/send`, cast to the base `LensClient`. The object is the same, so the cast is safe:
 
 ```ts
-import type { LensClient } from "@djgrant/lenses";
+import type { LensClient } from "@notation/lenses";
 
 await (lenses as unknown as LensClient).call({
   lens: "chatgpt/send",

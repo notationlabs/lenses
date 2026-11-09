@@ -5,7 +5,7 @@ You need Node.js 22.12 or later and Google Chrome.
 ## 1. Install the package
 
 ```sh
-npm install -g @djgrant/lenses
+npm install -g @notation/lenses
 ```
 
 This installs the `lens` CLI, the `lens-mcp` server and the TypeScript library. Without `-g`, run the CLI with `npx lens`.

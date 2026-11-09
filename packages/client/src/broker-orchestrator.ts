@@ -14,7 +14,7 @@ import {
   type LensSpec,
   type MutationState,
   type PerformStep,
-} from "@djgrant/lenses-core";
+} from "@notation/lenses-core";
 import { MAX_FILE_BODY_BYTES, outDirProblem, saveFile } from "./file-output.js";
 import { materialiseHttpBody } from "./http-body.js";
 import { RecordingMonitor } from "./recording-monitor.js";

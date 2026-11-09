@@ -5,7 +5,7 @@ import { homedir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
-import { matchUrlGlob, validateExceptions, validateSpec, type ExceptionMap, type LensSpec } from "@djgrant/lenses-core";
+import { matchUrlGlob, validateExceptions, validateSpec, type ExceptionMap, type LensSpec } from "@notation/lenses-core";
 
 const run = promisify(execFile);
 

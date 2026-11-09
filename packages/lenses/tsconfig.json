@@ -3,10 +3,10 @@
   "compilerOptions": {
     "baseUrl": ".",
     "paths": {
-      "@djgrant/lenses-core": ["../core/src/index.ts"],
-      "@djgrant/lenses-core/graphql": ["../core/src/graphql.ts"],
-      "@djgrant/lenses-core/page-stamp": ["../core/src/page-stamp.ts"],
-      "@djgrant/lenses-client": ["../client/src/index.ts"]
+      "@notation/lenses-core": ["../core/src/index.ts"],
+      "@notation/lenses-core/graphql": ["../core/src/graphql.ts"],
+      "@notation/lenses-core/page-stamp": ["../core/src/page-stamp.ts"],
+      "@notation/lenses-client": ["../client/src/index.ts"]
     }
   },
   "include": [

@@ -10,7 +10,7 @@
   },
   "packageManager": "pnpm@11.17.0",
   "devDependencies": {
-    "@djgrant/lenses-core": "workspace:*",
+    "@notation/lenses-core": "workspace:*",
     "@pokit/core": "^1.0.1",
     "@pokit/terminal": "^1.0.1",
     "pok-plugins": "github:djgrant/pok-plugins",

@@ -16,8 +16,8 @@ export const command = defineCommand({
     },
   },
   run: async (r, ctx) => {
-    await r.exec("pnpm --filter @djgrant/lenses-core --filter @djgrant/lenses-client build");
+    await r.exec("pnpm --filter @notation/lenses-core --filter @notation/lenses-client build");
     const env = [ctx.context.visible && "HARNESS_VISIBLE=1", ctx.context.trace && "HARNESS_TRACE=1"].filter(Boolean).join(" ");
-    await r.exec(`${env} pnpm --filter @djgrant/lenses-app test`.trim());
+    await r.exec(`${env} pnpm --filter @notation/lenses-app test`.trim());
   },
 });

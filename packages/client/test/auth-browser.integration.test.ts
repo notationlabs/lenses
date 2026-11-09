@@ -2,7 +2,7 @@ import { createServer } from "node:http";
 import { existsSync } from "node:fs";
 import puppeteer from "puppeteer-core";
 import { describe, expect, it, vi } from "vitest";
-import type { LensBridgeRequest } from "@djgrant/lenses-core";
+import type { LensBridgeRequest } from "@notation/lenses-core";
 import { createCdpBackend } from "../src/cdp-host.js";
 import { createBrokerOrchestrator, type BrokerFrame } from "../src/broker-orchestrator.js";
 import { createBrokerAuthLeases } from "../src/auth-leases.js";

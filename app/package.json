@@ -1,5 +1,5 @@
 {
-  "name": "@djgrant/lenses-app",
+  "name": "@notation/lenses-app",
   "version": "0.1.0",
   "private": true,
   "description": "Lenses as a desktop app: the broker and its own browser in one Electron app.",
@@ -11,7 +11,7 @@
     "test": "tsc -p tsconfig.test.json && vitest run"
   },
   "dependencies": {
-    "@djgrant/lenses-client": "workspace:*"
+    "@notation/lenses-client": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

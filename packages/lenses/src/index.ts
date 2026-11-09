@@ -1,1 +1,1 @@
-export * from "@djgrant/lenses-client";
+export * from "@notation/lenses-client";
