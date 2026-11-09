@@ -2,11 +2,11 @@
 
 A lens is a JSON document that turns a webpage, or the API behind it, into a typed function. A call to a lens runs with your existing signed-in browser session. You do not export cookies or run scraping infrastructure.
 
-You can call lenses from TypeScript, from the `lens` CLI, or from an MCP server. All three use the same client.
+You can call lenses from TypeScript, from the `lens` CLI, or from an MCP server.
 
 ## Example lens
 
-This lens, trimmed, returns your plan and usage limits from claude.ai:
+This simplified lens returns plan details and usage limits from claude.ai:
 
 ```jsonc
 {
@@ -34,11 +34,9 @@ This lens, trimmed, returns your plan and usage limits from claude.ai:
 | `dom` | Reads fields from the rendered page with CSS selectors. |
 | `llm` | Returns a page snapshot and a prompt for the caller's own model. |
 
-A lens with only credential-free `http` resolvers does not need a browser.
-
 ## Setup
 
-Lenses needs Node.js 22.12 or later. Lenses that read from a browser also need Chrome.
+Lenses needs Node.js 22.12 and a Chrome browser with the Puppeteer extension.
 
 ```sh
 npm install @notation/lenses
@@ -49,7 +47,7 @@ Lenses controls Chrome in one of two ways:
 1. Through [Playwright Extension](https://chromewebstore.google.com/detail/playwright-extension/mmlmfjhmonkocbjadbfplnigmagldckm). This is the preferred option. Set `PLAYWRIGHT_MCP_EXTENSION_TOKEN` to skip repeated approval.
 2. Through Chrome remote debugging, as a fallback. Enable it at `chrome://inspect/#remote-debugging`.
 
-Calls go through a local broker process on port 4319. The first call starts the broker, and it starts Chrome if Chrome is not running. The broker exits on its own when it is idle.
+Calls go through a local broker process on port 4319.
 
 ## TypeScript
 
@@ -83,7 +81,11 @@ lens call chatgpt/send -c $CATALOG --params '{"message":"hello"}' --allow-writes
 lens observe https://github.com/notifications --html
 ```
 
-Lenses that change data, such as sending a message, run only when the caller passes `--allow-writes`. `lens observe` shows the requests and page text you need to write a new lens. Run `lens <command> --help` for each command's options.
+Lenses that change data, such as sending a message, run only when the caller passes `--allow-writes`. 
+
+`lens observe` shows the requests and page text that an agent needs to write a new lens. 
+
+Run `lens <command> --help` for each command's options.
 
 ## MCP
 
@@ -109,12 +111,3 @@ The `lens-mcp` binary exposes `lens_list`, `lens_call`, and `lens_observe` over 
 - [CLI reference](docs/api/cli.md)
 - [Broker](docs/manual/broker.md)
 
-## Development
-
-```sh
-pnpm install
-pnpm build
-pnpm test   # needs Bun
-```
-
-The public package `@notation/lenses` bundles the private workspace packages in `packages/`. Example lenses are in `examples/`.
