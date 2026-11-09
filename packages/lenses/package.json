@@ -51,7 +51,7 @@
     "access": "public"
   },
   "scripts": {
-    "build": "tsup",
+    "build": "tsc -p tsconfig.json --noEmit && tsup",
     "pretest": "pnpm run build",
     "test": "node --test test/package.test.mjs"
   },

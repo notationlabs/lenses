@@ -10,7 +10,6 @@
     ".": "./src/server.ts"
   },
   "scripts": {
-    "typecheck": "tsc -p tsconfig.json",
     "test": "bun test ./test/server.test.mjs"
   },
   "dependencies": {

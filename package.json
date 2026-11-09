@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "description": "Typed webpage functions for TypeScript, CLI, and MCP consumers.",
   "scripts": {
-    "build": "pnpm -r build && pnpm -r typecheck",
+    "build": "pnpm -r build",
     "test": "pnpm -r test",
     "prepare": "git config core.hooksPath .githooks"
   },

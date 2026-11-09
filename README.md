@@ -45,6 +45,8 @@ pnpm install
 pnpm build
 ```
 
+Repository development also needs [Bun](https://bun.sh): `pnpm test` runs the MCP package's tests with `bun test`.
+
 For the streamlined path, install [Playwright Extension](https://chromewebstore.google.com/detail/playwright-extension/mmlmfjhmonkocbjadbfplnigmagldckm) from the Chrome Web Store. The first browser-backed call opens the extension's connect page: pick the tabs Lenses may control (they join a **Lenses** tab group). New tabs the broker creates are attached automatically and share your normal profile cookies. Chrome shows a persistent debugger infobar on attached tabs. Set `PLAYWRIGHT_MCP_EXTENSION_TOKEN` (copied from the extension's status page) to skip repeated approval. Direct Chrome remote debugging remains the fallback: enable it at `chrome://inspect/#remote-debugging`.
 
 Calls run through a persistent local broker on port 4319; the first client starts it automatically, and CLI, MCP, and library clients share it.
