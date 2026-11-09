@@ -101,13 +101,3 @@ The `lens-mcp` binary exposes `lens_list`, `lens_call`, and `lens_observe` over 
   }
 }
 ```
-
-## Documentation
-
-- [Quick start](docs/manual/quickstart.md)
-- [Writing lenses](docs/manual/write-lenses.md)
-- [Lens document reference](docs/api/lens-document.md)
-- [Resolvers](docs/api/resolvers.md)
-- [CLI reference](docs/api/cli.md)
-- [Broker](docs/manual/broker.md)
-
