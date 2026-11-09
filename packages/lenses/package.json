@@ -2,6 +2,13 @@
   "name": "@notation/lenses",
   "version": "0.2.0",
   "description": "Typed webpage functions for TypeScript, CLI, and MCP consumers.",
+  "license": "MIT",
+  "author": "Daniel Grant",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/notationlabs/lenses.git",
+    "directory": "packages/lenses"
+  },
   "type": "module",
   "engines": {
     "node": ">=22.12.0"
@@ -37,7 +44,8 @@
   "files": [
     "dist",
     "README.md",
-    "SKILL.md"
+    "SKILL.md",
+    "LICENSE"
   ],
   "publishConfig": {
     "access": "public"
