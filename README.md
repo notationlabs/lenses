@@ -118,5 +118,3 @@ pnpm test   # needs Bun
 ```
 
 The public package `@notation/lenses` bundles the private workspace packages in `packages/`. Example lenses are in `examples/`.
-
-Planned work is in [ROADMAP.md](./ROADMAP.md).
