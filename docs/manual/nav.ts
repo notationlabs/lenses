@@ -23,7 +23,7 @@ export const manual: DocCategory = {
     },
     {
       heading: "Consumers",
-      icon: "plug",
+      icon: "cloud",
       links: [
         { label: "TypeScript", slug: "manual/typescript" },
         { label: "Agents and MCP", slug: "manual/agents" },
@@ -32,7 +32,7 @@ export const manual: DocCategory = {
     },
     {
       heading: "Authoring",
-      icon: "code",
+      icon: "file-text",
       links: [
         { label: "Writing a Lens", slug: "manual/authoring" },
         { label: "Write and File Lenses", slug: "manual/write-lenses" },
