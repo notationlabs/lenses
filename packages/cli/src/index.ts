@@ -421,7 +421,7 @@ async function main(): Promise<void> {
     let output: unknown;
     switch (command) {
       case "list":
-        output = { status: await client.status(), lenses: await client.list() };
+        output = { lenses: await client.list() };
         break;
       case "call": {
         const [lens] = operands;

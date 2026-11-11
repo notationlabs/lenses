@@ -57,7 +57,7 @@ lens call hn/item -c ./examples --params '{"id": "8863", "page": 2, "limit": 10}
 lens list -c ./examples
 ```
 
-Each entry in `lenses` has `name`, `shortname`, `url`, `description`, `params`, `effects` and `exceptions`. The output also has the broker `status`.
+Each entry in `lenses` has `name`, `shortname`, `url`, `description`, `params`, `effects` and `exceptions`.
 
 ## `schema`
 
