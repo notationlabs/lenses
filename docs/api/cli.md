@@ -109,16 +109,6 @@ lens gen ts-sdk ./examples -o src/lenses.gen.ts
 
 Give catalogs as arguments or with `--catalog`. `--out`, or `-o`, writes to a file instead of stdout.
 
-## `status`
-
-`lens status` prints whether the broker is connected to Chrome, any recent errors, and an `advice` field that suggests fixes when calls fail.
-
-```sh
-lens status --wait-ms 5000
-```
-
-`--wait-ms <number>` first waits up to that long for a browser connection.
-
 ## `broker`
 
 `lens broker` controls the broker's connection to Chrome, called the lease. While the broker holds it, tools such as `chrome-devtools-mcp` cannot connect to Chrome.
@@ -127,7 +117,6 @@ lens status --wait-ms 5000
 lens broker release
 ```
 
-- `status` prints `connected` and `lease`, which is `held`, `released` or `disconnected`.
 - `release` drops the connection so another tool can use Chrome. The next lens call retakes it.
 - `acquire` reconnects to Chrome.
 - `shutdown` stops the broker after the current call. The next command starts a new one.

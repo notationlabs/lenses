@@ -34,20 +34,13 @@ The broker connects to Chrome through Playwright Extension. If the extension is 
 
 The broker exits once no client is connected and no call is running: after 15 minutes if Chrome is open, or 10 seconds if no browser is reachable. `LENS_BROKER_IDLE_EXIT_MS=0` keeps it running.
 
-## Checking on the broker
+## When a call fails
 
-When a call is stuck or the browser does not connect, run `lens status`. It prints JSON. Read these fields first:
-
-- `connected`: whether the broker has a working connection to Chrome.
-- `backend`: `playwright-extension`, or `electron` when the Lenses app runs the broker.
-- `diagnostics`: the running call and the number of queued calls.
-- `advice`: present when you need to act, for example `Approve the Playwright Extension connect page to continue this browser acquisition.`
-
-`lens status` starts the broker if none is running. `--wait-ms 30000` gives the browser up to 30 seconds to connect before it reports.
+The broker connects to Chrome only when a call needs the browser. Until then it has no connection, and that is normal. To check that the broker and browser work, make a lens call. A call that cannot reach the browser returns an error that says what to do.
 
 ## Controlling the broker
 
-The broker's connection to Chrome is the **lease**. `lens broker status` reports `lease` as `held`, `released` or `disconnected`.
+The broker's connection to Chrome is the **lease**.
 
 `lens broker release` frees the extension for another tool. The broker finishes its current call, drops the connection and keeps running. The next lens call takes the lease back without a new prompt.
 

@@ -13,8 +13,7 @@ const globalHelp = `Usage:
   lens gen ts-sdk [<catalog> ...] [--out <file>]
   lens eval <expression> [--input <file>] [--as <variable>] [--params <json>]
   lens observe [<target>] [--tab <id>] [--request <index|pattern>] [--wait-ms <number>] [--timeout-ms <number>] [--html]
-  lens status [--wait-ms <number>]
-  lens broker <status|release|acquire|shutdown>
+  lens broker <release|acquire|shutdown>
   lens update [--catalog <source>]
   lens graphql <playground|serve> [--catalog <source>] [--listen <port>] [--max-calls <number>]
   lens skill
@@ -23,7 +22,7 @@ Run lens <command> --help for command-specific help.
 
 Global options:
   --catalog, -c    Lens catalog source; repeatable, tried in order (required
-                   except for status, observe, eval, and skill).
+                   except for observe, broker, eval, and skill).
                    A directory path (./examples or file:./examples) or a git
                    reference (git:github.com/owner/repo#ref/subdir).
   --port, -p       Persistent browser broker port (default: 4319)
@@ -179,26 +178,12 @@ Example:
   lens observe --tab t1 --html
   lens observe https://bank.example/statements --tab t1
 `,
-  status: `Usage: lens status [options]
-
-Report the local broker port, connected backends and capabilities, active/queued
-call state, recent backend errors and CDP reconnect attempts. The CDP lease is
-"held", "released", or "disconnected".
-Browser calls use one serial broker queue. No catalog needed.
-
-Options:
-  --wait-ms <number>      Wait this long for the browser before reporting
-  --port, -p <number>     Persistent browser broker port
-  --verbose, -v           Write timestamped diagnostics to stderr
-  --help, -h              Show this help
-`,
   broker: `Usage: lens broker <action> [options]
 
 Control the broker's CDP lease on Chrome's single consented debugging slot.
 No catalog needed.
 
 Actions:
-  status                  Report the lease without side effects
   release                 Drop the CDP connection so other CDP tools (e.g.
                           chrome-devtools-mcp) can connect to Chrome. The
                           broker keeps running and reacquires on the next
@@ -404,9 +389,9 @@ async function main(): Promise<void> {
   const log = values.verbose
     ? (message: string) => process.stderr.write(`[lens +${Date.now() - startedAt}ms] ${message}\n`)
     : undefined;
-  // status and observe are catalog-independent; the rest resolve lenses by name.
+  // observe and broker are catalog-independent; the rest resolve lenses by name.
   const catalog =
-    command === "status" || command === "observe" || command === "broker"
+    command === "observe" || command === "broker"
       ? values.catalog
       : requireCatalogs(values.catalog);
   const client = createLensClient({
@@ -457,10 +442,6 @@ async function main(): Promise<void> {
         output = await client.observe({ target, tab: values.tab, waitMs, timeoutMs, html: values.html, request });
         break;
       }
-      case "status":
-        if (waitMs !== undefined) await client.waitForConnection(waitMs);
-        output = await client.status();
-        break;
       case "graphql": {
         const [action] = operands;
         if (action !== "playground" && action !== "serve") {
@@ -482,10 +463,8 @@ async function main(): Promise<void> {
           output = await client.shutdownBroker(timeoutMs);
           break;
         }
-        if (action !== "status" && action !== "release" && action !== "acquire") {
-          throw new Error(
-            'broker requires an action: "status", "release", "acquire", or "shutdown"'
-          );
+        if (action !== "release" && action !== "acquire") {
+          throw new Error('broker requires an action: "release", "acquire", or "shutdown"');
         }
         output = await client.broker(action, timeoutMs);
         break;

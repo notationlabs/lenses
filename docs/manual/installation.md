@@ -44,22 +44,16 @@ lens broker shutdown
 
 ## 5. Check it works
 
+Run the lens from step 3 again:
+
 ```sh
-lens status --wait-ms 10000
+lens call claude/usage -c git:github.com/notationlabs/lenses#main/examples
 ```
 
-```json
-{
-  "connected": true,
-  "backend": "playwright-extension",
-  …
-}
-```
-
-If `connected` is `true` and there is no `advice` field, you are done. If there is an `advice` field, it says what to do, for example:
+If the result has `"kind": "value"` and no connect page opened, you are done. If the result is an error, its message says what to do, for example:
 
 ```text
-Playwright Extension is not installed; install it from https://chromewebstore.google.com/detail/playwright-extension/mmlmfjhmonkocbjadbfplnigmagldckm
+Playwright Extension is not installed in Chrome profile "Default"; install it from https://chromewebstore.google.com/detail/playwright-extension/mmlmfjhmonkocbjadbfplnigmagldckm
 ```
 
 ## Using another Chrome profile

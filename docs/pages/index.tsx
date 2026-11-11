@@ -766,8 +766,7 @@ First read the manual at ${github}/tree/main/docs/manual, starting with introduc
 1. Check that Node.js 22.12 or later and Google Chrome are installed.
 2. Run \`${install}\`.
 3. Ask me to install Playwright Extension from the Chrome Web Store, in the Chrome profile I am signed in with.
-4. Run \`lens status --wait-ms 10000\`. If the result has an \`advice\` field, follow it, or tell me what it says.
-5. For an agent with a shell, install the skill file: \`mkdir -p .claude/skills/lenses && lens skill > .claude/skills/lenses/SKILL.md\`. For an MCP host, add \`lens-mcp\` to its MCP config instead, with \`LENS_CATALOG\` set to absolute catalog paths.
-6. Run \`lens call hn/top -c ${examples}\` to check that calls work.
+4. For an agent with a shell, install the skill file: \`mkdir -p .claude/skills/lenses && lens skill > .claude/skills/lenses/SKILL.md\`. For an MCP host, add \`lens-mcp\` to its MCP config instead, with \`LENS_CATALOG\` set to absolute catalog paths.
+5. Run \`lens call hn/top -c ${examples}\` to check that calls work.
 
 Do not pass \`--allow-writes\` unless I ask. Report what you installed and the result of each check. Do not commit or push unless I ask.`;
