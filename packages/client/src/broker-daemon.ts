@@ -127,11 +127,18 @@ const idleExit = createIdleExitTimer({
   onExit: (reason) => shutdown(reason),
 });
 
-function ensureBrowser(): Promise<void> {
+// Every call waiting on one shared acquisition receives its progress, so a
+// call that times out names the step it was waiting on.
+const acquireListeners = new Set<(message: string) => void>();
+
+function ensureBrowser(progress?: (message: string) => void): Promise<void> {
+  if (progress) acquireListeners.add(progress);
   ensureBrowserInFlight ??= checkAndConnect().finally(() => {
     ensureBrowserInFlight = undefined;
   });
-  return ensureBrowserInFlight;
+  return ensureBrowserInFlight.finally(() => {
+    if (progress) acquireListeners.delete(progress);
+  });
 }
 
 async function checkAndConnect(): Promise<void> {
@@ -161,7 +168,10 @@ async function checkAndConnect(): Promise<void> {
     return;
   }
   try {
-    await backend.acquire((message) => console.error(message));
+    await backend.acquire((message) => {
+      console.error(message);
+      for (const listener of acquireListeners) listener(message);
+    });
     extensionAttemptFailed = false;
   } catch (error) {
     extensionAttemptFailed = true;

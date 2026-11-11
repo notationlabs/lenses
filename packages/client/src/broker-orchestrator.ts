@@ -82,7 +82,7 @@ export function createBrokerOrchestrator(
   backends: BrowserBackend[],
   options: {
     /** Lazily start browser transports only after execution actually needs one. */
-    prepareBackends?: () => Promise<void>;
+    prepareBackends?: (progress?: (text: string) => void) => Promise<void>;
   } = {}
 ): BrokerOrchestrator {
   if (backends.length === 0) throw new Error("broker orchestrator requires a browser backend");
@@ -94,7 +94,8 @@ export function createBrokerOrchestrator(
   }
 
   async function selectBackend(
-    requiredCapabilities: BrowserCapability[] = ["browser-session"]
+    requiredCapabilities: BrowserCapability[] = ["browser-session"],
+    progress?: (text: string) => void
   ): Promise<BrowserBackend> {
     const eligible = backends.filter((backend) =>
       requiredCapabilities.every((capability) => backendSupports(backend, capability))
@@ -103,7 +104,7 @@ export function createBrokerOrchestrator(
       throw capabilityMismatch(requiredCapabilities, backends);
     }
     if (!eligible.some((backend) => backend.available())) {
-      await options.prepareBackends?.();
+      await options.prepareBackends?.(progress);
     }
     return currentBackend(eligible);
   }
@@ -183,7 +184,7 @@ export function createBrokerOrchestrator(
     /** Set when a tier found a sign-in under way: the call reports it rather than any tier error. */
     let blockedBy: { url: string } | undefined;
     if (needsPageSession && !authRetry) {
-      sessionBackend = await selectBackend(requiredCapabilities);
+      sessionBackend = await selectBackend(requiredCapabilities, progress);
       const gate = await signInGate(sessionBackend, gateKey(target));
       if (gate) {
         progress(
@@ -197,7 +198,7 @@ export function createBrokerOrchestrator(
     // never visit the lens URL every second: that creates new login tabs and
     // can disrupt the form the user is filling out.
     if (authRetry) {
-      sessionBackend ??= await selectBackend(requiredCapabilities);
+      sessionBackend ??= await selectBackend(requiredCapabilities, progress);
       // While the sign-in tab is on the login pages, a retry does nothing at
       // all: the wait polls, and the tab's own navigation (watched passively)
       // tells it when the user has moved on. Then the call runs once per
@@ -222,7 +223,7 @@ export function createBrokerOrchestrator(
     let recording: RecordingMonitor | undefined;
     const ensureSession = async (): Promise<BrowserSession> => {
       if (session) return session;
-      sessionBackend ??= await selectBackend();
+      sessionBackend ??= await selectBackend(undefined, progress);
       // A sign-in may have begun since the call started (between tiers).
       const gate = await signInGate(sessionBackend, gateKey(target));
       if (gate) {
@@ -276,7 +277,7 @@ export function createBrokerOrchestrator(
       }
       let requestBackend: BrowserBackend;
       try {
-        requestBackend = await selectBackend(required);
+        requestBackend = await selectBackend(required, progress);
       } catch (error) {
         if (request.credentials === "same-origin-page") {
           throw requiredBackendUnavailable(error);
@@ -394,7 +395,7 @@ export function createBrokerOrchestrator(
     message: Extract<LensBridgeRequest, { type: "observe" }>,
     progress: (text: string) => void
   ): Promise<LensResult> {
-    const backend = await selectBackend();
+    const backend = await selectBackend(undefined, progress);
     progress(`binding browser page for ${message.target ?? `tab ${message.tab}`} via ${backend.name}`);
     let session: BrowserSession;
     try {

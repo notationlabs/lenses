@@ -732,6 +732,23 @@ describe("broker orchestration", () => {
     vi.useRealTimers();
   });
 
+  it("sends browser acquisition progress to the call that waits on it", async () => {
+    const backend = new FakeBackend("cdp", false);
+    const orchestrator = createBrokerOrchestrator([backend], {
+      prepareBackends: async (progress) => {
+        progress?.("approve the connect page");
+        backend.setAvailable(true);
+      },
+    });
+    const frames: BrokerFrame[] = [];
+    await orchestrator.handle(
+      { type: "call", id: "acquiring", spec: domSpec(), params: {}, timeoutMs: 1000 },
+      (frame) => frames.push(frame)
+    );
+
+    expect(frames).toContainEqual({ type: "progress", id: "acquiring", message: "approve the connect page" });
+  });
+
   it("bypasses the broker cache without caching the result", async () => {
     const backend = new FakeBackend("cdp", true);
     const orchestrator = createBrokerOrchestrator([backend]);
