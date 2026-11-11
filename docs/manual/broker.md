@@ -26,7 +26,7 @@ A call that arrives while another is running waits in a queue. The CLI prints `q
 
 ## How the broker connects to Chrome
 
-The broker tries Playwright Extension first. If the extension is not installed or does not connect, it falls back to Chrome's remote debugging protocol, CDP. [Installation](./installation.md) sets up both, and the Chrome profile.
+The broker connects to Chrome through Playwright Extension. If the extension is not installed or does not connect, calls that need the browser fail with the reason. [Installation](./installation.md) sets up the extension and the Chrome profile.
 
 **The broker reads its settings only when it starts.** If a broker is already running, `lens call --profile "Profile 4"` connects to it and the flag has no effect. Run `lens broker shutdown` after you change the profile or token.
 
@@ -39,7 +39,7 @@ The broker exits once no client is connected and no call is running: after 15 mi
 When a call is stuck or the browser does not connect, run `lens status`. It prints JSON. Read these fields first:
 
 - `connected`: whether the broker has a working connection to Chrome.
-- `backend`: `playwright-extension` or `cdp`.
+- `backend`: `playwright-extension`, or `electron` when the Lenses app runs the broker.
 - `diagnostics`: the running call and the number of queued calls.
 - `advice`: present when you need to act, for example `Approve the Playwright Extension connect page to continue this browser acquisition.`
 
@@ -47,11 +47,11 @@ When a call is stuck or the browser does not connect, run `lens status`. It prin
 
 ## Controlling the broker
 
-The broker's connection to Chrome is the **lease**. Chrome allows only one consented debugging connection, so while the broker holds the lease, tools such as `chrome-devtools-mcp` cannot connect. `lens broker status` reports `lease` as `held`, `released` or `disconnected`.
+The broker's connection to Chrome is the **lease**. `lens broker status` reports `lease` as `held`, `released` or `disconnected`.
 
-`lens broker release` frees Chrome for another debugging tool. The broker finishes its current call, drops the connection and keeps running. The next lens call takes the lease back without a new prompt.
+`lens broker release` frees the extension for another tool. The broker finishes its current call, drops the connection and keeps running. The next lens call takes the lease back without a new prompt.
 
-`lens broker acquire` reconnects at once and retries Playwright Extension, which helps if the broker fell back to CDP because you missed the connect page.
+`lens broker acquire` reconnects at once and retries Playwright Extension, which helps if you missed the connect page.
 
 `lens broker shutdown` stops the broker. It also helps when every call fails with `broker_busy`, which means an earlier call timed out while the broker was still working in the browser. The error clears once that work finishes.
 

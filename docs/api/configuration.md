@@ -69,7 +69,7 @@ The broker reads these.
 
 - `LENS_BROWSER_PROFILE` sets the Chrome profile, like `browser.profile`. The default is `Default`.
 - `PLAYWRIGHT_MCP_EXTENSION_TOKEN` sets the Playwright Extension token, like `browser.playwrightExtensionToken`.
-- `LENS_BROKER_AUTO_LAUNCH=0` stops the broker from starting Chrome when Chrome is not running. The broker then connects through Chrome remote debugging (CDP).
+- `LENS_BROKER_AUTO_LAUNCH=0` stops the broker from starting Chrome when Chrome is not running. Calls that need the browser then fail until you open Chrome.
 
 ### MCP server
 
@@ -84,7 +84,7 @@ The broker exits after a period with no connected clients and no running calls, 
 
 - `LENS_BROKER_IDLE_EXIT_MS` is how long an idle broker waits before it exits while Chrome is reachable. The default is 15 minutes, and `0` keeps the broker running.
 - `LENS_BROKER_NO_BROWSER_EXIT_MS` is how long an idle broker waits before it exits when it cannot reach Chrome. The default is 10 seconds.
-- `LENS_BROKER_IDLE_RELEASE_MS` makes the broker disconnect from Chrome this long after the last call, so other CDP tools can connect. It reconnects on the next call. It is off by default.
+- `LENS_BROKER_IDLE_RELEASE_MS` makes the broker disconnect from Chrome this long after the last call, so other tools can use Playwright Extension. It reconnects on the next call. It is off by default.
 
 ### Paths
 

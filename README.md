@@ -42,10 +42,7 @@ Lenses needs Node.js 22.12 and a Chrome browser with the Playwright extension.
 npm install @notation/lenses
 ```
 
-Lenses controls Chrome in one of two ways:
-
-1. Through [Playwright Extension](https://chromewebstore.google.com/detail/playwright-extension/mmlmfjhmonkocbjadbfplnigmagldckm). This is the preferred option. Set `PLAYWRIGHT_MCP_EXTENSION_TOKEN` to skip repeated approval.
-2. Through Chrome remote debugging, as a fallback. Enable it at `chrome://inspect/#remote-debugging`.
+Lenses controls Chrome through [Playwright Extension](https://chromewebstore.google.com/detail/playwright-extension/mmlmfjhmonkocbjadbfplnigmagldckm). Set `PLAYWRIGHT_MCP_EXTENSION_TOKEN` to skip repeated approval.
 
 Calls go through a local broker process on port 4319.
 

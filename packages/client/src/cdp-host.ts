@@ -2,10 +2,9 @@
  * CDP browser backend: owns Chrome connection and page mechanics only.
  * Lens orchestration, caching, retries, and result policy live in the broker.
  */
-import { existsSync, readFileSync } from "node:fs";
-import { basename, extname, isAbsolute, join } from "node:path";
-import puppeteer, { type Browser, type Page } from "puppeteer-core";
-import { defaultChromeUserDataDir } from "./chrome-paths.js";
+import { readFileSync } from "node:fs";
+import { basename, extname, isAbsolute } from "node:path";
+import type { Browser, Page } from "puppeteer-core";
 import { clearAuthBanners, showAuthBanner } from "./auth-banner.js";
 import { raiseChrome } from "./launch-browser.js";
 import {
@@ -76,20 +75,17 @@ const CONNECT_RETRY_MS = 2_000;
 const CONNECT_ATTEMPT_MS = 10_000;
 const ENDPOINT_POLL_MS = 500;
 const RECONNECT_BACKOFF_MAX_MS = 30_000;
-const STALE_ENDPOINT_MESSAGE =
-  "Chrome remote debugging is not responding. Open chrome://inspect/#remote-debugging in Chrome, " +
-  "re-enable Remote Debugging, then retry.";
 
 export type CdpLease = "held" | "released" | "disconnected";
 
 /**
- * How a CDP-backed backend reaches Chrome. Direct remote debugging and the
- * Playwright Extension relay both produce a Puppeteer `Browser`; page
+ * How a CDP-backed backend reaches a browser. The Playwright Extension relay
+ * and the Lenses app's relay both produce a Puppeteer `Browser`; page
  * sessions, intercepts, and auth-gate bookkeeping stay here.
  */
 export interface CdpTransport {
   readonly name: string;
-  /** Poll DevToolsActivePort (or equivalent) and auto-connect. Off for the Playwright Extension relay. */
+  /** Poll `looksReady` and auto-connect. Off for the Playwright Extension relay. */
   readonly pollForConnection: boolean;
   readonly retryConnect: boolean;
   readonly connectAttemptMs?: number;
@@ -159,11 +155,7 @@ export interface ReleaseOptions {
 
 export interface CdpBackend extends BrowserBackend {
   lease(): CdpLease;
-  /**
-   * Whether a browser is actually reachable. Chrome leaves DevToolsActivePort
-   * behind when it quits, so file presence is stale-positive; this probes the
-   * endpoint.
-   */
+  /** Whether a browser is actually reachable: connected, or the transport's probe answers. */
   browserLive(): Promise<boolean>;
   release(options?: ReleaseOptions): Promise<void>;
   /** The transport's broker-owned anchor was explicitly closed by the user. */
@@ -198,7 +190,7 @@ interface CdpSession extends BrowserSession {
 
 export function createCdpBackend(
   log: (message: string) => void = () => {},
-  transport: CdpTransport = createDirectCdpTransport()
+  transport: CdpTransport
 ): CdpBackend {
   let browser: Browser | undefined;
   let browserVersion = "";
@@ -218,7 +210,7 @@ export function createCdpBackend(
   /**
    * Tabs kept by a needs_* outcome, and where they were kept, by tab key
    * (gateKeyOf): a tab's page object is replaced when the debugger
-   * re-attaches it. The map dies with the process: neither CDP transport has
+   * re-attaches it. The map dies with the process: no CDP transport has
    * durable tab leases.
    */
   const keptGates = new Map<string, KeptGate>();
@@ -421,12 +413,8 @@ export function createCdpBackend(
     endpointProbing = true;
     void (async () => {
       try {
-        // The endpoint file outlives Chrome and any debugging session, so
-        // its presence alone is not a connection waiting to happen. A dead
-        // endpoint is simply absence — remote debugging may not even be a
-        // transport this broker needs — so background polling must not
-        // record it as a connection error for clients to see. Only an
-        // explicit acquire (a call that actually needs this transport)
+        // A dead endpoint found by background polling is absence, not a
+        // connection error for clients to see. Only an explicit acquire
         // reports a stale endpoint, via connectBrowser's probe.
         if (!(await endpointLive())) return;
         nextReconnectAt = Date.now() + reconnectDelayMs;
@@ -1660,46 +1648,4 @@ export function pageTargetId(page: Page): string | undefined {
   } catch {
     return undefined;
   }
-}
-
-export function createDirectCdpTransport(
-  probeEndpoint?: () => Promise<boolean>
-): CdpTransport {
-  const endpointPath = join(defaultChromeUserDataDir(), "DevToolsActivePort");
-  const looksReady = () => existsSync(endpointPath);
-  const probeLive =
-    probeEndpoint ??
-    (async (): Promise<boolean> => {
-      let endpointPort: number;
-      try {
-        const [first] = readFileSync(endpointPath, "utf8").split("\n");
-        endpointPort = Number(first);
-      } catch {
-        return false;
-      }
-      if (!Number.isSafeInteger(endpointPort) || endpointPort < 1) return false;
-      try {
-        const response = await fetch(`http://127.0.0.1:${endpointPort}/json/version`, {
-          signal: AbortSignal.timeout(1_000),
-        });
-        return response.ok;
-      } catch {
-        return false;
-      }
-    });
-  return {
-    name: "cdp",
-    pollForConnection: true,
-    retryConnect: true,
-    looksReady,
-    probeLive,
-    connectHint: () =>
-      "connecting to Chrome (a permission dialog may appear — click Allow)",
-    staleHint: () => STALE_ENDPOINT_MESSAGE,
-    async connect() {
-      return puppeteer.connect({ channel: "chrome", defaultViewport: null });
-    },
-    // Remote debugging sees every tab, and a target id lasts as long as its tab.
-    tabKey: pageTargetId,
-  };
 }

@@ -59,7 +59,7 @@ lens status --wait-ms 10000
 If `connected` is `true` and there is no `advice` field, you are done. If there is an `advice` field, it says what to do, for example:
 
 ```text
-Playwright Extension is not installed; install it from https://chromewebstore.google.com/detail/playwright-extension/mmlmfjhmonkocbjadbfplnigmagldckm or enable chrome://inspect/#remote-debugging for the CDP fallback (Chrome will ask you to click Allow)
+Playwright Extension is not installed; install it from https://chromewebstore.google.com/detail/playwright-extension/mmlmfjhmonkocbjadbfplnigmagldckm
 ```
 
 ## Using another Chrome profile
@@ -73,13 +73,5 @@ Open `chrome://version` in the profile you want and copy the last part of "Profi
 ```sh
 lens broker shutdown
 ```
-
-## Without the extension
-
-If Playwright Extension is not installed or does not connect, Lenses uses Chrome's remote debugging instead. It needs Chrome 144 or later.
-
-1. Open `chrome://inspect/#remote-debugging` and enable remote debugging.
-2. Run a lens that needs the browser.
-3. Click **Allow** in the dialog Chrome shows. Chrome asks again after each restart.
 
 [Configuration](../api/configuration.md) lists the environment variables and flags for every setting.

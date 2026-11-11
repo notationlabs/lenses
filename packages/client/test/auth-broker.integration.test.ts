@@ -26,13 +26,14 @@ vi.mock("../src/auth-leases.js", async (importOriginal) => {
     },
   };
 });
-vi.mock("../src/cdp-host.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../src/cdp-host.js")>();
+vi.mock("../src/playwright-extension-backend.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/playwright-extension-backend.js")>();
+  const { createCdpBackend } = await import("../src/cdp-host.js");
   return {
     ...actual,
-    createCdpBackend: (log: (message: string) => void, transport?: import("../src/cdp-host.js").CdpTransport) =>
-      actual.createCdpBackend(log, transport ?? {
-        name: "cdp", pollForConnection: false, retryConnect: false,
+    createPlaywrightExtensionBackend: (log: (message: string) => void) =>
+      createCdpBackend(log, {
+        name: "test", pollForConnection: false, retryConnect: false,
         looksReady: () => true, probeLive: async () => true,
         connect: async () => state.browser as Awaited<ReturnType<typeof puppeteer.launch>>,
         connectHint: () => "test Chrome", staleHint: () => "test Chrome",
@@ -41,7 +42,7 @@ vi.mock("../src/cdp-host.js", async (importOriginal) => {
 });
 vi.mock("../src/chrome-paths.js", async (importOriginal) => ({
   ...await importOriginal<typeof import("../src/chrome-paths.js")>(),
-  playwrightExtensionInstalled: async () => false,
+  playwrightExtensionInstalled: async () => true,
 }));
 vi.mock("../src/launch-browser.js", async (importOriginal) => ({
   ...await importOriginal<typeof import("../src/launch-browser.js")>(),

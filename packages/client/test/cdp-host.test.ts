@@ -6,24 +6,35 @@ const state = vi.hoisted(() => ({
   connect: undefined as undefined | (() => Promise<unknown>),
 }));
 
-vi.mock("node:fs", () => ({
-  existsSync: () => state.endpointAvailable,
-  readFileSync: () => "9222\n/devtools/browser/fake",
-}));
-
-vi.mock("puppeteer-core", () => ({
-  default: {
-    connect: () => state.connect?.(),
-  },
-}));
-
 vi.mock("../src/auth-banner.js", () => ({
   showAuthBanner: async () => ({ update: () => {}, dispose: () => {} }),
   clearAuthBanners: async () => {},
 }));
 vi.mock("../src/launch-browser.js", () => ({ raiseChrome: async () => {} }));
 
-import { createCdpBackend } from "../src/cdp-host.js";
+import { createCdpBackend, type CdpTransport } from "../src/cdp-host.js";
+
+const STALE = "test browser is not responding";
+
+/** A transport that polls for an endpoint and retries, as the Lenses app's does. */
+function pollingTransport(): CdpTransport {
+  return {
+    name: "cdp",
+    pollForConnection: true,
+    retryConnect: true,
+    looksReady: () => state.endpointAvailable,
+    probeLive: async () => {
+      try {
+        return (await fetch("http://127.0.0.1:9222/json/version")).ok;
+      } catch {
+        return false;
+      }
+    },
+    connectHint: () => "connecting to the test browser",
+    staleHint: () => STALE,
+    connect: async () => (await state.connect!()) as never,
+  };
+}
 
 interface FakeBrowser {
   connected: boolean;
@@ -214,7 +225,7 @@ describe("CDP host connection lifecycle", () => {
     const browser = fakeBrowser();
     state.endpointAvailable = true;
     state.connect = vi.fn(async () => browser);
-    const host = createCdpBackend();
+    const host = createCdpBackend(undefined, pollingTransport());
     const statuses: boolean[] = [];
     host.onStatusChange(() => statuses.push(host.available()));
 
@@ -241,7 +252,7 @@ describe("CDP host connection lifecycle", () => {
   it("releases the CDP lease without auto-reconnecting, and reacquires on demand", async () => {
     state.endpointAvailable = true;
     state.connect = vi.fn(async () => fakeBrowser());
-    const host = createCdpBackend();
+    const host = createCdpBackend(undefined, pollingTransport());
     host.start();
     await vi.waitFor(() => expect(host.available()).toBe(true));
     expect(host.lease()).toBe("held");
@@ -266,7 +277,7 @@ describe("CDP host connection lifecycle", () => {
   it("reacquires lazily when a request arrives after a release", async () => {
     state.endpointAvailable = true;
     state.connect = vi.fn(async () => fakeBrowser());
-    const host = createCdpBackend();
+    const host = createCdpBackend(undefined, pollingTransport());
     host.start();
     await vi.waitFor(() => expect(host.available()).toBe(true));
     await host.release();
@@ -294,24 +305,19 @@ describe("CDP host connection lifecycle", () => {
       throw new Error("connect should not be attempted for a dead endpoint");
     });
 
-    await expect(createCdpBackend().acquire()).rejects.toThrow(
-      "Chrome remote debugging is not responding. " +
-        "Open chrome://inspect/#remote-debugging in Chrome, " +
-        "re-enable Remote Debugging, then retry."
-    );
+    await expect(createCdpBackend(undefined, pollingTransport()).acquire()).rejects.toThrow(STALE);
     expect(state.connect).not.toHaveBeenCalled();
   });
 
   it("does not publish a stale endpoint found by background polling", async () => {
-    // Chrome leaves DevToolsActivePort behind when it quits, and remote
-    // debugging is only the fallback transport: a dead endpoint found by
-    // the background poll is absence, not a problem to show clients.
+    // A dead endpoint found by the background poll is absence, not a
+    // problem to show clients.
     vi.stubGlobal("fetch", vi.fn(async () => {
       throw new Error("connection refused");
     }));
     state.endpointAvailable = true;
     state.connect = vi.fn(async () => fakeBrowser());
-    const host = createCdpBackend();
+    const host = createCdpBackend(undefined, pollingTransport());
     host.start();
     await new Promise((resolve) => setTimeout(resolve, 50));
     host.stop();
@@ -327,7 +333,7 @@ describe("CDP host connection lifecycle", () => {
     }));
     state.endpointAvailable = true;
     state.connect = vi.fn(async () => fakeBrowser());
-    const host = createCdpBackend();
+    const host = createCdpBackend(undefined, pollingTransport());
     await expect(host.acquire()).rejects.toThrow("not responding");
     expect(host.info().diagnostic).toContain("not responding");
 
@@ -348,7 +354,7 @@ describe("CDP host connection lifecycle", () => {
           resolveConnection = resolve;
         })
     );
-    const host = createCdpBackend();
+    const host = createCdpBackend(undefined, pollingTransport());
     host.start();
     const request = host.bind({
       target: "https://example.com",

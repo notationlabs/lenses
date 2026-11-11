@@ -3,7 +3,6 @@ import { browserAdvice, type BrowserAdviceState } from "../src/broker-advice.js"
 
 const readyOnDemand: BrowserAdviceState = {
   extensionAvailable: false,
-  cdpAvailable: false,
   extensionInstalled: true,
   extensionAttemptFailed: false,
   browserPresent: true,

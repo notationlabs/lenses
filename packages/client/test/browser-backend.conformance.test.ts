@@ -12,23 +12,6 @@ import {
   type LensSpec,
 } from "@notation/lenses-core";
 
-const cdpState = vi.hoisted(() => ({
-  browser: undefined as FakeBrowser | undefined,
-}));
-
-// existsSync is stubbed for the Chrome-binary probe; the rest must stay real,
-// since page-functions stamps hash the module off disk.
-vi.mock("node:fs", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("node:fs")>()),
-  existsSync: () => true,
-}));
-
-vi.mock("puppeteer-core", () => ({
-  default: {
-    connect: async () => cdpState.browser,
-  },
-}));
-
 import { createBrokerOrchestrator } from "../src/broker-orchestrator.js";
 import type {
   BrowserBackend,
@@ -36,7 +19,7 @@ import type {
 } from "../src/browser-backend.js";
 import {
   createCdpBackend,
-  createDirectCdpTransport,
+  pageTargetId,
   type CdpTransport,
 } from "../src/cdp-host.js";
 import { CDPRelayServer } from "../src/playwright-relay/cdp-relay.js";
@@ -684,11 +667,17 @@ async function createPlaywrightRelayFixture(): Promise<BackendFixture> {
 
 async function createCdpFixture(): Promise<BackendFixture> {
   const browser = new FakeBrowser();
-  cdpState.browser = browser;
-  const backend = createCdpBackend(
-    () => {},
-    createDirectCdpTransport(async () => true)
-  );
+  const backend = createCdpBackend(() => {}, {
+    name: "cdp",
+    pollForConnection: true,
+    retryConnect: true,
+    looksReady: () => true,
+    probeLive: async () => true,
+    connectHint: () => "connect test browser",
+    staleHint: () => "test browser unavailable",
+    connect: async () => browser as never,
+    tabKey: pageTargetId,
+  });
   return {
     backend,
     async emitCapture(capture) {
@@ -704,7 +693,6 @@ async function createCdpFixture(): Promise<BackendFixture> {
     async close() {
       backend.stop();
       await backend.release();
-      cdpState.browser = undefined;
     },
   };
 }

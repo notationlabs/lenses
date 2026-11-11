@@ -5,7 +5,7 @@ description: Read live web pages as typed function calls through the lens CLI. U
 
 # Lenses
 
-A lens turns a webpage into a typed function. Calls run through the user's own browser, preferring Microsoft's Playwright Extension (tab-group CDP relay) and falling back to Chrome's remote-debugging protocol, so signed-in sessions work.
+A lens turns a webpage into a typed function. Calls run through the user's own browser using Microsoft's Playwright Extension (tab-group CDP relay), so signed-in sessions work.
 
 ## CLI Behaviour
 

@@ -80,21 +80,9 @@ export interface AuthRetryState {
 
 export function createBrokerOrchestrator(
   backends: BrowserBackend[],
-  /**
-   * preferredWaitMs may be a getter: the broker drops the wait to zero once it
-   * knows no preferred backend is coming, so a call concedes to the fallback
-   * immediately instead of paying the full grace.
-   */
   options: {
     /** Lazily start browser transports only after execution actually needs one. */
     prepareBackends?: () => Promise<void>;
-    preferredWaitMs?: number | (() => number);
-    /**
-     * Start making the fallback available after the preferred grace. Selection
-     * still races that work against a late preferred attachment, so an
-     * unavailable fallback is never pinned merely because the grace elapsed.
-     */
-    prepareFallback?: () => Promise<void>;
   } = {}
 ): BrokerOrchestrator {
   if (backends.length === 0) throw new Error("broker orchestrator requires a browser backend");
@@ -106,7 +94,6 @@ export function createBrokerOrchestrator(
   }
 
   async function selectBackend(
-    rendezvousDeadline: number,
     requiredCapabilities: BrowserCapability[] = ["browser-session"]
   ): Promise<BrowserBackend> {
     const eligible = backends.filter((backend) =>
@@ -118,57 +105,7 @@ export function createBrokerOrchestrator(
     if (!eligible.some((backend) => backend.available())) {
       await options.prepareBackends?.();
     }
-    let selected = currentBackend(eligible);
-    // If the preferred backend was excluded by capability negotiation, prepare
-    // the capable fallback now instead of pinning the connected-but-stale one.
-    if (
-      !selected.available() &&
-      options.prepareFallback &&
-      selected === backends[backends.length - 1] &&
-      !eligible.includes(backends[0])
-    ) {
-      let fallbackError: unknown;
-      try {
-        await options.prepareFallback();
-      } catch (error) {
-        fallbackError = error;
-      }
-      selected = currentBackend(eligible);
-      if (!selected.available()) {
-        throw capabilityMismatch(requiredCapabilities, backends, fallbackError);
-      }
-      return selected;
-    }
-    const preferredWaitMs =
-      (typeof options.preferredWaitMs === "function"
-        ? options.preferredWaitMs()
-        : options.preferredWaitMs) ?? 0;
-    if (
-      selected.available() ||
-      selected !== backends[backends.length - 1] ||
-      preferredWaitMs <= 0 ||
-      eligible.length === 1
-    ) {
-      return selected;
-    }
-    const preferred = eligible.slice(0, -1);
-    await waitForPreferredBackend(
-      preferred,
-      Math.min(preferredWaitMs, Math.max(0, rendezvousDeadline - Date.now()))
-    );
-    const afterGrace = currentBackend(eligible);
-    if (afterGrace.available() || !options.prepareFallback) return afterGrace;
-
-    // The grace controls when fallback preparation starts, not when the
-    // expected preferred backend stops being eligible. Until the request deadline,
-    // whichever backend actually becomes available first wins; a failed CDP
-    // probe is merely remembered for the bounded no-backend failure.
-    return waitForAvailableBackend(
-      eligible,
-      options.prepareFallback,
-      rendezvousDeadline,
-      () => currentBackend(eligible)
-    );
+    return currentBackend(eligible);
   }
 
   async function call(
@@ -246,7 +183,7 @@ export function createBrokerOrchestrator(
     /** Set when a tier found a sign-in under way: the call reports it rather than any tier error. */
     let blockedBy: { url: string } | undefined;
     if (needsPageSession && !authRetry) {
-      sessionBackend = await selectBackend(callDeadline, requiredCapabilities);
+      sessionBackend = await selectBackend(requiredCapabilities);
       const gate = await signInGate(sessionBackend, gateKey(target));
       if (gate) {
         progress(
@@ -260,7 +197,7 @@ export function createBrokerOrchestrator(
     // never visit the lens URL every second: that creates new login tabs and
     // can disrupt the form the user is filling out.
     if (authRetry) {
-      sessionBackend ??= await selectBackend(callDeadline, requiredCapabilities);
+      sessionBackend ??= await selectBackend(requiredCapabilities);
       // While the sign-in tab is on the login pages, a retry does nothing at
       // all: the wait polls, and the tab's own navigation (watched passively)
       // tells it when the user has moved on. Then the call runs once per
@@ -285,7 +222,7 @@ export function createBrokerOrchestrator(
     let recording: RecordingMonitor | undefined;
     const ensureSession = async (): Promise<BrowserSession> => {
       if (session) return session;
-      sessionBackend ??= await selectBackend(callDeadline);
+      sessionBackend ??= await selectBackend();
       // A sign-in may have begun since the call started (between tiers).
       const gate = await signInGate(sessionBackend, gateKey(target));
       if (gate) {
@@ -339,7 +276,7 @@ export function createBrokerOrchestrator(
       }
       let requestBackend: BrowserBackend;
       try {
-        requestBackend = await selectBackend(callDeadline, required);
+        requestBackend = await selectBackend(required);
       } catch (error) {
         if (request.credentials === "same-origin-page") {
           throw requiredBackendUnavailable(error);
@@ -457,9 +394,7 @@ export function createBrokerOrchestrator(
     message: Extract<LensBridgeRequest, { type: "observe" }>,
     progress: (text: string) => void
   ): Promise<LensResult> {
-    const backend = await selectBackend(
-      message.deadline ?? Date.now() + 60_000
-    );
+    const backend = await selectBackend();
     progress(`binding browser page for ${message.target ?? `tab ${message.tab}`} via ${backend.name}`);
     let session: BrowserSession;
     try {
@@ -514,7 +449,7 @@ export function createBrokerOrchestrator(
         if (prompt) return prompt;
       }
       if (resume) return undefined; // Never open a replacement tab mid-login.
-      const backend = await selectBackend(Date.now() + 15_000);
+      const backend = await selectBackend();
       // The first outcome may come from an HTTP tier without binding any page.
       if (!await backend.openAuthGate?.(origin, target)) return undefined;
       return backend.watchAuthGate?.(origin, onExit, resume);
@@ -660,8 +595,7 @@ function backendSupports(
 
 function capabilityMismatch(
   required: BrowserCapability[],
-  backends: BrowserBackend[],
-  fallbackError?: unknown
+  backends: BrowserBackend[]
 ): Error {
   const requirement = required
     .map((capability) =>
@@ -686,14 +620,10 @@ function capabilityMismatch(
       return `${backend.name}${version}${capabilities}${diagnostic}`;
     })
     .join(". ");
-  const fallback = fallbackError
-    ? ` CDP fallback could not be acquired: ${errorMessage(fallbackError)}.`
-    : "";
   return new Error(
     `No available browser backend supports ${requirement}.` +
       (connected ? ` ${connected}.` : "") +
-      fallback +
-      " Approve the Playwright Extension connect page, or enable the CDP fallback at chrome://inspect/#remote-debugging."
+      " Approve the Playwright Extension connect page."
   );
 }
 
@@ -706,79 +636,6 @@ function requiredBackendUnavailable(cause?: unknown): Error & {
   ) as Error & { code: "required_backend_unavailable" };
   error.code = "required_backend_unavailable";
   return error;
-}
-
-function waitForPreferredBackend(
-  backends: BrowserBackend[],
-  timeoutMs: number
-): Promise<void> {
-  return new Promise((resolve) => {
-    let settled = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const unsubscribes: Array<() => void> = [];
-    const finish = () => {
-      if (settled) return;
-      settled = true;
-      if (timer) clearTimeout(timer);
-      for (const unsubscribe of unsubscribes) unsubscribe();
-      resolve();
-    };
-    const changed = () => {
-      if (backends.some((backend) => backend.available())) finish();
-    };
-    for (const backend of backends) {
-      unsubscribes.push(backend.onStatusChange(changed));
-    }
-    timer = setTimeout(finish, timeoutMs);
-    changed();
-  });
-}
-
-function waitForAvailableBackend(
-  backends: BrowserBackend[],
-  prepareFallback: () => Promise<void>,
-  deadline: number,
-  currentBackend: () => BrowserBackend
-): Promise<BrowserBackend> {
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    let fallbackError: unknown;
-    const unsubscribes: Array<() => void> = [];
-    const timer = setTimeout(
-      () =>
-        finish(
-          undefined,
-          fallbackError ??
-            new Error(
-              "no browser backend became available before the request deadline"
-            )
-        ),
-      Math.max(0, deadline - Date.now())
-    );
-    const finish = (backend?: BrowserBackend, error?: unknown) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      for (const unsubscribe of unsubscribes) unsubscribe();
-      if (backend) resolve(backend);
-      else reject(error);
-    };
-    const changed = () => {
-      const backend = currentBackend();
-      if (backend.available()) finish(backend);
-    };
-    for (const backend of backends) {
-      unsubscribes.push(backend.onStatusChange(changed));
-    }
-    void Promise.resolve()
-      .then(prepareFallback)
-      .then(changed, (error) => {
-        // CDP absence/failure must not end an expected preferred backend's rendezvous.
-        fallbackError = error;
-        changed();
-      });
-    changed();
-  });
 }
 
 export function createSessionEngineIO(

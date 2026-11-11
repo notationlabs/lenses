@@ -1,14 +1,9 @@
 #!/usr/bin/env node
-/**
- * Persistent local broker: serialises lens calls from CLI/MCP/library clients.
- * One CDP-backed browser implementation, two transports: Playwright Extension
- * relay first, direct Chrome remote debugging as fallback.
- */
 import { WebSocket, WebSocketServer } from "ws";
 import { expandUrl, urlOrigin, type LensBridgeRequest } from "@notation/lenses-core";
 import { createBrokerAuthLeases } from "./auth-leases.js";
 import { createBrokerOrchestrator, type AuthRetryState } from "./broker-orchestrator.js";
-import { createCdpBackend } from "./cdp-host.js";
+import { createCdpBackend, type CdpBackend } from "./cdp-host.js";
 import { createPlaywrightExtensionBackend } from "./playwright-extension-backend.js";
 import { playwrightExtensionInstalled } from "./chrome-paths.js";
 import {
@@ -29,6 +24,7 @@ import {
 import { randomBytes } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 import { browserAdvice } from "./broker-advice.js";
+import { PLAYWRIGHT_EXTENSION_INSTALL_URL } from "./playwright-relay/protocol.js";
 import { createElectronTransport, electronHost } from "./electron-host.js";
 
 /** Set when the Lenses app runs this broker in its main process. */
@@ -73,27 +69,22 @@ const unauthenticated = new Map<WebSocket, Unauthenticated>();
 const authTimers = new Map<WebSocket, ReturnType<typeof setTimeout>>();
 const profile = browserProfile();
 const extensionToken = playwrightExtensionToken();
-const cdp = host ? createCdpBackend(undefined, createElectronTransport(host)) : createCdpBackend();
-const extension = createPlaywrightExtensionBackend(
-  (message) => console.error(message),
-  { profile, token: extensionToken }
-);
+const backend: CdpBackend = host
+  ? createCdpBackend(undefined, createElectronTransport(host))
+  : createPlaywrightExtensionBackend(
+      (message) => console.error(message),
+      { profile, token: extensionToken }
+    );
 let extensionInstalled: boolean | undefined;
-/** This process already failed to attach; do not wait 45s on every later call. */
+/** The last attempt to attach Playwright Extension failed; reported as advice. */
 let extensionAttemptFailed = false;
 if (!host) {
   void playwrightExtensionInstalled(undefined, profile).then((installed) => {
     extensionInstalled = installed;
   });
 }
-const extensionGraceMs =
-  Number(process.env.LENS_BROKER_EXTENSION_GRACE_MS ?? "") || 2_000;
-const backends = host ? [cdp] : [extension, cdp];
-const orchestrator = createBrokerOrchestrator(backends, {
+const orchestrator = createBrokerOrchestrator([backend], {
   prepareBackends: ensureBrowser,
-  preferredWaitMs: () =>
-    extensionInstalled === true && !extensionAttemptFailed ? extensionGraceMs : 0,
-  prepareFallback: () => cdp.acquire(),
 });
 let ensureBrowserInFlight: Promise<void> | undefined;
 let browserPresent: boolean | undefined;
@@ -131,8 +122,8 @@ let leaseReleaseWaiters: Array<{
 const idleExit = createIdleExitTimer({
   idleMs: idleExitMs,
   noBrowserMs: noBrowserExitMs,
-  isIdle: () => clients.size === 0 && !extension.available() && inFlight === 0,
-  browserLive: async () => extension.available() || (await cdp.browserLive()),
+  isIdle: () => clients.size === 0 && !backend.available() && inFlight === 0,
+  browserLive: async () => backend.available() || (await browserRunning()),
   onExit: (reason) => shutdown(reason),
 });
 
@@ -145,49 +136,38 @@ function ensureBrowser(): Promise<void> {
 
 async function checkAndConnect(): Promise<void> {
   if (host) {
-    cdp.start();
+    backend.start();
     return;
   }
   browserPresent = await browserRunning();
   if (!browserPresent) {
     if (!autoLaunchEnabled() || !(await launchBrowser(profile))) {
-      startCdpFallback("no browser could be started");
-      return;
+      broadcastStatus();
+      throw new Error("Chrome is not running and could not be started");
     }
     browserPresent = true;
-    // A failure from the previous Chrome process does not apply to this new
-    // session; let Playwright Extension be preferred again.
-    extensionAttemptFailed = false;
     console.error(`started Chrome with profile "${profile}"`);
   }
   extensionInstalled = await playwrightExtensionInstalled(undefined, profile);
   if (extensionInstalled === false) {
-    startCdpFallback("Playwright Extension is not installed in this Chrome profile");
-    return;
+    broadcastStatus();
+    throw new Error(
+      `Playwright Extension is not installed in Chrome profile "${profile}"; ` +
+        `install it from ${PLAYWRIGHT_EXTENSION_INSTALL_URL}`
+    );
   }
-  if (extension.available()) {
+  if (backend.available()) {
     extensionAttemptFailed = false;
-    return;
-  }
-  if (extensionAttemptFailed) {
-    cdp.start();
     return;
   }
   try {
-    await extension.acquire((message) => console.error(message));
+    await backend.acquire((message) => console.error(message));
     extensionAttemptFailed = false;
   } catch (error) {
     extensionAttemptFailed = true;
-    startCdpFallback(error instanceof Error ? error.message : String(error));
+    broadcastStatus();
+    throw error;
   }
-}
-
-function startCdpFallback(reason: string): void {
-  if (!extension.available()) {
-    console.error(`falling back to CDP: ${reason}`);
-    cdp.start();
-  }
-  broadcastStatus();
 }
 
 function beginWork(): void {
@@ -222,8 +202,7 @@ function requestLeaseRelease(): Promise<void> {
     try {
       while (leaseReleaseRequested && !activeCall) {
         leaseReleaseRequested = false;
-        await extension.release();
-        await cdp.release();
+        await backend.release();
       }
       const waiters = leaseReleaseWaiters;
       leaseReleaseWaiters = [];
@@ -243,26 +222,16 @@ function requestLeaseRelease(): Promise<void> {
   return completion;
 }
 
-cdp.onStatusChange(() => {
-  rememberBackendError(cdp);
-  broadcastStatus();
-});
-extension.onLeaseReleaseRequest(() => {
+backend.onLeaseReleaseRequest(() => {
   void requestLeaseRelease();
 });
-extension.onStatusChange(() => {
-  rememberBackendError(extension);
+backend.onStatusChange(() => {
+  rememberBackendError(backend);
   broadcastStatus();
   idleExit.reset();
-  if (extension.available()) {
-    extensionAttemptFailed = false;
-    cdp.stop();
-    void cdp.release();
-  }
+  if (backend.available()) extensionAttemptFailed = false;
 });
-const fallbackStart = setTimeout(() => {
-  if (!extension.available()) cdp.start();
-}, extensionGraceMs);
+if (host) backend.start();
 
 idleExit.reset();
 
@@ -277,9 +246,7 @@ server.on("connection", (socket) => {
   socket.on("close", () => clearSocketAuth(socket));
 });
 server.on("close", () => {
-  clearTimeout(fallbackStart);
-  extension.stop();
-  cdp.stop();
+  backend.stop();
 });
 
 function routeSocketMessage(socket: WebSocket, raw: string): void {
@@ -537,10 +504,8 @@ async function handleControl(
   try {
     if (message.action === "release") await requestLeaseRelease();
     if (message.action === "acquire") {
-      extensionAttemptFailed = false;
       await ensureBrowser();
-      const target = extension.available() ? extension : cdp;
-      await target.acquire((text) => send(client, { type: "progress", id: message.id, message: text }));
+      await backend.acquire((text) => send(client, { type: "progress", id: message.id, message: text }));
     }
   } catch (error) {
     send(client, {
@@ -550,13 +515,12 @@ async function handleControl(
     });
     return;
   }
-  const selected = extension.available() ? extension : cdp;
   send(client, {
     type: "result",
     id: message.id,
     result: {
       kind: "value",
-      value: { connected: selected.available(), lease: cdp.lease() },
+      value: { connected: backend.available(), lease: backend.lease() },
     },
   });
 }
@@ -576,8 +540,7 @@ const runShutdown = createShutdownSequence({
   inFlight: () => inFlight,
   drainTimeoutMs: DRAIN_TIMEOUT_MS,
   release: async () => {
-    await extension.release({ handOver: handOverTabs });
-    await cdp.release();
+    await backend.release({ handOver: handOverTabs });
   },
   log: (message) => console.error(message),
   stopListening: () => server.close(),
@@ -586,9 +549,7 @@ const runShutdown = createShutdownSequence({
   },
   stop() {
     idleExit.stop();
-    extension.stop();
-    cdp.stop();
-    clearTimeout(fallbackStart);
+    backend.stop();
   },
   exit: () => process.exit(0),
 });
@@ -598,25 +559,21 @@ function sendStatus(socket: WebSocket): void {
 }
 
 function currentStatus() {
-  const preferred = extension.available() ? extension : cdp;
+  const connected = backend.available();
   const reportedActiveCall = activeCall ?? orchestrator.busy();
-  const backendInfo = backends.map((backend) => ({
+  const backendInfo = [{
     ...backend.info(),
-    available: backend.available(),
-    // A working backend means another transport's last failure — e.g. the
-    // CDP fallback's stale remote-debugging endpoint, which nobody needs
-    // while the extension is connected — is not a problem that exists.
-    // Don't send it to clients as one.
-    ...(preferred.available() ? { diagnostic: undefined } : {}),
-  }));
-  const selected = preferred.available() ? preferred.info() : undefined;
+    available: connected,
+    ...(connected ? { diagnostic: undefined } : {}),
+  }];
+  const selected = connected ? backend.info() : undefined;
   return {
     type: "status",
     stamp: buildStamp,
     builtAt: build.builtAt,
     protocol: BROKER_PROTOCOL,
-    connected: preferred.available(),
-    lease: cdp.lease(),
+    connected,
+    lease: backend.lease(),
     backend: selected?.name,
     ua: selected?.detail,
     capabilities: selected?.capabilities ?? [],
@@ -625,10 +582,10 @@ function currentStatus() {
       concurrency: "serial_queue",
       activeCall: reportedActiveCall,
       queuedCalls,
-      lastBackendError: preferred.available()
+      lastBackendError: connected
         ? undefined
-        : lastBackendError ?? backendInfo.find((backend) => backend.diagnostic)?.diagnostic,
-      reconnectAttempts: cdp.info().reconnectAttempts ?? 0,
+        : lastBackendError ?? backendInfo[0].diagnostic,
+      reconnectAttempts: backend.info().reconnectAttempts ?? 0,
     },
     advice: host ? undefined : describeGap(),
   };
@@ -636,8 +593,7 @@ function currentStatus() {
 
 function describeGap(): string | undefined {
   return browserAdvice({
-    extensionAvailable: extension.available(),
-    cdpAvailable: cdp.available(),
+    extensionAvailable: backend.available(),
     extensionInstalled,
     extensionAttemptFailed,
     browserPresent,

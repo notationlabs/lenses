@@ -784,149 +784,6 @@ describe("broker orchestration", () => {
     expect(extension.finishes).toEqual(["close-if-created"]);
     expect(cdp.binds).toHaveLength(0);
   });
-
-  it.each(["absent", "stale"])(
-    "keeps rendezvousing after an %s fallback fails immediately",
-    async (failure) => {
-      vi.useFakeTimers();
-      try {
-        const extension = new FakeBackend("playwright-extension", false);
-        const cdp = new FakeBackend("cdp", false);
-        const prepareFallback = vi.fn(async () => {
-          throw new Error(`CDP endpoint ${failure}`);
-        });
-        const result = request(
-          createBrokerOrchestrator([extension, cdp], {
-            preferredWaitMs: 35_000,
-            prepareFallback,
-          }),
-          {
-            type: "call",
-            id: "preferred-ordering",
-            spec: domSpec(),
-            params: {},
-            timeoutMs: 90_000,
-            deadline: Date.now() + 90_000,
-          }
-        );
-
-        // Preferred-backend grace elapses with CDP still failing; rendezvous
-        // continues until the preferred backend becomes available.
-        await vi.advanceTimersByTimeAsync(35_000);
-        expect(prepareFallback).toHaveBeenCalledOnce();
-        expect(cdp.binds).toHaveLength(0);
-
-        // The immediate fallback rejection does not end the rendezvous.
-        await vi.advanceTimersByTimeAsync(13_800);
-        extension.setAvailable(true);
-        await vi.advanceTimersByTimeAsync(0);
-
-        await expect(result).resolves.toMatchObject({ kind: "value" });
-        expect(extension.binds).toHaveLength(1);
-        expect(cdp.binds).toHaveLength(0);
-      } finally {
-        vi.useRealTimers();
-      }
-    }
-  );
-
-  it("selects a live fallback that becomes available during rendezvous", async () => {
-    vi.useFakeTimers();
-    try {
-      const extension = new FakeBackend("playwright-extension", false);
-      const cdp = new FakeBackend("cdp", false);
-      const prepareFallback = vi.fn(async () => cdp.setAvailable(true));
-      const result = request(
-        createBrokerOrchestrator([extension, cdp], {
-          preferredWaitMs: 35_000,
-          prepareFallback,
-        }),
-        {
-          type: "call",
-          id: "live-cdp",
-          spec: domSpec(),
-          params: {},
-          timeoutMs: 90_000,
-          deadline: Date.now() + 90_000,
-        }
-      );
-
-      await vi.advanceTimersByTimeAsync(35_000);
-
-      await expect(result).resolves.toMatchObject({ kind: "value" });
-      expect(prepareFallback).toHaveBeenCalledOnce();
-      expect(cdp.binds).toHaveLength(1);
-      expect(extension.binds).toHaveLength(0);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("bounds an unavailable preferred backend and failed fallback by the call deadline", async () => {
-    vi.useFakeTimers();
-    try {
-      const extension = new FakeBackend("playwright-extension", false);
-      const cdp = new FakeBackend("cdp", false);
-      const result = request(
-        createBrokerOrchestrator([extension, cdp], {
-          preferredWaitMs: 35_000,
-          prepareFallback: async () => {
-            throw new Error("CDP unavailable");
-          },
-        }),
-        {
-          type: "call",
-          id: "bounded-rendezvous",
-          spec: domSpec(),
-          params: {},
-          timeoutMs: 60_000,
-          deadline: Date.now() + 60_000,
-        }
-      );
-
-      await vi.advanceTimersByTimeAsync(59_999);
-      let settled = false;
-      void result.then(() => {
-        settled = true;
-      });
-      await vi.advanceTimersByTimeAsync(0);
-      expect(settled).toBe(false);
-
-      await vi.advanceTimersByTimeAsync(1);
-      await expect(result).resolves.toEqual({
-        kind: "error",
-        message:
-          "call bounded-rendezvous for @example/page timed out after 60000ms",
-      });
-      expect(extension.binds).toHaveLength(0);
-      expect(cdp.binds).toHaveLength(0);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("uses an available fallback without waiting for a preferred backend", async () => {
-    vi.useFakeTimers();
-    const extension = new FakeBackend("playwright-extension", false);
-    const cdp = new FakeBackend("cdp", true);
-    const result = request(
-      createBrokerOrchestrator([extension, cdp], {
-        preferredWaitMs: 2000,
-      }),
-      {
-        type: "call",
-        id: "fallback",
-        spec: domSpec(),
-        params: {},
-        timeoutMs: 1000,
-      }
-    );
-
-    await vi.advanceTimersByTimeAsync(0);
-    expect(cdp.binds).toHaveLength(1);
-    await expect(result).resolves.toMatchObject({ kind: "value" });
-    vi.useRealTimers();
-  });
 });
 
 describe("write consent and execution", () => {
@@ -1017,7 +874,7 @@ describe("write consent and execution", () => {
     expect(second).not.toHaveProperty("cached");
   });
 
-  it("selects a capable CDP fallback when the preferred backend cannot send request bodies", async () => {
+  it("selects a capable backend when the preferred one cannot send request bodies", async () => {
     const extension = new FakeBackend("playwright-extension");
     extension.httpFetch = async () => {
       throw new Error("incapable preferred backend must not execute the request");
@@ -1025,7 +882,7 @@ describe("write consent and execution", () => {
     extension.supportsHttpBody = false;
     extension.version = "0.1.0";
     extension.negotiatedCapabilities = ["credentialed-http"];
-    const cdp = new FakeBackend("cdp", false);
+    const cdp = new FakeBackend("cdp");
     const requests: unknown[] = [];
     cdp.httpFetch = async (httpRequest) => {
       requests.push(httpRequest);
@@ -1037,12 +894,10 @@ describe("write consent and execution", () => {
         timestamp: Date.now(),
       };
     };
-    const orchestrator = createBrokerOrchestrator([extension, cdp], {
-      prepareFallback: async () => cdp.setAvailable(true),
-    });
+    const orchestrator = createBrokerOrchestrator([extension, cdp]);
     const result = await request(orchestrator, {
       type: "call",
-      id: "capable-fallback",
+      id: "capable-backend",
       spec: {
         name: "@example/api/update",
         url: "https://example.com/api",
@@ -1077,7 +932,7 @@ describe("write consent and execution", () => {
         timestamp: Date.now(),
       };
     };
-    const cdp = new FakeBackend("cdp", false);
+    const cdp = new FakeBackend("cdp");
     const cdpRequests: unknown[] = [];
     cdp.httpFetch = async (httpRequest) => {
       cdpRequests.push(httpRequest);
@@ -1090,9 +945,7 @@ describe("write consent and execution", () => {
       };
     };
     const frames: BrokerFrame[] = [];
-    const orchestrator = createBrokerOrchestrator([extension, cdp], {
-      prepareFallback: async () => cdp.setAvailable(true),
-    });
+    const orchestrator = createBrokerOrchestrator([extension, cdp]);
     await orchestrator.handle({
       type: "call",
       id: "same-origin-chain",
@@ -1231,7 +1084,7 @@ describe("write consent and execution", () => {
     expect((result as { message: string }).message).toContain("playwright-extension 0.1.0");
     expect((result as { message: string }).message).toContain("credentialed-http");
     expect((result as { message: string }).message).toContain(
-      "chrome://inspect/#remote-debugging"
+      "Approve the Playwright Extension connect page"
     );
   });
 
