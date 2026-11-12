@@ -167,7 +167,7 @@ export interface BrowserBackend {
   readonly name: string;
   available(): boolean;
   info(): BackendInfo;
-  /** Whether this backend can safely execute an operation before it is selected. */
+  /** Whether this backend can execute an operation; checked before the operation starts. */
   supports?(capability: BrowserCapability): boolean;
   onStatusChange(listener: () => void): () => void;
   /**

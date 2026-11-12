@@ -101,8 +101,8 @@ export async function startBroker(options: BrokerOptions): Promise<Broker> {
       extensionInstalled = installed;
     });
   }
-  const orchestrator = options.orchestrator ?? createBrokerOrchestrator([backend], {
-    prepareBackends: ensureBrowser,
+  const orchestrator = options.orchestrator ?? createBrokerOrchestrator(backend, {
+    prepareBackend: ensureBrowser,
   });
   let ensureBrowserInFlight: Promise<void> | undefined;
   let browserPresent: boolean | undefined;

@@ -91,7 +91,7 @@ describe.skipIf(!existsSync(chrome))("real browser file lens", () => {
         connectHint: () => "test", staleHint: () => "test",
       });
       await backend.acquire();
-      const orchestrator = createBrokerOrchestrator([backend]);
+      const orchestrator = createBrokerOrchestrator(backend);
       const message: Extract<LensBridgeRequest, { type: "call" }> = {
         type: "call", id: "file-e2e", timeoutMs: 15_000, deadline: Date.now() + 15_000, outDir,
         params: { tab: "Pre-advice", label: "02 Sep 2026 - 01 Oct 2026 - Pre-advice of charges", id: "2" },

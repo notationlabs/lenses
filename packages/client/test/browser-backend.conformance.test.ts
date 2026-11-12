@@ -209,7 +209,7 @@ for (const [name, createFixture] of [
 
     it("runs shared call and observe orchestration over the backend", async () => {
       fixture = await createFixture();
-      const orchestrator = createBrokerOrchestrator([fixture.backend]);
+      const orchestrator = createBrokerOrchestrator(fixture.backend);
 
       const call = await orchestrate(orchestrator, {
         type: "call",

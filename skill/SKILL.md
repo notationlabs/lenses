@@ -118,8 +118,8 @@ RBS does) leaves no second copy in Downloads.
      public or cookie-authenticated endpoint exists). `request` is
      `{ "method": "GET", "url": "https://…/{params.id}" }` (omitted, the tier
      GETs the lens `url`); `items` selects rows from the reply, `$res.body`,
-     and `map` shapes each row `$item`; `credentials: true` sends browser cookies
-     through any capable backend, while `credentials: "same-origin-page"`
+     and `map` shapes each row `$item`; `credentials: true` sends the browser's cookies
+     with the request, while `credentials: "same-origin-page"`
      requires execution in an already-open page matching the request origin.
      Sources may override credentials and add headers. `sources`
      chains requests: each binds `$sources.name` for `map` and for the sources

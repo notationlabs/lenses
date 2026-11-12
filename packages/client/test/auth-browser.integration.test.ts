@@ -44,7 +44,7 @@ describe.skipIf(!existsSync(chrome))("real browser sign-in lease", () => {
         connectHint: () => "test", staleHint: () => "test",
       });
       await backend.acquire();
-      const orchestrator = createBrokerOrchestrator([backend]);
+      const orchestrator = createBrokerOrchestrator(backend);
       const leases = createBrokerAuthLeases(orchestrator);
       const message: Extract<LensBridgeRequest, { type: "call" }> = {
         type: "call", id: "auth-e2e", params: {}, timeoutMs: 10_000,

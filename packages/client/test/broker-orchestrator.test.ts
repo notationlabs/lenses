@@ -204,7 +204,7 @@ describe("broker orchestration", () => {
     backend.hasOpenTarget = async () => true;
     backend.session.navigated = false;
     backend.session.atAuthGate = true;
-    const orchestrator = createBrokerOrchestrator([backend]);
+    const orchestrator = createBrokerOrchestrator(backend);
     const spec = domSpec({
       resolve: [{ kind: "intercept", request: { method: "GET", url: "https://example.com/api/*" }, reloadOnMiss: true, waitMs: 0 }],
     });
@@ -250,7 +250,7 @@ describe("broker orchestration", () => {
     it("a retry neither binds, fetches nor looks for the tab while it is on the login pages", async () => {
       const { backend, fetches, presence } = signingIn(login);
       const frames: BrokerFrame[] = [];
-      await createBrokerOrchestrator([backend]).handle(
+      await createBrokerOrchestrator(backend).handle(
         { type: "call", id: "retry", spec: signInSpec(), params: {}, timeoutMs: 500 },
         (frame) => frames.push(frame), { authRetry: true, retry: {} }
       );
@@ -263,7 +263,7 @@ describe("broker orchestration", () => {
     it("a second call waits on the sign-in instead of touching the tab", async () => {
       const { backend, fetches } = signingIn(login);
       const frames: BrokerFrame[] = [];
-      await createBrokerOrchestrator([backend]).handle(
+      await createBrokerOrchestrator(backend).handle(
         { type: "call", id: "second", spec: signInSpec(), params: {}, timeoutMs: 500 },
         (frame) => frames.push(frame)
       );
@@ -274,7 +274,7 @@ describe("broker orchestration", () => {
       // An http-only lens on the site does not fetch with its cookies either.
       const httpOnly = { ...signInSpec(), resolve: [signInSpec().resolve[0]] };
       const httpFrames: BrokerFrame[] = [];
-      await createBrokerOrchestrator([backend]).handle(
+      await createBrokerOrchestrator(backend).handle(
         { type: "call", id: "http-only", spec: httpOnly, params: {}, timeoutMs: 500 },
         (frame) => httpFrames.push(frame)
       );
@@ -292,7 +292,7 @@ describe("broker orchestration", () => {
         return (await needsUser({ url: login, title: "" })) ? { url: login, target: login } : undefined;
       };
       const frames: BrokerFrame[] = [];
-      await createBrokerOrchestrator([backend]).handle(
+      await createBrokerOrchestrator(backend).handle(
         { type: "call", id: "fresh", spec: signInSpec(), params: {}, timeoutMs: 500 },
         (frame) => frames.push(frame)
       );
@@ -304,7 +304,7 @@ describe("broker orchestration", () => {
 
     it("retries once after the tab leaves the login pages, then not again at the same place", async () => {
       const { backend, fetches } = signingIn(login);
-      const orchestrator = createBrokerOrchestrator([backend]);
+      const orchestrator = createBrokerOrchestrator(backend);
       const retry = {};
       const attempt = async () => {
         const frames: BrokerFrame[] = [];
@@ -344,7 +344,7 @@ describe("broker orchestration", () => {
       const { backend, fetches } = signingIn(login);
       backend.authGate = undefined;
       const frames: BrokerFrame[] = [];
-      await createBrokerOrchestrator([backend]).handle(
+      await createBrokerOrchestrator(backend).handle(
         { type: "call", id: "normal", spec: signInSpec(), params: {}, timeoutMs: 500 },
         (frame) => frames.push(frame)
       );
@@ -380,7 +380,7 @@ describe("broker orchestration", () => {
       resolve: [{ kind: "dom", exceptions: resolverExceptions, fields: { title: { selector: "h1" } } }],
     });
     const frames: BrokerFrame[] = [];
-    await createBrokerOrchestrator([backend]).handle(
+    await createBrokerOrchestrator(backend).handle(
       { type: "call", id: "retry", spec, params: {}, timeoutMs: 500 },
       (frame) => frames.push(frame), { authRetry: true }
     );
@@ -407,7 +407,7 @@ describe("broker orchestration", () => {
       resolve: [{ kind: "intercept", request: { method: "GET", url: "https://example.com/api/*" }, reloadOnMiss: true, waitMs: 100 }],
     });
     const frames: BrokerFrame[] = [];
-    await createBrokerOrchestrator([backend]).handle(
+    await createBrokerOrchestrator(backend).handle(
       { type: "call", id: "retry", spec, params: {}, timeoutMs: 500 },
       (frame) => frames.push(frame), { authRetry: true }
     );
@@ -421,7 +421,7 @@ describe("broker orchestration", () => {
   it("bounds a stuck call and identifies it in the timeout", async () => {
     const backend = new FakeBackend("playwright-extension");
     backend.bind = async () => new Promise<BrowserSession>(() => {});
-    const orchestrator = createBrokerOrchestrator([backend]);
+    const orchestrator = createBrokerOrchestrator(backend);
 
     const result = await request(orchestrator, {
       type: "call",
@@ -452,28 +452,6 @@ describe("broker orchestration", () => {
     expect(backend.binds).toHaveLength(0);
   });
 
-  it("pins a selected backend for the whole call", async () => {
-    const preferred = new FakeBackend("playwright-extension");
-    const fallback = new FakeBackend("cdp");
-    preferred.onBind = () => {
-      preferred.isAvailable = false;
-    };
-    const orchestrator = createBrokerOrchestrator([preferred, fallback]);
-
-    const result = await request(orchestrator, {
-      type: "call",
-      id: "one",
-      spec: domSpec(),
-      params: {},
-      timeoutMs: 1000,
-    });
-
-    expect(result.kind).toBe("value");
-    expect(preferred.binds).toHaveLength(1);
-    expect(preferred.finishes).toEqual(["close-if-created"]);
-    expect(fallback.binds).toHaveLength(0);
-  });
-
   it("keeps created pages for needs_ outcomes and closes other results", async () => {
     const session = new FakeSession();
     session.domResult = {
@@ -482,7 +460,7 @@ describe("broker orchestration", () => {
       value: null,
     };
     const backend = new FakeBackend("cdp", true, session);
-    const orchestrator = createBrokerOrchestrator([backend]);
+    const orchestrator = createBrokerOrchestrator(backend);
     const spec = domSpec({
       exceptions: { needs_auth: null },
       resolve: [
@@ -511,7 +489,7 @@ describe("broker orchestration", () => {
     session.domResult = { url: "https://example.com/login", title: "Login", value: null };
     const backend = new FakeBackend("cdp", true, session);
     const frames: BrokerFrame[] = [];
-    await createBrokerOrchestrator([backend]).handle({
+    await createBrokerOrchestrator(backend).handle({
       type: "call", id: "write-auth", params: {}, timeoutMs: 1000, allowWrites: true,
       spec: domSpec({
         effects: { reads: [], writes: ["example.com"] },
@@ -528,7 +506,7 @@ describe("broker orchestration", () => {
     const session = new FakeSession();
     session.performResult = { url: "https://example.com/login", title: "Login", failedStep: 0 };
     const frames: BrokerFrame[] = [];
-    await createBrokerOrchestrator([new FakeBackend("cdp", true, session)]).handle({
+    await createBrokerOrchestrator(new FakeBackend("cdp", true, session)).handle({
       type: "call", id: "write-auth-late", params: {}, timeoutMs: 1000, allowWrites: true,
       spec: domSpec({
         effects: { reads: [], writes: ["example.com"] },
@@ -552,7 +530,7 @@ describe("broker orchestration", () => {
       session.performResult = { url: "https://example.com/login", title: "Login", failedStep: 0 };
     }
     const frames: BrokerFrame[] = [];
-    await createBrokerOrchestrator([new FakeBackend("cdp", true, session)]).handle({
+    await createBrokerOrchestrator(new FakeBackend("cdp", true, session)).handle({
       type: "call", id: `idempotent-auth-${stage}`, params: {}, timeoutMs: 1000, allowWrites: true,
       spec: domSpec({
         effects: { reads: [], writes: ["example.com"], idempotent: true },
@@ -572,7 +550,7 @@ describe("broker orchestration", () => {
     session.domResult = { url: loginUrl, title: "Login", value: null };
     session.snapshotResult = { url: loginUrl, title: "Login", text: "" };
     const backend = new FakeBackend("cdp", true, session);
-    const orchestrator = createBrokerOrchestrator([backend]);
+    const orchestrator = createBrokerOrchestrator(backend);
     const gatedSpec = (url: string) =>
       domSpec({
         url,
@@ -643,7 +621,7 @@ describe("broker orchestration", () => {
     session.domResult = { url: loginUrl, title: "Login", value: null };
     session.snapshotResult = { url: loginUrl, title: "Login", text: "" };
     const backend = new FakeBackend("cdp", true, session);
-    const orchestrator = createBrokerOrchestrator([backend]);
+    const orchestrator = createBrokerOrchestrator(backend);
 
     await request(orchestrator, {
       type: "call",
@@ -694,7 +672,7 @@ describe("broker orchestration", () => {
       html: "<body>text</body>",
     };
     const backend = new FakeBackend("cdp", true, session);
-    const result = await request(createBrokerOrchestrator([backend]), {
+    const result = await request(createBrokerOrchestrator(backend), {
       type: "observe",
       id: "observe",
       target: "https://example.com",
@@ -716,8 +694,8 @@ describe("broker orchestration", () => {
   it("returns cached values without preparing a browser", async () => {
     vi.useFakeTimers();
     const backend = new FakeBackend("cdp", false);
-    const prepareBackends = vi.fn(async () => backend.setAvailable(true));
-    const orchestrator = createBrokerOrchestrator([backend], { prepareBackends });
+    const prepareBackend = vi.fn(async () => backend.setAvailable(true));
+    const orchestrator = createBrokerOrchestrator(backend, { prepareBackend });
     const spec = domSpec({ effects: { reads: ["example.com"], writes: [], cache: 60 } });
     const call = (id: string) =>
       request(orchestrator, { type: "call", id, spec, params: {}, timeoutMs: 1000 });
@@ -727,15 +705,15 @@ describe("broker orchestration", () => {
     const second = await call("second");
 
     expect(backend.binds).toHaveLength(1);
-    expect(prepareBackends).toHaveBeenCalledOnce();
+    expect(prepareBackend).toHaveBeenCalledOnce();
     expect(second).toMatchObject({ kind: "value", cached: true });
     vi.useRealTimers();
   });
 
   it("sends browser acquisition progress to the call that waits on it", async () => {
     const backend = new FakeBackend("cdp", false);
-    const orchestrator = createBrokerOrchestrator([backend], {
-      prepareBackends: async (progress) => {
+    const orchestrator = createBrokerOrchestrator(backend, {
+      prepareBackend: async (progress) => {
         progress?.("approve the connect page");
         backend.setAvailable(true);
       },
@@ -751,7 +729,7 @@ describe("broker orchestration", () => {
 
   it("bypasses the broker cache without caching the result", async () => {
     const backend = new FakeBackend("cdp", true);
-    const orchestrator = createBrokerOrchestrator([backend]);
+    const orchestrator = createBrokerOrchestrator(backend);
     const spec = domSpec({ effects: { reads: ["example.com"], writes: [], cache: 60 } });
     const call = (id: string, noCache = false) =>
       request(orchestrator, { type: "call", id, spec, params: {}, timeoutMs: 1000, noCache });
@@ -765,7 +743,7 @@ describe("broker orchestration", () => {
     expect(cached).toMatchObject({ kind: "value", cached: true });
 
     const emptyBackend = new FakeBackend("cdp", true);
-    const emptyOrchestrator = createBrokerOrchestrator([emptyBackend]);
+    const emptyOrchestrator = createBrokerOrchestrator(emptyBackend);
     await request(emptyOrchestrator, {
       type: "call",
       id: "uncached-first",
@@ -784,12 +762,11 @@ describe("broker orchestration", () => {
     expect(emptyBackend.binds).toHaveLength(2);
   });
 
-  it("fails on backend loss without switching backend mid-call", async () => {
+  it("fails on backend loss mid-call", async () => {
     const session = new FakeSession();
     session.failDom = new Error("Playwright Extension disconnected");
     const extension = new FakeBackend("playwright-extension", true, session);
-    const cdp = new FakeBackend("cdp");
-    const result = await request(createBrokerOrchestrator([extension, cdp]), {
+    const result = await request(createBrokerOrchestrator(extension), {
       type: "call",
       id: "loss",
       spec: domSpec(),
@@ -799,7 +776,6 @@ describe("broker orchestration", () => {
 
     expect(result).toEqual({ kind: "error", message: "Playwright Extension disconnected" });
     expect(extension.finishes).toEqual(["close-if-created"]);
-    expect(cdp.binds).toHaveLength(0);
   });
 });
 
@@ -814,7 +790,7 @@ describe("write consent and execution", () => {
 
   it("denies a perform spec without allowWrites, before any page bind", async () => {
     const backend = new FakeBackend("cdp");
-    const result = await request(createBrokerOrchestrator([backend]), {
+    const result = await request(createBrokerOrchestrator(backend), {
       type: "call",
       id: "denied",
       spec: performSpec(),
@@ -840,7 +816,7 @@ describe("write consent and execution", () => {
       requests.push(httpRequest);
       return { url: httpRequest.url, method: httpRequest.method, status: 200, body: "{}", timestamp: Date.now() };
     };
-    const result = await request(createBrokerOrchestrator([backend]), {
+    const result = await request(createBrokerOrchestrator(backend), {
       type: "call",
       id: "http-denied",
       spec: {
@@ -872,7 +848,7 @@ describe("write consent and execution", () => {
       resolve: [{ kind: "http", credentials: true, request: { method: "PUT", url: "https://example.com/api" }, body: { search: { value: "$params.value" } } }],
       params: { value: "string" },
     };
-    const orchestrator = createBrokerOrchestrator([backend]);
+    const orchestrator = createBrokerOrchestrator(backend);
     const call = (id: string) => request(orchestrator, {
       type: "call",
       id,
@@ -891,119 +867,7 @@ describe("write consent and execution", () => {
     expect(second).not.toHaveProperty("cached");
   });
 
-  it("selects a capable backend when the preferred one cannot send request bodies", async () => {
-    const extension = new FakeBackend("playwright-extension");
-    extension.httpFetch = async () => {
-      throw new Error("incapable preferred backend must not execute the request");
-    };
-    extension.supportsHttpBody = false;
-    extension.version = "0.1.0";
-    extension.negotiatedCapabilities = ["credentialed-http"];
-    const cdp = new FakeBackend("cdp");
-    const requests: unknown[] = [];
-    cdp.httpFetch = async (httpRequest) => {
-      requests.push(httpRequest);
-      return {
-        url: httpRequest.url,
-        method: httpRequest.method,
-        status: 200,
-        body: '{"ok":true}',
-        timestamp: Date.now(),
-      };
-    };
-    const orchestrator = createBrokerOrchestrator([extension, cdp]);
-    const result = await request(orchestrator, {
-      type: "call",
-      id: "capable-backend",
-      spec: {
-        name: "@example/api/update",
-        url: "https://example.com/api",
-        effects: { reads: ["example.com"], writes: ["example.com"] },
-        resolve: [{
-          kind: "http",
-          credentials: true,
-          request: { method: "POST", url: "https://example.com/api" },
-          body: { json: "{}" },
-        }],
-      },
-      params: {},
-      timeoutMs: 1000,
-      allowWrites: true,
-    });
-
-    expect(result).toMatchObject({ kind: "value", value: { ok: true } });
-    expect(requests).toHaveLength(1);
-  });
-
-  it("selects per-source backends and uses CDP for a same-origin page mutation", async () => {
-    const extension = new FakeBackend("playwright-extension");
-    extension.sameOriginPageRequests = false;
-    const extensionRequests: string[] = [];
-    extension.httpFetch = async (httpRequest) => {
-      extensionRequests.push(httpRequest.url);
-      return {
-        url: httpRequest.url,
-        method: httpRequest.method,
-        status: 200,
-        body: '{"token":"csrf-1"}',
-        timestamp: Date.now(),
-      };
-    };
-    const cdp = new FakeBackend("cdp");
-    const cdpRequests: unknown[] = [];
-    cdp.httpFetch = async (httpRequest) => {
-      cdpRequests.push(httpRequest);
-      return {
-        url: httpRequest.url,
-        method: httpRequest.method,
-        status: 200,
-        body: '{"deleted":true}',
-        timestamp: Date.now(),
-      };
-    };
-    const frames: BrokerFrame[] = [];
-    const orchestrator = createBrokerOrchestrator([extension, cdp]);
-    await orchestrator.handle({
-      type: "call",
-      id: "same-origin-chain",
-      spec: {
-        name: "@example/delete",
-        url: "https://example.com/items/1",
-        effects: { reads: ["example.com"], writes: ["example.com"] },
-        resolve: [{
-          kind: "http",
-          credentials: true,
-          sources: {
-            confirmation: { request: { method: "GET", url: "https://example.com/items/1/confirm" } },
-            deleted: {
-              request: { method: "POST", url: "https://example.com/items/1" },
-              credentials: "same-origin-page",
-              headers: { "X-CSRF-Token": "{sources.confirmation.body.token}" },
-              body: { search: { _method: "'delete'" } },
-            },
-          },
-        }],
-      },
-      params: {},
-      timeoutMs: 1000,
-      allowWrites: true,
-    }, (frame) => frames.push(frame));
-
-    expect(extensionRequests).toEqual(["https://example.com/items/1/confirm"]);
-    expect(cdpRequests).toEqual([
-      expect.objectContaining({
-        method: "POST",
-        context: "same-origin-page",
-        headers: { "X-CSRF-Token": "csrf-1" },
-      }),
-    ]);
-    expect(frames).toContainEqual(expect.objectContaining({
-      type: "progress",
-      message: "executing credentialed POST in same-origin page context via cdp",
-    }));
-  });
-
-  it("uses a capable preferred backend for same-origin page requests without CDP", async () => {
+  it("sends same-origin page requests through a backend that supports them", async () => {
     const extension = new FakeBackend("playwright-extension");
     extension.sameOriginPageRequests = true;
     const sent: unknown[] = [];
@@ -1017,7 +881,7 @@ describe("write consent and execution", () => {
         timestamp: Date.now(),
       };
     };
-    const result = await request(createBrokerOrchestrator([extension]), {
+    const result = await request(createBrokerOrchestrator(extension), {
       type: "call",
       id: "same-origin-preferred",
       spec: {
@@ -1039,12 +903,12 @@ describe("write consent and execution", () => {
     expect(sent).toEqual([expect.objectContaining({ context: "same-origin-page" })]);
   });
 
-  it("fails a same-origin page request before transmission when no backend qualifies", async () => {
+  it("fails a same-origin page request before transmission when the backend lacks support", async () => {
     const extension = new FakeBackend("playwright-extension");
     extension.sameOriginPageRequests = false;
     const sent = vi.fn();
     extension.httpFetch = sent;
-    const result = await request(createBrokerOrchestrator([extension]), {
+    const result = await request(createBrokerOrchestrator(extension), {
       type: "call",
       id: "same-origin-unavailable",
       spec: {
@@ -1069,7 +933,7 @@ describe("write consent and execution", () => {
     expect(sent).not.toHaveBeenCalled();
   });
 
-  it("fails before execution with version and capability upgrade guidance", async () => {
+  it("fails before execution when the backend lacks a capability, naming its version and capabilities", async () => {
     const extension = new FakeBackend("playwright-extension");
     extension.httpFetch = async () => {
       throw new Error("must not execute");
@@ -1077,7 +941,7 @@ describe("write consent and execution", () => {
     extension.supportsHttpBody = false;
     extension.version = "0.1.0";
     extension.negotiatedCapabilities = ["browser-session", "credentialed-http"];
-    const result = await request(createBrokerOrchestrator([extension]), {
+    const result = await request(createBrokerOrchestrator(extension), {
       type: "call",
       id: "capability-mismatch",
       spec: {
@@ -1100,14 +964,11 @@ describe("write consent and execution", () => {
     expect((result as { message: string }).message).toContain("credentialed HTTP request bodies");
     expect((result as { message: string }).message).toContain("playwright-extension 0.1.0");
     expect((result as { message: string }).message).toContain("credentialed-http");
-    expect((result as { message: string }).message).toContain(
-      "Approve the Playwright Extension connect page"
-    );
   });
 
   it("runs perform with allowWrites, binding with reuse navigation", async () => {
     const backend = new FakeBackend("cdp");
-    const result = await request(createBrokerOrchestrator([backend]), {
+    const result = await request(createBrokerOrchestrator(backend), {
       type: "call",
       id: "allowed",
       spec: performSpec({
@@ -1132,7 +993,7 @@ describe("write consent and execution", () => {
   it("reports redacted per-step start and completion progress", async () => {
     const backend = new FakeBackend("cdp");
     const frames: BrokerFrame[] = [];
-    await createBrokerOrchestrator([backend]).handle({
+    await createBrokerOrchestrator(backend).handle({
       type: "call",
       id: "progress",
       spec: performSpec({
@@ -1168,7 +1029,7 @@ describe("write consent and execution", () => {
       if (calls === 2) return new Promise<PerformResult>(() => {});
       return {};
     };
-    const result = await request(createBrokerOrchestrator([backend]), {
+    const result = await request(createBrokerOrchestrator(backend), {
       type: "call",
       id: "ambiguous",
       spec: performSpec({ perform: [{ fill: "textarea", value: "$params.message" }, { click: "#send" }], params: { message: "string" } }),
@@ -1192,7 +1053,7 @@ describe("write consent and execution", () => {
   it("omits mutation diagnostics for an idempotent perform timeout", async () => {
     const backend = new FakeBackend("cdp");
     backend.session.perform = async () => new Promise<PerformResult>(() => {});
-    const result = await request(createBrokerOrchestrator([backend]), {
+    const result = await request(createBrokerOrchestrator(backend), {
       type: "call", id: "idempotent", params: {}, timeoutMs: 20,
       deadline: Date.now() + 20, allowWrites: true,
       spec: performSpec({ effects: { reads: [], writes: ["example.com"], idempotent: true } }),
@@ -1203,7 +1064,7 @@ describe("write consent and execution", () => {
 
   it("bypasses the result cache for perform specs, whatever effects.cache claims", async () => {
     const backend = new FakeBackend("cdp");
-    const orchestrator = createBrokerOrchestrator([backend]);
+    const orchestrator = createBrokerOrchestrator(backend);
     const spec = performSpec({
       effects: { reads: ["example.com"], writes: ["example.com"], cache: 60 },
     });
@@ -1233,7 +1094,7 @@ describe("write consent and execution", () => {
       url: "https://example.com",
       title: "Example",
     };
-    const result = await request(createBrokerOrchestrator([backend]), {
+    const result = await request(createBrokerOrchestrator(backend), {
       type: "call",
       id: "failed",
       spec: performSpec(),
@@ -1316,7 +1177,7 @@ describe("http tiers", () => {
     vi.stubGlobal("fetch", fetchMock);
     try {
       const backend = new FakeBackend("cdp");
-      const orchestrator = createBrokerOrchestrator([backend]);
+      const orchestrator = createBrokerOrchestrator(backend);
       const result = await request(orchestrator, {
         type: "call",
         id: "one",
@@ -1353,7 +1214,7 @@ describe("http tiers", () => {
         timestamp: Date.now(),
       };
     };
-    const orchestrator = createBrokerOrchestrator([backend]);
+    const orchestrator = createBrokerOrchestrator(backend);
     const result = await request(orchestrator, {
       type: "call",
       id: "one",
@@ -1378,7 +1239,7 @@ describe("http tiers", () => {
 
   it("falls through to the page tiers when the backend cannot fetch with cookies", async () => {
     const backend = new FakeBackend("cdp");
-    const orchestrator = createBrokerOrchestrator([backend]);
+    const orchestrator = createBrokerOrchestrator(backend);
     const result = await request(orchestrator, {
       type: "call",
       id: "one",
@@ -1418,7 +1279,7 @@ describe("broker tab ids", () => {
     session.tab = "t1";
     const backend = new FakeBackend("cdp", true, session);
     const result = await request(
-      createBrokerOrchestrator([backend]),
+      createBrokerOrchestrator(backend),
       call(domSpec({ tab: "reuse", navigate: "in-page" }))
     );
     expect(backend.binds[0]).toMatchObject({ reuse: true, inPage: true });
@@ -1429,7 +1290,7 @@ describe("broker tab ids", () => {
     const session = new FakeSession();
     session.tab = "t1";
     const backend = new FakeBackend("cdp", true, session);
-    const orchestrator = createBrokerOrchestrator([backend]);
+    const orchestrator = createBrokerOrchestrator(backend);
     const spec = domSpec({ tab: "reuse", effects: { reads: ["example.com"], writes: [], cache: 60 } });
     expect(await request(orchestrator, call(spec, { id: "first" }))).toMatchObject({ tab: "t1" });
     const cached = await request(orchestrator, call(spec, { id: "second" }));
@@ -1441,7 +1302,7 @@ describe("broker tab ids", () => {
     const session = new FakeSession();
     session.tab = "t1";
     const backend = new FakeBackend("cdp", true, session);
-    const result = await request(createBrokerOrchestrator([backend]), call(domSpec()));
+    const result = await request(createBrokerOrchestrator(backend), call(domSpec()));
     expect(result).toMatchObject({ kind: "value" });
     expect(result).not.toHaveProperty("tab");
     expect(backend.binds[0]).not.toHaveProperty("reuse");
@@ -1453,7 +1314,7 @@ describe("broker tab ids", () => {
     session.created = false;
     session.tab = "t4";
     const backend = new FakeBackend("cdp", true, session);
-    const orchestrator = createBrokerOrchestrator([backend]);
+    const orchestrator = createBrokerOrchestrator(backend);
     expect(await request(orchestrator, call(domSpec(), { tab: "t4" })))
       .toMatchObject({ kind: "value", tab: "t4" });
     expect(backend.binds[0]).toMatchObject({ tab: "t4" });
@@ -1468,7 +1329,7 @@ describe("broker tab ids", () => {
     session.created = false;
     session.tab = "t2";
     const backend = new FakeBackend("cdp", true, session);
-    const result = await request(createBrokerOrchestrator([backend]), {
+    const result = await request(createBrokerOrchestrator(backend), {
       type: "observe",
       id: "observe",
       tab: "t2",
@@ -1493,7 +1354,7 @@ describe("file lenses", () => {
 
   it("refuses a file lens without an out dir before binding a page", async () => {
     const backend = new FakeBackend("cdp");
-    const result = await request(createBrokerOrchestrator([backend]), {
+    const result = await request(createBrokerOrchestrator(backend), {
       type: "call", id: "no-dir", spec: fileSpec(), params: {}, timeoutMs: 1000,
     });
     expect(result).toMatchObject({ kind: "error", code: "out_dir_required" });
@@ -1504,7 +1365,7 @@ describe("file lenses", () => {
     ["relative", "statements", "must be an absolute path"],
     ["missing", "/definitely/not/here", "does not exist"],
   ])("refuses a %s out dir", async (_kind, dir, reason) => {
-    const result = await request(createBrokerOrchestrator([new FakeBackend("cdp")]), {
+    const result = await request(createBrokerOrchestrator(new FakeBackend("cdp")), {
       type: "call", id: "bad-dir", spec: fileSpec(), params: {}, timeoutMs: 1000, outDir: dir,
     });
     expect(result).toMatchObject({ kind: "error", code: "out_dir_invalid" });
@@ -1516,7 +1377,7 @@ describe("file lenses", () => {
     const backend = new FakeBackend("cdp", true, fileSession({
       content: pdf.toString("base64"), encoding: "base64", mimeType: "application/pdf", name: "Statement.pdf",
     }));
-    const result = await request(createBrokerOrchestrator([backend]), {
+    const result = await request(createBrokerOrchestrator(backend), {
       type: "call", id: "save", spec: fileSpec(), params: {}, timeoutMs: 1000, outDir: dir,
     });
     expect(result).toMatchObject({
@@ -1534,7 +1395,7 @@ describe("file lenses", () => {
     const backend = new FakeBackend("cdp", true, fileSession({
       content: "a,b\n1,2\n", encoding: "utf8", mimeType: "text/csv",
     }));
-    const result = await request(createBrokerOrchestrator([backend]), {
+    const result = await request(createBrokerOrchestrator(backend), {
       type: "call", id: "hash", spec: fileSpec(), params: {}, timeoutMs: 1000, outDir: dir,
     });
     const name = (result as { value: { name: string } }).value.name;
@@ -1547,7 +1408,7 @@ describe("file lenses", () => {
     const backend = new FakeBackend("cdp", true, fileSession({
       content: "x", encoding: "utf8", mimeType: "text/plain", name: "../escape.txt",
     }));
-    const result = await request(createBrokerOrchestrator([backend]), {
+    const result = await request(createBrokerOrchestrator(backend), {
       type: "call", id: "escape", spec: fileSpec(), params: {}, timeoutMs: 1000, outDir: dir,
     });
     expect(result).toMatchObject({ kind: "error", code: "file_invalid" });
@@ -1560,7 +1421,7 @@ describe("file lenses", () => {
     const backend = new FakeBackend("cdp", true, fileSession({
       content: pdf.toString("base64"), encoding: "base64", mimeType: "application/pdf", name: "s.pdf",
     }));
-    const orchestrator = createBrokerOrchestrator([backend]);
+    const orchestrator = createBrokerOrchestrator(backend);
     const spec = fileSpec({ effects: { reads: ["example.com"], writes: [], cache: 60 } });
     const call = (id: string) =>
       request(orchestrator, { type: "call", id, spec, params: {}, timeoutMs: 1000, outDir: dir });
@@ -1575,7 +1436,7 @@ describe("file lenses", () => {
 describe("author-declared writes", () => {
   it("runs a perform lens that declares no writes without consent", async () => {
     const session = new FakeSession();
-    const result = await request(createBrokerOrchestrator([new FakeBackend("cdp", true, session)]), {
+    const result = await request(createBrokerOrchestrator(new FakeBackend("cdp", true, session)), {
       type: "call", id: "read-click", params: {}, timeoutMs: 1000,
       spec: domSpec({ perform: [{ click: "a.statement", text: "Sep 2026" }] }),
     });

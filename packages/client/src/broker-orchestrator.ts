@@ -79,34 +79,24 @@ export interface AuthRetryState {
 }
 
 export function createBrokerOrchestrator(
-  backends: BrowserBackend[],
+  backend: BrowserBackend,
   options: {
-    /** Lazily start browser transports only after execution actually needs one. */
-    prepareBackends?: (progress?: (text: string) => void) => Promise<void>;
+    /** Lazily start the browser transport only after execution actually needs one. */
+    prepareBackend?: (progress?: (text: string) => void) => Promise<void>;
   } = {}
 ): BrokerOrchestrator {
-  if (backends.length === 0) throw new Error("broker orchestrator requires a browser backend");
   const cache = new Map<string, { result: LensResult; expiresAt: number }>();
   let backgroundCall: { id: string; type: "call" | "observe"; lens?: string; startedAt: number } | undefined;
 
-  function currentBackend(eligible = backends): BrowserBackend {
-    return eligible.find((backend) => backend.available()) ?? eligible[eligible.length - 1];
-  }
-
-  async function selectBackend(
+  // Fails when the backend lacks a required capability; otherwise waits for
+  // a backend that is not connected yet.
+  async function readyBackend(
     requiredCapabilities: BrowserCapability[] = ["browser-session"],
     progress?: (text: string) => void
-  ): Promise<BrowserBackend> {
-    const eligible = backends.filter((backend) =>
-      requiredCapabilities.every((capability) => backendSupports(backend, capability))
-    );
-    if (eligible.length === 0) {
-      throw capabilityMismatch(requiredCapabilities, backends);
-    }
-    if (!eligible.some((backend) => backend.available())) {
-      await options.prepareBackends?.(progress);
-    }
-    return currentBackend(eligible);
+  ): Promise<void> {
+    const missing = requiredCapabilities.filter((capability) => !backendSupports(backend, capability));
+    if (missing.length > 0) throw capabilityMismatch(missing, backend);
+    if (!backend.available()) await options.prepareBackend?.(progress);
   }
 
   async function call(
@@ -160,7 +150,6 @@ export function createBrokerOrchestrator(
       ...(message.spec.tab === "reuse" ? { reuse: true } : {}),
     };
     const inPage = message.spec.navigate === "in-page";
-    let sessionBackend: BrowserBackend | undefined;
     const requiredCapabilities = capabilitiesForSpec(message.spec);
     const needsPageSession =
       performs || message.spec.resolve.some((resolver) => resolver.kind !== "http");
@@ -176,7 +165,7 @@ export function createBrokerOrchestrator(
      * broker's wait watches the tab passively. An auth retry is blocked only
      * while the tab is still on the sign-in pages.
      */
-    const signInGate = async (backend: BrowserBackend, origin: string) => {
+    const signInGate = async (origin: string) => {
       const gate = await findGateQuietly(backend, origin, needsUser);
       if (!gate || !authRetry) return gate;
       return (await needsUser({ url: gate.url, title: "" })) ? gate : undefined;
@@ -184,8 +173,8 @@ export function createBrokerOrchestrator(
     /** Set when a tier found a sign-in under way: the call reports it rather than any tier error. */
     let blockedBy: { url: string } | undefined;
     if (needsPageSession && !authRetry) {
-      sessionBackend = await selectBackend(requiredCapabilities, progress);
-      const gate = await signInGate(sessionBackend, gateKey(target));
+      await readyBackend(requiredCapabilities, progress);
+      const gate = await signInGate(gateKey(target));
       if (gate) {
         progress(
           `a sign-in tab is already open at ${gate.url}; complete it there to unblock this site`
@@ -198,19 +187,19 @@ export function createBrokerOrchestrator(
     // never visit the lens URL every second: that creates new login tabs and
     // can disrupt the form the user is filling out.
     if (authRetry) {
-      sessionBackend ??= await selectBackend(requiredCapabilities, progress);
+      await readyBackend(requiredCapabilities, progress);
       // While the sign-in tab is on the login pages, a retry does nothing at
       // all: the wait polls, and the tab's own navigation (watched passively)
       // tells it when the user has moved on. Then the call runs once per
       // place the tab reaches.
-      const gate = await findGateQuietly(sessionBackend, gateKey(target), needsUser);
+      const gate = await findGateQuietly(backend, gateKey(target), needsUser);
       if (gate) {
         if (await needsUser({ url: gate.url, title: "" })) return gateOutcome(message.spec, gate.url);
         if (retry?.ranAt === gate.url) return gateOutcome(message.spec, gate.url);
         if (retry) retry.ranAt = gate.url;
       }
       try {
-        if (!await sessionBackend.hasOpenTarget?.(target, choice)) return gateOutcome(message.spec, target);
+        if (!await backend.hasOpenTarget?.(target, choice)) return gateOutcome(message.spec, target);
       } catch (error) {
         if (error instanceof TabDisconnected) return disconnectedOutcome(message.spec, error);
         throw error;
@@ -223,15 +212,15 @@ export function createBrokerOrchestrator(
     let recording: RecordingMonitor | undefined;
     const ensureSession = async (): Promise<BrowserSession> => {
       if (session) return session;
-      sessionBackend ??= await selectBackend(undefined, progress);
+      await readyBackend(undefined, progress);
       // A sign-in may have begun since the call started (between tiers).
-      const gate = await signInGate(sessionBackend, gateKey(target));
+      const gate = await signInGate(gateKey(target));
       if (gate) {
         blockedBy = gate;
         throw new Error(`a sign-in is under way at ${gate.url}; not touching its tab`);
       }
-      progress(`binding browser page for ${target} via ${sessionBackend.name}`);
-      session = await sessionBackend.bind({
+      progress(`binding browser page for ${target} via ${backend.name}`);
+      session = await backend.bind({
         target,
         ...choice,
         ...(inPage ? { inPage } : {}),
@@ -275,9 +264,8 @@ export function createBrokerOrchestrator(
       if (request.credentials === "same-origin-page") {
         required.push("same-origin-page-http");
       }
-      let requestBackend: BrowserBackend;
       try {
-        requestBackend = await selectBackend(required, progress);
+        await readyBackend(required, progress);
       } catch (error) {
         if (request.credentials === "same-origin-page") {
           throw requiredBackendUnavailable(error);
@@ -286,18 +274,18 @@ export function createBrokerOrchestrator(
       }
       // A credentialed request runs in (or shares the cookies of) a tab on the
       // site: never while the user is signing in there.
-      const gate = await signInGate(requestBackend, gateKey(request.url));
+      const gate = await signInGate(gateKey(request.url));
       if (gate) {
         blockedBy = gate;
         throw new Error(`a sign-in is under way at ${gate.url}; not fetching with its cookies`);
       }
       progress(
         request.credentials === "same-origin-page"
-          ? `executing credentialed ${request.method} in same-origin page context via ${requestBackend.name}`
-          : `fetching ${request.url} with browser cookies via ${requestBackend.name}`
+          ? `executing credentialed ${request.method} in same-origin page context via ${backend.name}`
+          : `fetching ${request.url} with browser cookies via ${backend.name}`
       );
       // Strip engine-only policy fields: backend wire protocols reject unknown keys.
-      const response = await requestBackend.httpFetch?.({
+      const response = await backend.httpFetch?.({
         existingOnly: authRetry,
         method: request.method,
         url: request.url,
@@ -359,11 +347,11 @@ export function createBrokerOrchestrator(
       if (error instanceof TabDisconnected) return disconnectedOutcome(message.spec, error);
       throw error;
     } finally {
-      if (sessionBackend && session) {
+      if (session) {
         try {
           if (recording) await recording.finish();
         } finally {
-          await finishQuietly(sessionBackend, session, authRetry ? "close-if-created" : dispositionFor(result), needOf(result));
+          await finishQuietly(backend, session, authRetry ? "close-if-created" : dispositionFor(result), needOf(result));
         }
       }
     }
@@ -395,7 +383,7 @@ export function createBrokerOrchestrator(
     message: Extract<LensBridgeRequest, { type: "observe" }>,
     progress: (text: string) => void
   ): Promise<LensResult> {
-    const backend = await selectBackend(undefined, progress);
+    await readyBackend(undefined, progress);
     progress(`binding browser page for ${message.target ?? `tab ${message.tab}`} via ${backend.name}`);
     let session: BrowserSession;
     try {
@@ -442,15 +430,14 @@ export function createBrokerOrchestrator(
   return {
     busy: () => backgroundCall,
     async watchAuthGate(origin, target, onExit, resume = false) {
-      for (const candidate of backends) {
-        if (!candidate.available() || (!resume && !await candidate.findAuthGate(origin))) continue;
+      if (backend.available() && (resume || await backend.findAuthGate(origin))) {
         // A multi-page login can move the kept tab before the retry finishes.
         // Reattach only for that retry, not for a later unrelated auth wait.
-        const prompt = await candidate.watchAuthGate?.(origin, onExit, resume);
+        const prompt = await backend.watchAuthGate?.(origin, onExit, resume);
         if (prompt) return prompt;
       }
       if (resume) return undefined; // Never open a replacement tab mid-login.
-      const backend = await selectBackend();
+      await readyBackend();
       // The first outcome may come from an HTTP tier without binding any page.
       if (!await backend.openAuthGate?.(origin, target)) return undefined;
       return backend.watchAuthGate?.(origin, onExit, resume);
@@ -550,9 +537,7 @@ async function withinCallDeadline(
 }
 
 export function capabilitiesForSpec(spec: LensSpec): BrowserCapability[] {
-  // A later page tier is an explicit fallback when ordinary browser HTTP is
-  // unsupported. Same-origin requirements are selected again per request, so
-  // mixed chains may use Playwright Extension for a cheap read and CDP for a mutation.
+  // Same-origin requirements are checked again per request in httpFetch.
   if (spec.resolve.some((resolver) => resolver.kind !== "http")) {
     return ["browser-session"];
   }
@@ -595,10 +580,10 @@ function backendSupports(
 }
 
 function capabilityMismatch(
-  required: BrowserCapability[],
-  backends: BrowserBackend[]
+  missing: BrowserCapability[],
+  backend: BrowserBackend
 ): Error {
-  const requirement = required
+  const requirement = missing
     .map((capability) =>
       capability === "credentialed-http-body"
         ? "credentialed HTTP request bodies"
@@ -609,22 +594,15 @@ function capabilityMismatch(
             : "browser sessions"
     )
     .join(", ");
-  const connected = backends
-    .filter((backend) => backend.available() || backend.info().diagnostic)
-    .map((backend) => {
-      const info = backend.info();
-      const version = info.version ? ` ${info.version}` : "";
-      const capabilities = info.capabilities?.length
-        ? `; negotiated capabilities: ${info.capabilities.join(", ")}`
-        : "; capabilities not reported";
-      const diagnostic = info.diagnostic ? `; ${info.diagnostic}` : "";
-      return `${backend.name}${version}${capabilities}${diagnostic}`;
-    })
-    .join(". ");
+  const info = backend.info();
+  const version = info.version ? ` ${info.version}` : "";
+  const capabilities = info.capabilities?.length
+    ? `negotiated capabilities: ${info.capabilities.join(", ")}`
+    : "capabilities not reported";
+  const diagnostic = info.diagnostic ? `; ${info.diagnostic}` : "";
   return new Error(
-    `No available browser backend supports ${requirement}.` +
-      (connected ? ` ${connected}.` : "") +
-      " Approve the Playwright Extension connect page."
+    `The browser backend ${backend.name}${version} does not support ${requirement} ` +
+      `(${capabilities}${diagnostic}).`
   );
 }
 
@@ -632,7 +610,7 @@ function requiredBackendUnavailable(cause?: unknown): Error & {
   code: "required_backend_unavailable";
 } {
   const error = new Error(
-    "This request requires a same-origin page context, but no compatible browser backend is available." +
+    "This request requires a same-origin page context, but the browser backend cannot provide one." +
       (cause ? ` ${errorMessage(cause)}` : "")
   ) as Error & { code: "required_backend_unavailable" };
   error.code = "required_backend_unavailable";
