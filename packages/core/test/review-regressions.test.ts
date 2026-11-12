@@ -47,3 +47,73 @@ describe("performed flag", () => {
     expect(r).toEqual({ kind: "error", message: "tab went away", performed: true });
   });
 });
+
+describe("evaluateBool", () => {
+  it.each([
+    [[], false],
+    [{}, false],
+    [[0, ""], false],
+    [[[]], false],
+    [[{ message: "x" }], true],
+    [{ message: "x" }, true],
+    ["", false],
+    [0, false],
+  ])("matches $boolean for %j", async (value, expected) => {
+    expect(await evaluateBool("$res.body.errors", { res: { body: { errors: value } } })).toBe(expected);
+    expect(await evaluate("$boolean($v)", { v: value })).toBe(expected);
+  });
+
+  it("treats a lambda as false, as $boolean does", async () => {
+    expect(await evaluateBool("function($x) { $x }")).toBe(false);
+  });
+});
+
+describe("intercept single request", () => {
+  it("misses when the map yields nothing", async () => {
+    const spec = validateSpec({
+      name: "@example/web/things",
+      url: "https://example.com/things",
+      effects: { reads: ["example.com"], writes: [] },
+      resolve: [
+        {
+          kind: "intercept",
+          request: { method: "GET", url: "https://api.example.com/things*" },
+          map: "$res.body.absent",
+        },
+      ],
+    });
+    const r = await executeLens(spec, {}, io({
+      getIntercepted: async () => [response({ things: [] })],
+    }));
+    expect(r).toEqual({
+      kind: "error",
+      message: "all resolvers exhausted (intercept resolver missed at no value from https://api.example.com/things)",
+    });
+  });
+});
+
+describe("expression built-ins", () => {
+  it.each(["$base64encode($value.a)", "$base64decode($value.a)"])("accepts %s", (expr) => {
+    expect(checkExpression(expr, { label: "map", vars: ["value"] })).toBeUndefined();
+  });
+});
+
+describe("readCaptures", () => {
+  it("returns as soon as the waiters are woken", async () => {
+    const buffer = createCaptureBuffer();
+    const started = Date.now();
+    const read = readCaptures(buffer, 0, started + 5000);
+    setTimeout(() => wakeCaptureWaiters(buffer), 10);
+    const delta = await read;
+    expect(Date.now() - started).toBeLessThan(1000);
+    expect(delta).toEqual({ captures: [], nextCursor: 0, truncated: false });
+  });
+
+  it("returns a capture pushed while waiting", async () => {
+    const buffer = createCaptureBuffer();
+    const read = readCaptures(buffer, 0, Date.now() + 5000);
+    const capture = response({});
+    setTimeout(() => pushCapture(buffer, capture), 10);
+    expect(await read).toEqual({ captures: [capture], nextCursor: 1, truncated: false });
+  });
+});
