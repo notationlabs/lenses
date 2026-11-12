@@ -21,8 +21,11 @@ async function main(): Promise<void> {
     void Promise.all([server.close(), client.close()]);
   });
   await server.connect(transport);
-  process.stderr.write(
-    `[lens-mcp] stdio; persistent browser broker on ws://127.0.0.1:${(await client.status()).port}\n`
+  // The server is already connected: a broker that cannot start now is reported
+  // per call instead of ending the process.
+  client.status().then(
+    ({ port }) => process.stderr.write(`[lens-mcp] stdio; persistent browser broker on ws://127.0.0.1:${port}\n`),
+    (error) => process.stderr.write(`[lens-mcp] stdio; browser broker not started: ${errorMessage(error)}\n`)
   );
 }
 
