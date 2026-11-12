@@ -83,3 +83,23 @@ test("exposes actions without inviting a connectivity preflight", async (t) => {
     assert.doesNotMatch(tool.description, /preflight|disconnected|broker_status/i);
   }
 });
+
+test("an error result keeps its code and structured fields", async (t) => {
+  const error = { kind: "error", code: "writes_not_allowed", message: "lens writes", step: 2 };
+  const server = createLensMcpServer({ call: async () => error, observe: async () => ({ ...error, code: "tab_closed" }) });
+  t.after(() => server.close());
+  const { clientTransport, request } = await connect(server);
+  await request("initialize", {
+    protocolVersion: "2025-06-18", capabilities: {},
+    clientInfo: { name: "test", version: "1.0.0" },
+  });
+  await clientTransport.send({ jsonrpc: "2.0", method: "notifications/initialized" });
+
+  const called = await request("tools/call", { name: "lens_call", arguments: { lens: "example" } });
+  assert.equal(called.result.isError, true);
+  assert.deepEqual(JSON.parse(called.result.content[0].text), error);
+
+  const observed = await request("tools/call", { name: "lens_observe", arguments: { tab: "t1" } });
+  assert.equal(observed.result.isError, true);
+  assert.equal(JSON.parse(observed.result.content[0].text).code, "tab_closed");
+});

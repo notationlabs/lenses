@@ -81,7 +81,7 @@ export function createLensMcpServer(client: LensClient, progressIntervalMs = 10_
       }, progressIntervalMs);
       try {
         const result = await client.call({ ...input, authLeaseMs });
-        return result.kind === "error" ? failure(result.message) : ok(result);
+        return result.kind === "error" ? failure(result) : ok(result);
       } finally {
         if (timer) clearInterval(timer);
       }
@@ -112,7 +112,7 @@ export function createLensMcpServer(client: LensClient, progressIntervalMs = 10_
     },
     async (input) => {
       const result = await client.observe(input);
-      return result.kind === "error" ? failure(result.message) : ok(result);
+      return result.kind === "error" ? failure(result) : ok(result);
     }
   );
 
@@ -123,6 +123,6 @@ function ok(value: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }] };
 }
 
-function failure(message: string) {
-  return { isError: true, content: [{ type: "text" as const, text: message }] };
+function failure(error: unknown) {
+  return { isError: true, content: [{ type: "text" as const, text: JSON.stringify(error, null, 2) }] };
 }
