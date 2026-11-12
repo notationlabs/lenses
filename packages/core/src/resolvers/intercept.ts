@@ -90,6 +90,7 @@ export async function runIntercept(
   const working = bodies[names[0]];
   if (working === undefined || working === null) return drew;
   const value = await shapeReply(r, responseContext(found.get(names[0])!), working, params, spec.helpers);
+  if (value === undefined || value === null) return drew;
   return { kind: "value", value, resolver: "intercept", observed: sourceUrls };
 }
 
