@@ -101,22 +101,9 @@ export function applyCatalogSettings(spec: unknown, catalog: CatalogDocument): L
   });
 }
 
-/** Backwards-compatible helper-only application for callers that already hold helpers. */
-export function applyCatalogHelpers(
-  spec: LensSpec,
-  helpers: Record<string, string> | undefined
-): LensSpec {
-  return applyCatalogSettings(spec, { helpers });
-}
-
 /** The settings a lens document at `path` inherits from its own directory. */
 export async function catalogSettingsFor(path: string): Promise<CatalogDocument> {
   return readCatalogDocument(dirname(path));
-}
-
-/** The helpers a lens document at `path` inherits from its own directory. */
-export async function catalogHelpersFor(path: string): Promise<Record<string, string> | undefined> {
-  return (await catalogSettingsFor(path)).helpers;
 }
 
 async function readCatalogDocument(directory: string): Promise<CatalogDocument> {
