@@ -166,7 +166,7 @@ These are the steps:
 
 ## How fields from several tiers combine
 
-After each tier that returns a value, the engine adds the fields still missing. **It never replaces a field an earlier tier set.** It stops once every field in `returns` is present.
+After each tier that returns a value, the engine adds the fields still missing. **It never replaces a field an earlier tier set.** Only objects are merged: when an earlier tier returned an array or a scalar, the engine keeps it and ignores the values of later tiers. It stops once every field in `returns` is present.
 
 The first `dom` tier of `hn/top` returns `{stories}`, but `returns` also declares `next_page`, so a second `dom` tier reads the "More" link:
 
