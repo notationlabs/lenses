@@ -1,9 +1,14 @@
-#!/usr/bin/env node
 import { readFile, writeFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
 import { errorMessage, evaluate, generateTsSdk, type LensSpec } from "@notation/lenses-core";
-import { createLensClient, LensStore, parsePort } from "@notation/lenses-client";
-import { serveGraphql } from "./graphql-server.js";
+import {
+  createLensClient,
+  LensStore,
+  parsePort,
+  type LensClient,
+  type LensClientOptions,
+} from "@notation/lenses-client";
+import { serveGraphql, type GraphQLServeOptions } from "./graphql-server.js";
 import { skillMarkdown } from "./skill.js";
 
 const globalHelp = `Usage:
@@ -283,14 +288,42 @@ function numberOption(value: string | undefined, name: string): number | undefin
   return parsed;
 }
 
-async function readStdin(): Promise<string> {
+async function readStdin(stdin: CliDeps["stdin"]): Promise<string> {
   const chunks: Buffer[] = [];
-  for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
+  for await (const chunk of stdin) chunks.push(Buffer.from(chunk as Buffer | string));
   return Buffer.concat(chunks).toString("utf8");
 }
 
-async function main(): Promise<void> {
+export interface CliDeps {
+  stdout: { write(chunk: string): unknown };
+  stderr: { write(chunk: string): unknown };
+  stdin: AsyncIterable<unknown> & { isTTY?: boolean };
+  createLensClient: (options: LensClientOptions) => LensClient;
+  serveGraphql: (options: GraphQLServeOptions) => Promise<void>;
+}
+
+const processDeps: CliDeps = {
+  stdout: process.stdout,
+  stderr: process.stderr,
+  stdin: process.stdin,
+  createLensClient,
+  serveGraphql,
+};
+
+/** Run the lens CLI with `argv` (without the node and script paths) and resolve to its exit code. */
+export async function run(argv: string[], deps: Partial<CliDeps> = {}): Promise<number> {
+  const resolved = { ...processDeps, ...deps };
+  try {
+    return await main(argv, resolved);
+  } catch (error) {
+    resolved.stderr.write(`${errorMessage(error)}\n`);
+    return 1;
+  }
+}
+
+async function main(argv: string[], deps: CliDeps): Promise<number> {
   const { values, positionals } = parseArgs({
+    args: argv,
     allowPositionals: true,
     options: {
       params: { type: "string" },
@@ -320,8 +353,8 @@ async function main(): Promise<void> {
 
   const [command, ...operands] = positionals;
   if (values.help || !command) {
-    process.stdout.write((command && commandHelp[command]) || globalHelp);
-    return;
+    deps.stdout.write((command && commandHelp[command]) || globalHelp);
+    return 0;
   }
 
   if (!(command in commandHelp)) throw new Error(`unknown command "${command}"`);
@@ -333,8 +366,8 @@ async function main(): Promise<void> {
   }
 
   if (command === "skill") {
-    process.stdout.write(skillMarkdown);
-    return;
+    deps.stdout.write(skillMarkdown);
+    return 0;
   }
 
   if (command === "eval") {
@@ -345,9 +378,9 @@ async function main(): Promise<void> {
     }
     const source = values.input
       ? await readFile(values.input, "utf8")
-      : process.stdin.isTTY
+      : deps.stdin.isTTY
         ? undefined
-        : await readStdin();
+        : await readStdin(deps.stdin);
     const data = source === undefined || source.trim() === "" ? undefined : JSON.parse(source);
     const name = values.as ?? "res";
     if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name) || name === "params") {
@@ -357,10 +390,10 @@ async function main(): Promise<void> {
     const bound = values.as === undefined ? { body: data } : data;
     const result = await evaluate(operands[0], { [name]: bound, params });
     if (result === undefined) {
-      process.stderr.write("expression produced no result\n");
+      deps.stderr.write("expression produced no result\n");
     }
-    process.stdout.write(`${JSON.stringify(result ?? null, null, 2)}\n`);
-    return;
+    deps.stdout.write(`${JSON.stringify(result ?? null, null, 2)}\n`);
+    return 0;
   }
 
   if (command === "gen") {
@@ -370,14 +403,14 @@ async function main(): Promise<void> {
     const specs: LensSpec[] = await new LensStore(catalogs).load();
     const source = generateTsSdk(specs);
     if (values.out) await writeFile(values.out, source, "utf8");
-    else process.stdout.write(source);
-    return;
+    else deps.stdout.write(source);
+    return 0;
   }
 
   if (command === "update") {
     const updates = await new LensStore(requireCatalogs(values.catalog)).update();
-    process.stdout.write(`${JSON.stringify({ sources: updates }, null, 2)}\n`);
-    return;
+    deps.stdout.write(`${JSON.stringify({ sources: updates }, null, 2)}\n`);
+    return 0;
   }
 
   const port = numberOption(values.port, "port");
@@ -385,14 +418,14 @@ async function main(): Promise<void> {
   const timeoutMs = numberOption(values["timeout-ms"], "timeout-ms");
   const startedAt = Date.now();
   const log = values.verbose
-    ? (message: string) => process.stderr.write(`[lens +${Date.now() - startedAt}ms] ${message}\n`)
+    ? (message: string) => deps.stderr.write(`[lens +${Date.now() - startedAt}ms] ${message}\n`)
     : undefined;
   // observe and broker are catalog-independent; the rest resolve lenses by name.
   const catalog =
     command === "observe" || command === "broker"
       ? values.catalog
       : requireCatalogs(values.catalog);
-  const client = createLensClient({
+  const client = deps.createLensClient({
     catalog,
     port,
     log,
@@ -417,7 +450,7 @@ async function main(): Promise<void> {
           lens,
           params,
           timeoutMs,
-          authLeaseMs: numberOption(values["auth-lease-ms"], "auth-lease-ms") ?? (process.stdin.isTTY ? 120_000 : 0),
+          authLeaseMs: numberOption(values["auth-lease-ms"], "auth-lease-ms") ?? (deps.stdin.isTTY ? 120_000 : 0),
           strict: !values.lax,
           allowWrites: values["allow-writes"],
           noCache: values["no-cache"],
@@ -445,7 +478,7 @@ async function main(): Promise<void> {
         if (action !== "playground" && action !== "serve") {
           throw new Error('graphql requires an action: "playground" or "serve"');
         }
-        await serveGraphql({
+        await deps.serveGraphql({
           catalogs: requireCatalogs(values.catalog),
           client,
           listen: numberOption(values.listen, "listen"),
@@ -453,7 +486,7 @@ async function main(): Promise<void> {
           playground: action === "playground",
           log: log ?? (() => {}),
         });
-        return;
+        return 0;
       }
       case "broker": {
         const [action] = operands;
@@ -468,21 +501,11 @@ async function main(): Promise<void> {
         break;
       }
     }
-    process.stdout.write(`${JSON.stringify(output, null, 2)}\n`);
-    if (
-      typeof output === "object" &&
-      output !== null &&
-      "kind" in output &&
-      output.kind === "error"
-    ) {
-      process.exitCode = 1;
-    }
+    deps.stdout.write(`${JSON.stringify(output, null, 2)}\n`);
+    return typeof output === "object" && output !== null && "kind" in output && output.kind === "error"
+      ? 1
+      : 0;
   } finally {
     await client.close();
   }
 }
-
-main().catch((error) => {
-  process.stderr.write(`${errorMessage(error)}\n`);
-  process.exitCode = 1;
-});

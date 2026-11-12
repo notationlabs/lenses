@@ -12,7 +12,7 @@ export default defineConfig({
     graphql: "../core/src/graphql.ts",
     "page-stamp": "../core/src/page-stamp.ts",
     mcp: "../mcp/src/server.ts",
-    cli: "../cli/src/index.ts",
+    cli: "../cli/src/bin.ts",
     "mcp-cli": "../mcp/src/index.ts",
     "broker-daemon": "../client/src/broker-daemon.ts",
   },
