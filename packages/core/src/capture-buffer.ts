@@ -58,7 +58,9 @@ export async function readCaptures(
   cursor: number,
   deadline: number
 ): Promise<InterceptDelta> {
-  while (cursor >= state.nextCursor && Date.now() < deadline) {
+  // One wait only: a wake with no new capture (a reset, or an explicit
+  // wakeCaptureWaiters) must release the reader rather than wait again.
+  if (cursor >= state.nextCursor && Date.now() < deadline) {
     await waitForCapture(state, deadline);
   }
   const oldestCursor = state.entries[0]?.cursor ?? state.nextCursor;
