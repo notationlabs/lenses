@@ -13,6 +13,7 @@ import {
   type PerformStep,
   type PerformWait,
 } from "@notation/lenses-core";
+import { delay } from "./page-navigation.js";
 
 const PERFORM_POLL_MS = 150;
 const PERFORM_WAIT_DEFAULT_MS = 10_000;
@@ -184,8 +185,4 @@ async function pagePlace(page: Page): Promise<{ url: string; title: string }> {
   } catch {
     return { url: page.url(), title: "" };
   }
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
