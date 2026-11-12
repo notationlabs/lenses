@@ -448,7 +448,7 @@ export async function startBroker(options: BrokerOptions): Promise<Broker> {
             return intercepted;
           } finally {
             activeCall = undefined;
-            // handleClientMessage has already sent the authoritative result and
+            // The orchestrator has already sent the authoritative result and
             // backend finish has completed all transient-tab cleanup.
             if (leaseReleaseRequested) await requestLeaseRelease();
             broadcastStatus();
@@ -545,12 +545,6 @@ export async function startBroker(options: BrokerOptions): Promise<Broker> {
         value: { connected: backend.available(), lease: backend.lease() },
       },
     });
-  }
-
-  async function handleClientMessage(client: WebSocket, message: LensBridgeRequest): Promise<void> {
-    if (client.readyState !== WebSocket.OPEN) return;
-    if (message.type !== "call" && message.type !== "observe") return;
-    await orchestrator.handle(message, (frame) => send(client, frame));
   }
 
   function shutdown(reason: string): Promise<void> {
