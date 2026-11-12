@@ -1,11 +1,11 @@
 import { spawn } from "node:child_process";
 import { closeSync, mkdirSync, openSync, renameSync, statSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocket } from "ws";
 import type { LensBridgeRequest, LensResult, LensSpec } from "@notation/lenses-core";
 import { coordinateRespawn } from "./broker-respawn.js";
+import { cacheDir } from "./cache-dir.js";
 import { BROKER_PROTOCOL, brokerBuild, type BrokerBuild } from "./broker-stamp.js";
 import { authProof, loadBrokerAuth, proofMatches } from "./broker-auth.js";
 import { randomBytes } from "node:crypto";
@@ -577,7 +577,7 @@ async function startBroker(
 const BROKER_LOG_MAX_BYTES = 1024 * 1024;
 
 export function brokerLogPath(): string {
-  return join(process.env.LENS_CACHE_DIR ?? join(homedir(), ".cache", "lenses"), "broker.log");
+  return join(cacheDir(), "broker.log");
 }
 
 /**

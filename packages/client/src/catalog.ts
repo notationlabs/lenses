@@ -1,10 +1,10 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, rm, stat } from "node:fs/promises";
-import { homedir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
+import { cacheDir } from "./cache-dir.js";
 import { matchUrlGlob, validateExceptions, validateSpec, type ExceptionMap, type LensSpec } from "@notation/lenses-core";
 
 const run = promisify(execFile);
@@ -33,10 +33,6 @@ function fileRefToPath(ref: string): string {
   // file:///abs is a proper URL; file:./relative and file:/abs are shorthand.
   if (ref.startsWith("file://")) return fileURLToPath(ref);
   return ref.slice("file:".length);
-}
-
-function cacheRoot(): string {
-  return process.env.LENS_CACHE_DIR ?? join(homedir(), ".cache", "lenses");
 }
 
 function refHash(ref: string): string {
@@ -241,7 +237,7 @@ class GitCatalogSource implements CatalogSource {
     this.cloneUrl = repoPath.startsWith("/")
       ? pathToFileURL(repoPath).href
       : `https://${repoPath}`;
-    this.dir = join(cacheRoot(), "git", refHash(`${this.cloneUrl}#${this.ref ?? ""}`));
+    this.dir = join(cacheDir(), "git", refHash(`${this.cloneUrl}#${this.ref ?? ""}`));
   }
 
   private async cloned(): Promise<boolean> {

@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { cacheDir } from "./cache-dir.js";
 
 /**
  * Tabs a retiring broker leaves for the broker that replaces it. The
@@ -25,10 +25,7 @@ interface Handover {
 export const HANDOVER_TTL_MS = 2 * 60_000;
 
 export function handoverPath(): string {
-  return join(
-    process.env.LENS_CACHE_DIR ?? join(homedir(), ".cache", "lenses"),
-    "tab-handover.json"
-  );
+  return join(cacheDir(), "tab-handover.json");
 }
 
 export function saveHandover(
