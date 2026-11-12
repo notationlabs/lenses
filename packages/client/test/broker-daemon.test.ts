@@ -154,4 +154,18 @@ describe("broker per-call loop", () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(orchestrator.handled.map((message) => message.id)).toEqual(["first"]);
   });
+
+  it("sends an error result when the call loop fails", async () => {
+    await start(async () => {
+      throw new Error("backend exploded");
+    });
+    const caller = await client();
+
+    caller.send(writeCall("failing"));
+
+    await vi.waitFor(() => expect(result(caller, "failing")?.result).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("backend exploded"),
+    }));
+  });
 });

@@ -5,6 +5,7 @@ import { createBrokerAuthLeases } from "./auth-leases.js";
 import {
   createBrokerOrchestrator,
   type AuthRetryState,
+  type BrokerFrame,
   type BrokerOrchestrator,
 } from "./broker-orchestrator.js";
 import { createCdpBackend, type CdpBackend } from "./cdp-host.js";
@@ -369,6 +370,11 @@ export async function startBroker(options: BrokerOptions): Promise<Broker> {
     let authOrigin: string | undefined;
     const onClose = () => cancelled.abort();
     client.on("close", onClose);
+    let answered = false;
+    const reply = (frame: BrokerFrame) => {
+      if (frame.type === "result") answered = true;
+      send(client, frame);
+    };
     void (async () => {
       // The execution deadline covers the first attempt; the sign-in lease
       // begins only when that attempt actually returns needs_auth.
@@ -378,7 +384,7 @@ export async function startBroker(options: BrokerOptions): Promise<Broker> {
       let resumeGate = false;
       // Where the sign-in tab was when a retry last did browser work.
       const retryState: AuthRetryState = {};
-      let authOutcome: Extract<import("./broker-orchestrator.js").BrokerFrame, { type: "result" }> | undefined;
+      let authOutcome: Extract<BrokerFrame, { type: "result" }> | undefined;
       for (;;) {
         queuedCalls++;
         broadcastStatus();
@@ -389,7 +395,7 @@ export async function startBroker(options: BrokerOptions): Promise<Broker> {
         const expiryTimer = attempt > 0 && authOutcome ? setTimeout(() => {
           if (started || expiredWhileQueued) return;
           expiredWhileQueued = true;
-          if (client.readyState === WebSocket.OPEN) send(client, authOutcome);
+          if (client.readyState === WebSocket.OPEN) reply(authOutcome!);
         }, Math.max(0, authExpiresAt - Date.now())) : undefined;
         const result = await requestQueue.run(async () => {
           queuedCalls--;
@@ -403,10 +409,10 @@ export async function startBroker(options: BrokerOptions): Promise<Broker> {
             : message.deadline;
           if (deadline !== undefined && deadline <= Date.now()) {
             if (attempt > 0 && authOutcome) {
-              send(client, authOutcome);
+              reply(authOutcome);
               return;
             }
-            send(client, {
+            reply({
               type: "result",
               id: message.id,
               result: {
@@ -435,7 +441,7 @@ export async function startBroker(options: BrokerOptions): Promise<Broker> {
           };
           broadcastStatus();
           try {
-            let intercepted: Extract<import("./broker-orchestrator.js").BrokerFrame, { type: "result" }> | undefined;
+            let intercepted: Extract<BrokerFrame, { type: "result" }> | undefined;
             await orchestrator.handle(
               message.type === "call" && attempt > 0 ? { ...message, deadline } : message,
               (frame) => {
@@ -444,7 +450,7 @@ export async function startBroker(options: BrokerOptions): Promise<Broker> {
                     frame.result.kind === "outcome" && frame.result.name === "needs_auth" && frame.authReplaySafe) {
                   authExpiresAt ||= Date.now() + authLeaseMs;
                   intercepted = frame;
-                } else send(client, frame);
+                } else reply(frame);
               },
               { authRetry: attempt > 0, retry: retryState }
             );
@@ -465,21 +471,21 @@ export async function startBroker(options: BrokerOptions): Promise<Broker> {
         if (!authOutcome || result.tabDisconnected || authOutcome.tabDisconnected) authOutcome = result;
         let target: string;
         try { target = expandUrl(message.spec.url, message.params); }
-        catch { send(client, result); return; }
+        catch { reply(result); return; }
         const origin = urlOrigin(target);
         if (!authOrigin) {
           authOrigin = origin;
           authLeases.retain(origin);
         }
-        if (attempt === 0) send(client, { type: "progress", id: message.id, message: `waiting for sign-in at ${origin}` });
+        if (attempt === 0) reply({ type: "progress", id: message.id, message: `waiting for sign-in at ${origin}` });
         const reason = await authLeases.wait(origin, target, authExpiresAt, cancelled.signal, resumeGate);
         if (reason !== "unavailable") resumeGate = true;
         if (client.readyState === WebSocket.OPEN && reason === "expired") {
-          send(client, { type: "progress", id: message.id, message: "sign-in wait expired" });
+          reply({ type: "progress", id: message.id, message: "sign-in wait expired" });
         }
         if (reason === "cancelled" || reason === "expired" ||
             client.readyState !== WebSocket.OPEN || Date.now() >= authExpiresAt) {
-          if (client.readyState === WebSocket.OPEN) send(client, authOutcome);
+          if (client.readyState === WebSocket.OPEN) reply(authOutcome);
           return;
         }
         // A detached or replaced browser page is not a cancelled sign-in. Wait
@@ -489,13 +495,24 @@ export async function startBroker(options: BrokerOptions): Promise<Broker> {
           await sleep(Math.min(1_000, Math.max(0, authExpiresAt - Date.now())), undefined,
             { signal: cancelled.signal }).catch(() => {});
           if (cancelled.signal.aborted || Date.now() >= authExpiresAt) {
-            if (client.readyState === WebSocket.OPEN) send(client, authOutcome);
+            if (client.readyState === WebSocket.OPEN) reply(authOutcome);
             return;
           }
         }
         attempt++;
       }
-    })().catch((error) => console.error("broker request failed:", error)).finally(() => {
+    })().catch((error) => {
+      console.error("broker request failed:", error);
+      if (answered) return;
+      send(client, {
+        type: "result",
+        id: message.id,
+        result: {
+          kind: "error",
+          message: `broker failed while running ${message.id}: ${error instanceof Error ? error.message : String(error)}`,
+        },
+      });
+    }).finally(() => {
       if (authOrigin) authLeases.close(authOrigin);
       client.off("close", onClose);
       endWork();
