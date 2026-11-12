@@ -15,7 +15,7 @@ import { runHttp } from "./resolvers/http.js";
 import { runIntercept } from "./resolvers/intercept.js";
 import { runDom } from "./resolvers/dom.js";
 import { runLlm } from "./resolvers/llm.js";
-import { isPlainObject } from "./util.js";
+import { errorMessage, isPlainObject } from "./util.js";
 import { fillAbsent, satisfiesReturns } from "./reconcile.js";
 import { dropFileParam, expandTemplate } from "./url-pattern.js";
 
@@ -38,11 +38,15 @@ export async function executeLens(
   // Perform runs before any tier: a step failure aborts the call before the
   // walk, and a document with steps never takes an http-only path. When every
   // step ran, the result carries `performed: true` so the caller knows the
-  // write happened even if reading the result back failed.
+  // write happened even if reading the result back failed or threw.
   if (spec.perform) {
     const aborted = await runPerform(spec, spec.perform, params, io);
     if (aborted) return aborted;
-    return { ...(await resolveTiers(spec, params, io)), performed: true };
+    try {
+      return { ...(await resolveTiers(spec, params, io)), performed: true };
+    } catch (error) {
+      return { kind: "error", message: errorMessage(error), performed: true };
+    }
   }
   return resolveTiers(spec, params, io);
 }
