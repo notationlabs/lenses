@@ -48,9 +48,12 @@ const HOST_SIZE = { width: 1280, height: 860 };
 /**
  * As T3 Code: clipboard writes need `clipboard-sanitized-write` in both
  * handlers, and fullscreen fills the view rather than the window. Not
- * notifications (pages would post them as Lenses) nor local fonts.
+ * notifications (pages would post them as Lenses) nor local fonts. Not
+ * `clipboard-read`: there is no prompt, so every site the broker drives could
+ * read the user's clipboard. Paste from the keyboard or the context menu does
+ * not need it.
  */
-const ALLOWED_PERMISSIONS = new Set(["clipboard-read", "clipboard-sanitized-write", "fullscreen"]);
+const ALLOWED_PERMISSIONS = new Set(["clipboard-sanitized-write", "fullscreen"]);
 
 const PAGE_PREFERENCES = {
   sandbox: true,

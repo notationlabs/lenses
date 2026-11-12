@@ -32,7 +32,7 @@ function siteServer(): Server {
   });
 }
 
-describe.skipIf(!canRun)("window.open from a lens page", () => {
+describe.skipIf(!canRun)("what a lens page may open and use", () => {
   let harness: Harness;
   let server: Server;
   let site: (path: string) => string;
@@ -78,6 +78,14 @@ describe.skipIf(!canRun)("window.open from a lens page", () => {
     await expect.poll(async () => (await broker.pages()).map((tab) => tab.url())).toContain(site("/echo"));
     const echo = (await broker.pages()).find((tab) => tab.url() === site("/echo"))!;
     await expect.poll(() => echo.title()).toBe(title);
+  });
+
+  it("a page cannot read the clipboard, but can write to it", async () => {
+    const page = await openSite();
+    const state = (name: string) =>
+      page.evaluate((name) => navigator.permissions.query({ name: name as PermissionName }).then((status) => status.state), name);
+    expect(await state("clipboard-read")).toBe("denied");
+    expect(await state("clipboard-write")).toBe("granted");
   });
 
   it("a new window to a non-web scheme is denied and nothing loads it", async () => {
