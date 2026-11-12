@@ -10,7 +10,6 @@ import { createConnection } from "node:net";
 import { fileURLToPath } from "node:url";
 import { setTimeout as sleep } from "node:timers/promises";
 import { createLensClient } from "@notation/lenses-client";
-import { setElectronHost } from "@notation/lenses-client/electron-host";
 import { needLabel } from "./inbox.js";
 import { createLensesApp, type LensesApp } from "./lenses-app.js";
 import { prepareChromium } from "./pages.js";
@@ -64,18 +63,21 @@ app.whenReady().then(async () => {
 
 async function startBroker(): Promise<void> {
   if (await portInUse(BROKER_PORT)) await retireBroker();
-  setElectronHost({
+  const { startBroker: runBroker } = await import("@notation/lenses-client/broker-daemon");
+  await runBroker({
     port: BROKER_PORT,
-    tabs: lenses!.lensTabs.tabs,
-    status: (frame) => {
-      brokerStatus = frame;
-      refresh();
-    },
-    started: (broker) => {
-      readStatus = broker.status;
+    host: {
+      port: BROKER_PORT,
+      tabs: lenses!.lensTabs.tabs,
+      status: (frame) => {
+        brokerStatus = frame;
+        refresh();
+      },
+      started: (broker) => {
+        readStatus = broker.status;
+      },
     },
   });
-  await import("@notation/lenses-client/broker-daemon");
 }
 
 /** A broker from a CLI or library client holds the port: ask it to go. */

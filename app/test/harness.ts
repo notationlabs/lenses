@@ -16,7 +16,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, type WebSocket } from "ws";
-import { createElectronRelay, setElectronHost } from "@notation/lenses-client/electron-host";
+import { createElectronRelay } from "@notation/lenses-client/electron-host";
 import { createLensesApp, type LensesApp } from "../src/lenses-app.js";
 import { prepareChromium } from "../src/pages.js";
 
@@ -175,8 +175,8 @@ app.whenReady().then(async () => {
   lenses = createLensesApp({ staticDir, anchor: () => undefined, status: () => ({ line: "Test" }) });
   const brokerPort = Number(process.env.HARNESS_BROKER_PORT);
   if (brokerPort) {
-    setElectronHost({ port: brokerPort, tabs: lenses.lensTabs.tabs });
-    await import("@notation/lenses-client/broker-daemon");
+    const { startBroker } = await import("@notation/lenses-client/broker-daemon");
+    await startBroker({ port: brokerPort, host: { port: brokerPort, tabs: lenses.lensTabs.tabs } });
   }
   const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
   server.on("connection", (socket, request) => {

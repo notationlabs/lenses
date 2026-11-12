@@ -85,7 +85,6 @@ describe.skipIf(!existsSync(chrome))("broker WebSocket auth lease", () => {
     if (!reserved || typeof reserved === "string") throw new Error("missing broker port");
     const port = reserved.port;
     await new Promise<void>((resolve) => reservation.close(() => resolve()));
-    const oldArg = process.argv[2];
     const exit = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
     let browser: Awaited<ReturnType<typeof puppeteer.launch>> | undefined;
     let socket: WebSocket | undefined;
@@ -93,10 +92,9 @@ describe.skipIf(!existsSync(chrome))("broker WebSocket auth lease", () => {
     try {
       browser = await puppeteer.launch({ executablePath: chrome, headless: true, args: ["--no-sandbox"] });
       state.browser = browser;
-      process.argv[2] = String(port);
-      // The daemon is a process entry point; reload it for each isolated port.
       vi.resetModules();
-      await import("../src/broker-daemon.js");
+      const { startBroker } = await import("../src/broker-daemon.js");
+      await startBroker({ port });
       socket = new WebSocket(`ws://127.0.0.1:${port}`);
       const current = socket;
       const frames: Array<{ type: string; id?: string; message?: string; nonce?: string; result?: unknown }> = [];
@@ -160,7 +158,6 @@ describe.skipIf(!existsSync(chrome))("broker WebSocket auth lease", () => {
         await vi.waitFor(() => expect(exit).toHaveBeenCalled(), { timeout: 12_000 }).catch(() => {});
       }
       socket?.close();
-      process.argv[2] = oldArg;
       exit.mockRestore();
       await browser?.close().catch(() => browser?.process()?.kill());
       await new Promise<void>((resolve) => server.close(() => resolve()));
