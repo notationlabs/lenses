@@ -176,7 +176,7 @@ app.whenReady().then(async () => {
   const brokerPort = Number(process.env.HARNESS_BROKER_PORT);
   if (brokerPort) {
     const { startBroker } = await import("@notation/lenses-client/broker-daemon");
-    await startBroker({ port: brokerPort, host: { port: brokerPort, tabs: lenses.lensTabs.tabs } });
+    await startBroker({ port: brokerPort, host: { tabs: lenses.lensTabs.tabs } });
   }
   const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
   server.on("connection", (socket, request) => {

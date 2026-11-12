@@ -10,8 +10,6 @@ import { BrowserModel, type CDPMessage, type TabLink } from "./playwright-relay/
  * hands over Chrome tabs through chrome.debugger.
  */
 export interface ElectronHost {
-  /** Broker port to listen on. */
-  port: number;
   tabs: ElectronTabs;
   /** Each broker status frame, for the app's control panel. */
   status?(frame: unknown): void;

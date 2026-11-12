@@ -67,7 +67,6 @@ async function startBroker(): Promise<void> {
   await runBroker({
     port: BROKER_PORT,
     host: {
-      port: BROKER_PORT,
       tabs: lenses!.lensTabs.tabs,
       status: (frame) => {
         brokerStatus = frame;
