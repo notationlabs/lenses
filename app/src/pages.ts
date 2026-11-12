@@ -13,6 +13,7 @@ import {
   WebContentsView,
   type BrowserWindowConstructorOptions,
   type HandlerDetails,
+  type LoadURLOptions,
   type Rectangle,
   type WebContents,
   type WindowOpenHandlerResponse,
@@ -107,20 +108,32 @@ export function siteOf(url: string): string {
 
 /**
  * T3 Code's split: `new-window` is a scripted popup, a link to a new tab
- * becomes a new page, and anything a new page could not carry (a POST body,
- * an odd scheme) loads in place. Unlike T3 Code, a blank popup is allowed:
- * OAuth libraries open the popup blank inside the click, so no popup blocker
- * stops it, then point it at the provider.
+ * becomes a new page, and a form posted to a new tab loads in place with its
+ * body. Unlike T3 Code, a blank popup is allowed: OAuth libraries open the
+ * popup blank inside the click, so no popup blocker stops it, then point it
+ * at the provider. Any other scheme is denied: loadURL from the main process
+ * would load schemes (data:, file:) that Chromium refuses to a page.
  */
 function windowOpenAction(details: HandlerDetails): "popup" | "page" | "navigate" | "deny" {
   const blank = details.url === "" || details.url === "about:blank";
   if (blank) return details.disposition === "new-window" ? "popup" : "deny";
-  if (!isWebUrl(details.url)) return "navigate";
+  if (!isWebUrl(details.url)) return "deny";
   if (details.disposition === "new-window") return "popup";
   if (details.postBody) return "navigate";
   return details.disposition === "foreground-tab" || details.disposition === "background-tab"
     ? "page"
     : "navigate";
+}
+
+/** The referrer and POST body of a window.open request, for loading it in place. */
+function loadOptions({ referrer, postBody }: HandlerDetails): LoadURLOptions {
+  if (!postBody) return { httpReferrer: referrer };
+  const boundary = postBody.boundary ? `; boundary=${postBody.boundary}` : "";
+  return {
+    httpReferrer: referrer,
+    postData: postBody.data,
+    extraHeaders: `Content-Type: ${postBody.contentType}${boundary}`,
+  };
 }
 
 /**
@@ -208,7 +221,7 @@ export function createPages(options: PagesOptions) {
     const action = windowOpenAction(details);
     if (action === "popup") return { action: "allow", overrideBrowserWindowOptions: POPUP_OPTIONS };
     if (action === "navigate") {
-      void webContentsOf(opener)?.loadURL(details.url).catch(() => {});
+      void webContentsOf(opener)?.loadURL(details.url, loadOptions(details)).catch(() => {});
       return { action: "deny" };
     }
     if (action === "deny") return { action: "deny" };
