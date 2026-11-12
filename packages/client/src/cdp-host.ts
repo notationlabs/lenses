@@ -99,8 +99,6 @@ export interface CdpTransport {
    * false: the Lenses app shows what the page needs in its own window.
    */
   readonly authBanner?: boolean;
-  /** Open a background tab, for browsers whose CDP cannot create targets (Electron). */
-  newPage?(browser: Browser): Promise<Page>;
   /**
    * The page needs the user (`need`: a needs_* outcome, e.g. needs_auth).
    * Defaults to bringing it to front in Chrome; the Lenses app puts it in
@@ -109,13 +107,6 @@ export interface CdpTransport {
   reveal?(page: Page, need: string): Promise<void>;
   /** A call on a page ended without needing the user: whatever it needed is done. */
   settled?(page: Page): void;
-  /** Transport cleanup before a session or temporary page is released. */
-  preparePageRelease?(
-    browser: Browser,
-    page: Page,
-    disposition: FinishDisposition,
-    releasePage: boolean
-  ): Promise<void>;
   dispose?(): void;
 }
 
@@ -196,8 +187,7 @@ export function createCdpBackend(
   const reuseTabs = new Map<string, Page>();
   const reuseKeys = new Map<string, string>();
 
-  const openPage = (current: Browser) =>
-    transport.newPage ? transport.newPage(current) : current.newPage({ background: true });
+  const openPage = (current: Browser) => current.newPage({ background: true });
   async function reveal(page: Page, need = "needs_auth"): Promise<void> {
     if (transport.reveal) return transport.reveal(page, need);
     await page.bringToFront();
@@ -622,7 +612,6 @@ export function createCdpBackend(
 
   async function closeCreated(page: Page): Promise<void> {
     try {
-      if (browser) await transport.preparePageRelease?.(browser, page, "close-if-created", true);
       await page.close();
       transport.recordEvent?.("Call tab closed");
     } catch {
@@ -1035,12 +1024,6 @@ export function createCdpBackend(
         } catch {
           if (created && page) {
             try {
-              await transport.preparePageRelease?.(
-                browser,
-                page,
-                "close-if-created",
-                true
-              );
               await page.close();
               transport.recordEvent?.("HTTP tab closed");
             } catch {
@@ -1094,12 +1077,6 @@ export function createCdpBackend(
       } finally {
         if (created) {
           try {
-            await transport.preparePageRelease?.(
-              browser,
-              page,
-              "close-if-created",
-              true
-            );
             await page.close();
             transport.recordEvent?.("HTTP tab closed");
           } catch {
@@ -1185,18 +1162,6 @@ export function createCdpBackend(
       )) disposition = "close-if-created";
       // A pinned tab (named by id, or an origin's reused tab) outlives every call.
       const closes = cdpSession.created && !cdpSession.pinned && disposition !== "keep";
-      if (browser?.connected) {
-        try {
-          await transport.preparePageRelease?.(
-            browser,
-            cdpSession.page,
-            disposition,
-            closes
-          );
-        } catch {
-          // Cleanup must not replace the lens result.
-        }
-      }
       if (disposition === "keep" && !cdpSession.page.isClosed()) {
         transport.recordEvent?.("Tab kept");
         keptGates.set(gateKeyOf(cdpSession.page), {
