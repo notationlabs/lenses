@@ -168,4 +168,18 @@ describe("broker per-call loop", () => {
       message: expect.stringContaining("backend exploded"),
     }));
   });
+
+  it("clamps an observe wait to the call's deadline", async () => {
+    const orchestrator = await start(async (message, emit) => {
+      emit({ type: "result", id: message.id, result: { kind: "value", value: null } });
+    });
+    const caller = await client();
+
+    caller.send({ type: "observe", id: "long-wait", target: "https://example.com/", waitMs: 600_000, deadline: Date.now() + 2_000 });
+
+    await vi.waitFor(() => expect(result(caller, "long-wait")).toBeDefined());
+    const handled = orchestrator.handled[0] as Extract<Work, { type: "observe" }>;
+    expect(handled.waitMs).toBeGreaterThan(0);
+    expect(handled.waitMs).toBeLessThanOrEqual(2_000);
+  });
 });

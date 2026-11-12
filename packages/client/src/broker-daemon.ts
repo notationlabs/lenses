@@ -442,8 +442,15 @@ export async function startBroker(options: BrokerOptions): Promise<Broker> {
           broadcastStatus();
           try {
             let intercepted: Extract<BrokerFrame, { type: "result" }> | undefined;
+            // The orchestrator waits the full waitMs of an observe. A wait past
+            // the client's deadline would hold the queue after it gave up.
+            const work: typeof message = message.type === "observe"
+              ? deadline === undefined
+                ? message
+                : { ...message, waitMs: Math.min(message.waitMs, Math.max(0, deadline - Date.now())) }
+              : attempt > 0 ? { ...message, deadline } : message;
             await orchestrator.handle(
-              message.type === "call" && attempt > 0 ? { ...message, deadline } : message,
+              work,
               (frame) => {
                 if (frame.type === "result" && message.type === "call" && authLeaseMs > 0 &&
                     (authExpiresAt === 0 || authExpiresAt > Date.now()) &&
