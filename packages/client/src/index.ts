@@ -26,6 +26,8 @@ import { resolve as resolvePath } from "node:path";
 import { LensStore, type CatalogUpdate } from "./lens-store.js";
 import { parseCatalogSource, scanLensFiles, type CatalogSource, type LensFile } from "./catalog.js";
 export { applyCatalogSettings } from "./catalog.js";
+import { parsePort } from "./port.js";
+export { parsePort } from "./port.js";
 import {
   createRecordingRun,
   type RecordingHandle,
@@ -653,7 +655,7 @@ export function createLensClient(options: LensClientOptions): LensClient {
   if (options.transport && options.port !== undefined) {
     throw new Error("broker port cannot be combined with a custom transport");
   }
-  if (options.port !== undefined) validatePort(options.port);
+  if (options.port !== undefined) parsePort(options.port, "broker port");
   const catalogs =
     options.catalog === undefined
       ? []
@@ -677,12 +679,6 @@ export function createLensClient(options: LensClientOptions): LensClient {
     log,
     mergeParameterDefaults(userParameterDefaults(), options.parameterDefaults)
   );
-}
-
-function validatePort(port: number): void {
-  if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
-    throw new Error("broker port must be an integer between 1 and 65535");
-  }
 }
 
 export {

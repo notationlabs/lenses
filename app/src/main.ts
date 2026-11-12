@@ -9,12 +9,12 @@ import { app, Menu, nativeImage, Tray } from "electron";
 import { createConnection } from "node:net";
 import { fileURLToPath } from "node:url";
 import { setTimeout as sleep } from "node:timers/promises";
-import { createLensClient } from "@notation/lenses-client";
+import { createLensClient, parsePort } from "@notation/lenses-client";
 import { needLabel } from "./inbox.js";
 import { createLensesApp, type LensesApp } from "./lenses-app.js";
 import { prepareChromium } from "./pages.js";
 
-const BROKER_PORT = Number(process.env.LENS_BROKER_PORT ?? 4319);
+const BROKER_PORT = parsePort(process.env.LENS_BROKER_PORT ?? 4319, "LENS_BROKER_PORT");
 const staticDir = fileURLToPath(new URL("../static/", import.meta.url));
 
 app.setName("Lenses");

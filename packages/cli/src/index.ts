@@ -2,7 +2,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
 import { errorMessage, evaluate, generateTsSdk, type LensSpec } from "@notation/lenses-core";
-import { createLensClient, LensStore } from "@notation/lenses-client";
+import { createLensClient, LensStore, parsePort } from "@notation/lenses-client";
 import { serveGraphql } from "./graphql-server.js";
 import { skillMarkdown } from "./skill.js";
 
@@ -275,12 +275,10 @@ function requireCatalogs(catalogs: string[] | undefined): string[] {
 
 function numberOption(value: string | undefined, name: string): number | undefined {
   if (value === undefined) return undefined;
+  if (name === "port") return parsePort(value, "port");
   const parsed = Number(value);
   if (!Number.isSafeInteger(parsed) || parsed < 0) {
     throw new Error(`${name} must be a non-negative integer`);
-  }
-  if (name === "port" && (parsed < 1 || parsed > 65_535)) {
-    throw new Error("port must be between 1 and 65535");
   }
   return parsed;
 }

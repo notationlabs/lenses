@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
-import { createLensClient, errorMessage } from "@notation/lenses-client";
+import { createLensClient, errorMessage, parsePort } from "@notation/lenses-client";
 import { createLensMcpServer } from "./server.js";
 
 async function main(): Promise<void> {
-  const port = brokerPort(process.env.LENS_BROKER_PORT);
+  const rawPort = process.env.LENS_BROKER_PORT;
+  const port = rawPort === undefined ? undefined : parsePort(rawPort, "LENS_BROKER_PORT");
   const catalog = (process.env.LENS_CATALOG ?? "")
     .split(",")
     .map((source) => source.trim())
@@ -27,15 +28,6 @@ async function main(): Promise<void> {
     ({ port }) => process.stderr.write(`[lens-mcp] stdio; persistent browser broker on ws://127.0.0.1:${port}\n`),
     (error) => process.stderr.write(`[lens-mcp] stdio; browser broker not started: ${errorMessage(error)}\n`)
   );
-}
-
-function brokerPort(raw: string | undefined): number | undefined {
-  if (raw === undefined) return undefined;
-  const port = Number(raw);
-  if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
-    throw new Error("LENS_BROKER_PORT must be an integer between 1 and 65535");
-  }
-  return port;
 }
 
 main().catch((error) => {

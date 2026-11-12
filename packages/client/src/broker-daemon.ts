@@ -33,6 +33,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { browserAdvice } from "./broker-advice.js";
 import { PLAYWRIGHT_EXTENSION_INSTALL_URL } from "./playwright-relay/protocol.js";
 import { createElectronTransport, type ElectronHost } from "./electron-host.js";
+import { parsePort } from "./port.js";
 
 export interface BrokerOptions {
   /** Port to listen on, on 127.0.0.1. 0 picks a free port. */
@@ -731,10 +732,7 @@ function runningAsScript(): boolean {
 }
 
 if (runningAsScript()) {
-  const port = Number(process.argv[2]);
-  if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
-    throw new Error("broker requires a port between 1 and 65535");
-  }
+  const port = parsePort(process.argv[2] ?? "", "broker port");
   startBroker({ port }).catch((error) => {
     console.error("broker server error:", error);
     process.exit(1);
