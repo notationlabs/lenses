@@ -51,11 +51,30 @@ export async function evaluate(
   return compiled.evaluate(undefined, bindings);
 }
 
-/** Evaluate detection and let authoring errors propagate. */
+/**
+ * Evaluate detection and let authoring errors propagate. The result follows
+ * JSONata's `$boolean`, so an empty array, an empty object and a function are
+ * false where JavaScript's `Boolean` would call them true.
+ */
 export async function evaluateBool(
   expr: string,
   vars: ExprVars = {},
   helpers: Record<string, string> = {}
 ): Promise<boolean> {
-  return Boolean(await evaluate(expr, vars, helpers));
+  return jsonataBoolean(await evaluate(expr, vars, helpers));
+}
+
+function jsonataBoolean(value: unknown): boolean {
+  if (Array.isArray(value)) {
+    if (value.length === 1) return jsonataBoolean(value[0]);
+    return value.some(jsonataBoolean);
+  }
+  if (typeof value === "function") return false;
+  if (typeof value === "object" && value !== null) {
+    // JSONata lambdas are plain objects tagged with one of these flags.
+    const tagged = value as { _jsonata_lambda?: unknown; _jsonata_function?: unknown };
+    if (tagged._jsonata_lambda === true || tagged._jsonata_function === true) return false;
+    return Object.keys(value).length > 0;
+  }
+  return Boolean(value);
 }
