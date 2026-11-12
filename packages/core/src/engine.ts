@@ -255,7 +255,7 @@ export function resolveParams(
 ): Record<string, unknown> {
   const declarations = spec.params ?? {};
   for (const key of Object.keys(input)) {
-    if (!(key in declarations)) throw new Error(`unknown parameter "${key}" for ${spec.name}`);
+    if (!Object.hasOwn(declarations, key)) throw new Error(`unknown parameter "${key}" for ${spec.name}`);
   }
   const params: Record<string, unknown> = {};
   for (const [key, declaration] of Object.entries(declarations)) {

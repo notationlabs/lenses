@@ -142,3 +142,15 @@ describe("readCaptures", () => {
     expect(await read).toEqual({ captures: [capture], nextCursor: 1, truncated: false });
   });
 });
+
+describe("resolveParams", () => {
+  it.each(["toString", "constructor", "hasOwnProperty"])("rejects the inherited key %s", (key) => {
+    const spec = validateSpec({
+      name: "@example/web/things",
+      url: "https://example.com/things",
+      effects: { reads: ["example.com"], writes: [] },
+      resolve: [{ kind: "llm", prompt: "Read." }],
+    });
+    expect(() => resolveParams(spec, { [key]: "x" })).toThrow(`unknown parameter "${key}"`);
+  });
+});
