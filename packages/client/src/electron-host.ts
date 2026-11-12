@@ -52,17 +52,6 @@ export interface ElectronTabListener {
   detached(tabId: number, reason: string): void;
 }
 
-const HOST = Symbol.for("lenses.electron-host");
-
-/** The app host, when the broker runs inside the Lenses app. */
-export function electronHost(): ElectronHost | undefined {
-  return (globalThis as { [HOST]?: ElectronHost })[HOST];
-}
-
-export function setElectronHost(host: ElectronHost): void {
-  (globalThis as { [HOST]?: ElectronHost })[HOST] = host;
-}
-
 interface CdpCommand {
   id: number;
   method: string;
