@@ -55,4 +55,54 @@ describe("RecordingMonitor", () => {
     });
     expect(screenshotDeadlines).toEqual(screenshotDeadlines.map(() => 12345));
   });
+  it("gives up waiting for a page that never settles at the deadline", async () => {
+    vi.useFakeTimers();
+    const events: RecordingCheckpoint[] = [];
+    const session = {
+      navigated: false,
+      async recordingState() {
+        return { url: "https://example.com/spinner", title: "", documentRevision: 0, loading: true };
+      },
+      async recordingScreenshot() {
+        return "";
+      },
+    } as BrowserSession;
+    const monitor = new RecordingMonitor(session, async (event) => {
+      events.push(event);
+    }, Date.now() + 2_000);
+
+    let started = false;
+    const starting = monitor.start().then(() => { started = true; });
+    await vi.advanceTimersByTimeAsync(2_100);
+    await starting;
+    expect(started).toBe(true);
+
+    let finished = false;
+    const finishing = monitor.finish().then(() => { finished = true; });
+    await vi.advanceTimersByTimeAsync(100);
+    await finishing;
+    expect(finished).toBe(true);
+    expect(events).toEqual([]);
+  });
+
+  it("does not throw from finish when the final checkpoint fails", async () => {
+    vi.useFakeTimers();
+    let lost = false;
+    const session = {
+      navigated: true,
+      async recordingState() {
+        if (lost) throw new Error("session closed");
+        return { url: "https://example.com/", title: "", documentRevision: 0, loading: false };
+      },
+      async recordingScreenshot() {
+        return "";
+      },
+    } as BrowserSession;
+    const monitor = new RecordingMonitor(session, async () => {}, Date.now() + 30_000);
+    await monitor.start();
+    lost = true;
+    const finishing = monitor.finish();
+    await vi.advanceTimersByTimeAsync(100);
+    await expect(finishing).resolves.toBeUndefined();
+  });
 });

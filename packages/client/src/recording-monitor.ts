@@ -41,9 +41,14 @@ export class RecordingMonitor {
     // Stop the background capturer first: the final waiter performs the same
     // transition invalidation and must not race it for a page debugger.
     this.stopped = true;
-    await this.loop;
-    await this.waitAndCapture("final", true);
-    await this.writes;
+    try {
+      await this.loop;
+      await this.waitAndCapture("final", true);
+      await this.writes;
+    } catch {
+      // A lost session or a failed checkpoint write must not replace the
+      // call's result.
+    }
   }
 
   private async watch(): Promise<void> {
@@ -79,22 +84,29 @@ export class RecordingMonitor {
     return true;
   }
 
+  /**
+   * Capture once the page has held still for SETTLE_MS. A page that keeps
+   * loading or moving is given up on at the call deadline, without a
+   * checkpoint, so it cannot hold the call open.
+   */
   private async waitAndCapture(kind: "bind" | "final", always: boolean): Promise<void> {
     for (;;) {
       const state = await this.session.recordingState();
       this.observe(state);
       const candidate = this.candidate;
-      if (!candidate) continue;
+      if (!candidate) return;
       const generation = this.generation;
       const remaining = candidate.state.loading
         ? POLL_MS
         : SETTLE_MS - (Date.now() - candidate.since);
       if (remaining > 0) {
+        if (Date.now() >= this.deadline) return;
         await delay(Math.min(POLL_MS, remaining));
         continue;
       }
       if (!always && candidate.key === this.capturedKey) return;
       if (await this.capture(kind, generation, candidate.state)) return;
+      if (Date.now() >= this.deadline) return;
     }
   }
 
