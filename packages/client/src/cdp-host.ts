@@ -5,16 +5,14 @@
 import type { Browser, Page } from "puppeteer-core";
 import { clearAuthBanners, showAuthBanner } from "./auth-banner.js";
 import { raiseChrome } from "./launch-browser.js";
+import { createPageCaptures, MAX_BODY_BYTES } from "./page-captures.js";
 import { performSteps } from "./perform-steps.js";
 import {
-  createCaptureBuffer,
   errorMessage,
   pageDomExtract,
   pageGuardDownloads,
   pageSnapshot,
-  pushCapture,
   readCaptures,
-  resetCaptureBuffer,
   sameGatePlace,
   sameTarget,
   urlOrigin,
@@ -46,7 +44,6 @@ function readyCheck(request: BindRequest): ReadyCheck | undefined {
   return request.ready ? { selector: request.ready, needsUser: request.holdAt } : undefined;
 }
 
-const MAX_BODY_BYTES = 512 * 1024;
 const LOAD_GRACE_MS = 500;
 /** How long a page stays stopped from saving files after a file lens call. */
 const DOWNLOAD_GUARD_GRACE_MS = 5_000;
@@ -191,7 +188,6 @@ export function createCdpBackend(
   let reconnectAttempts = 0;
   let lastConnectionError: string | undefined;
   let sessionSequence = 0;
-  const captureBuffers = new WeakMap<Page, CaptureBuffer>();
   const statusListeners = new Set<() => void>();
   const leaseReleaseListeners = new Set<() => void>();
   /**
@@ -224,16 +220,10 @@ export function createCdpBackend(
   const endpointAvailable = () => transport.looksReady();
   const endpointLive = () => transport.probeLive();
   const available = () => browser?.connected === true;
+  const { limitCaptures, captures, resetCaptures } = createPageCaptures();
   const notifyStatusChange = () => {
     for (const listener of statusListeners) listener();
   };
-
-  /** A file lens's larger body limit, for the page it last bound. */
-  const captureLimits = new WeakMap<Page, number>();
-  function limitCaptures(page: Page, request: BindRequest): void {
-    if (request.maxBodyBytes) captureLimits.set(page, request.maxBodyBytes);
-    else captureLimits.delete(page);
-  }
 
   /**
    * Pages a file lens call has stopped from saving files, and a count of
@@ -268,45 +258,6 @@ export function createCdpBackend(
     // Applied when the steps run: the page may still be about to load.
     if (request.blockDownloads) guardWanted.add(page);
     else guardWanted.delete(page);
-  }
-
-  function captures(page: Page): CaptureBuffer {
-    let state = captureBuffers.get(page);
-    if (state) return state;
-    state = createCaptureBuffer();
-    captureBuffers.set(page, state);
-    const owned = state;
-    page.on("response", (response) => {
-      void (async () => {
-        const contentType = response.headers()["content-type"] ?? "";
-        if (!/json|text|^$/.test(contentType)) return;
-        try {
-          const body = await response.text();
-          const trimmed = body.trimStart();
-          const looksJson =
-            contentType.includes("json") ||
-            trimmed.startsWith("{") ||
-            trimmed.startsWith("[");
-          if (!looksJson || body.length > (captureLimits.get(page) ?? MAX_BODY_BYTES)) return;
-          pushCapture(owned, {
-            url: response.url(),
-            method: response.request().method(),
-            status: response.status(),
-            body,
-            timestamp: Date.now(),
-          });
-        } catch {
-          // Chrome may evict a response body during navigation.
-        }
-      })();
-    });
-    return state;
-  }
-
-  function resetCaptures(page: Page): CaptureBuffer {
-    const state = captures(page);
-    resetCaptureBuffer(state);
-    return state;
   }
 
   async function ensureBrowser(progress: (message: string) => void): Promise<Browser> {
