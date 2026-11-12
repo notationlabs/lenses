@@ -61,7 +61,7 @@ const MAX_BODY_BYTES = 512 * 1024;
 const LOAD_GRACE_MS = 500;
 /** How long a page stays stopped from saving files after a file lens call. */
 const DOWNLOAD_GUARD_GRACE_MS = 5_000;
-/** Upper bound on waiting for an in-page app to settle after a load or route. */
+/** Upper bound on waiting for an in-page app's requests to go quiet after a load or route. */
 const IN_PAGE_SETTLE_MS = 10_000;
 /** How often a sign-in wait tries to re-attach a tab a password manager's frame blocks. */
 const SIGN_IN_RETRY_MS = 3_000;
@@ -713,17 +713,17 @@ export function createCdpBackend(
   /**
    * An app that routes in-page also boots in-page: after `load` it may still
    * be fetching, or show a transient screen and redirect. With a lens `ready`
-   * selector, wait for it (or for a page that needs the user); otherwise wait
-   * for the app's requests to go quiet.
+   * selector, wait up to `loadTimeoutMs` for it (or for a page that needs the
+   * user); otherwise wait, for at most IN_PAGE_SETTLE_MS, for the app's
+   * requests to go quiet.
    */
   async function settleApp(page: Page, loadTimeoutMs: number, ready?: ReadyCheck): Promise<void> {
-    const deadline = Date.now() + Math.min(loadTimeoutMs, IN_PAGE_SETTLE_MS);
     if (ready) {
-      await awaitReady(page, ready, deadline);
+      await awaitReady(page, ready, Date.now() + loadTimeoutMs);
       return;
     }
     await page
-      .waitForNetworkIdle({ idleTime: LOAD_GRACE_MS, timeout: Math.max(0, deadline - Date.now()) })
+      .waitForNetworkIdle({ idleTime: LOAD_GRACE_MS, timeout: Math.min(loadTimeoutMs, IN_PAGE_SETTLE_MS) })
       .catch(() => {});
   }
 

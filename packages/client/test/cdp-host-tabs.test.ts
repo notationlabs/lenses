@@ -500,6 +500,34 @@ describe("same-site reuse", () => {
     expect(elapsed).toBeLessThan(2000);
   });
 
+  it("waits for a ready selector for the whole load timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      const { host, browser } = setup();
+      browser.newPage.mockImplementationOnce(async () => {
+        const page = new SpaPage(() => browser);
+        const goto = page.goto.bind(page);
+        page.goto = async (url: string) => {
+          await goto(url);
+          setTimeout(() => page.present.add("#accounts"), 15_000);
+        };
+        return page;
+      });
+      let bound = false;
+      const binding = host.bind({
+        target: `${origin}/account-summary`, reuse: true, navigation: "reuse",
+        loadTimeoutMs: 30_000, ready: "#accounts",
+      }).then(() => { bound = true; });
+      await vi.advanceTimersByTimeAsync(12_000);
+      expect(bound).toBe(false);
+      await vi.advanceTimersByTimeAsync(5_000);
+      await binding;
+      expect(bound).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("adds no fixed delay without a ready selector", async () => {
     const { host } = setup();
     const started = Date.now();
