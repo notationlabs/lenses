@@ -774,6 +774,54 @@ export function createCdpBackend(
     await settle(page.goto(target, { waitUntil: "load", timeout: loadTimeoutMs }));
   }
 
+  /**
+   * Take a bound tab to the call's target and wait for the lens `ready`
+   * selector. A tab already at the target is reloaded only for
+   * `navigation: "fresh"`, and never under `navigate: "in-page"`, where a
+   * reload would lose the app's in-memory session. Returns whether it navigated.
+   */
+  async function navigateBound(page: Page, target: string, request: BindRequest): Promise<boolean> {
+    const ready = readyCheck(request);
+    if (!sameTarget(page.url(), target)) {
+      if (request.inPage) {
+        await routeInPage(page, target, request.loadTimeoutMs, ready);
+        return true;
+      }
+      resetCaptures(page);
+      await settle(page.goto(target, { waitUntil: "load", timeout: request.loadTimeoutMs }));
+    } else if (request.navigation === "fresh" && !request.inPage) {
+      await reloadPage(page, request.loadTimeoutMs);
+    } else {
+      return false;
+    }
+    if (ready) await settleApp(page, request.loadTimeoutMs, ready);
+    return true;
+  }
+
+  /**
+   * For an auth retry, whether the tab is still at the sign-in place it was
+   * kept at. A retry that has left that place must not resolve against
+   * responses captured before login (even if they match first), so its
+   * captures are reset.
+   */
+  function authGateState(page: Page, request: BindRequest): boolean | undefined {
+    if (!request.existingOnly) return undefined;
+    const kept = keptGate(page);
+    const atAuthGate = !kept || sameGatePlace(page.url(), kept.keptUrl);
+    if (!atAuthGate) resetCaptures(page);
+    return atAuthGate;
+  }
+
+  async function closeCreated(page: Page): Promise<void> {
+    try {
+      if (browser) await transport.preparePageRelease?.(browser, page, "close-if-created", true);
+      await page.close();
+      transport.recordEvent?.("Call tab closed");
+    } catch {
+      // The user may already have closed the tab.
+    }
+  }
+
   function makeSession(
     page: Page,
     created: boolean,
@@ -1257,11 +1305,7 @@ export function createCdpBackend(
       const chosen = await chooseTab(current, request);
       if (chosen) {
         await prepareCall(chosen, request);
-        const kept = keptGate(chosen);
-        const atAuthGate = request.existingOnly
-          ? !kept || sameGatePlace(chosen.url(), kept.keptUrl)
-          : undefined;
-        if (atAuthGate === false) resetCaptures(chosen);
+        const atAuthGate = authGateState(chosen, request);
         const target = request.target ?? chosen.url();
         let navigated = false;
         // A tab part-way through signing in stays put; so does an auth retry,
@@ -1272,20 +1316,7 @@ export function createCdpBackend(
           : false;
         if (held) log(`holding tab at ${chosen.url()}: it is part-way through sign-in`);
         if (request.target !== undefined && !request.existingOnly && !held) {
-          const ready = readyCheck(request);
-          if (!sameTarget(chosen.url(), target)) {
-            if (request.inPage) await routeInPage(chosen, target, request.loadTimeoutMs, ready);
-            else {
-              resetCaptures(chosen);
-              await settle(chosen.goto(target, { waitUntil: "load", timeout: request.loadTimeoutMs }));
-              if (ready) await settleApp(chosen, request.loadTimeoutMs, ready);
-            }
-            navigated = true;
-          } else if (request.navigation === "fresh" && !request.inPage) {
-            await reloadPage(chosen, request.loadTimeoutMs);
-            if (ready) await settleApp(chosen, request.loadTimeoutMs, ready);
-            navigated = true;
-          }
+          navigated = await navigateBound(chosen, target, request);
         }
         // Sign-in has just taken the tab somewhere new; the app may still be rendering it.
         if (request.existingOnly) await settleReady(chosen, request);
@@ -1298,30 +1329,15 @@ export function createCdpBackend(
       const existing = await findPage(current, request.target);
       if (existing) {
         await prepareCall(existing, request);
-        const kept = keptGate(existing);
-        // A retry that has left the original sign-in place must not resolve
-        // against responses captured before login (even if they match first).
-        const atAuthGate = request.existingOnly
-          ? !kept || sameGatePlace(existing.url(), kept.keptUrl)
-          : undefined;
-        if (atAuthGate === false) resetCaptures(existing);
-        if (request.existingOnly && request.navigation !== "fresh") await settleReady(existing, request);
-        const state =
-          request.navigation === "fresh"
-            ? (await reloadPage(existing, request.loadTimeoutMs),
-              await settleReady(existing, request),
-              captures(existing))
-            : captures(existing);
-        const session = makeSession(
-          existing,
-          false,
-          request.navigation === "fresh",
-          request.target,
-          request.loadTimeoutMs,
-          atAuthGate
-        );
-        session.captures = state;
-        return session;
+        const atAuthGate = authGateState(existing, request);
+        let navigated = false;
+        if (!request.existingOnly || request.navigation === "fresh") {
+          navigated = await navigateBound(existing, request.target, request);
+        }
+        if (request.existingOnly && !navigated) await settleReady(existing, request);
+        return makeSession(existing, false, navigated, request.target, request.loadTimeoutMs, atAuthGate, {
+          inPage: request.inPage,
+        });
       }
       if (request.existingOnly) throw new AuthPageUnavailable("auth retry has no open target tab");
       const page = await openPage(current);
@@ -1330,14 +1346,14 @@ export function createCdpBackend(
       resetCaptures(page);
       // Register before loading: a slow sign-in redirect must not orphan the tab.
       if (request.reuse) rememberReuse(urlOrigin(request.target), page);
-      await settle(
-        page.goto(request.target, {
-          waitUntil: "load",
-          timeout: request.loadTimeoutMs,
-        })
-      );
-      const ready = readyCheck(request);
-      if (request.inPage || ready) await settleApp(page, request.loadTimeoutMs, ready);
+      try {
+        await navigateBound(page, request.target, request);
+      } catch (error) {
+        // A reused tab is kept for the origin's next call; any other tab has no
+        // session to close it, so it is closed here.
+        if (!request.reuse) await closeCreated(page);
+        throw error;
+      }
       return makeSession(page, true, true, request.target, request.loadTimeoutMs, undefined, {
         pinned: request.reuse === true,
         inPage: request.inPage,

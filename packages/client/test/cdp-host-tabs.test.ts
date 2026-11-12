@@ -211,6 +211,35 @@ describe("tab reuse and in-page navigation", () => {
     watch!.dispose();
   });
 
+  it("closes a new tab whose load fails", async () => {
+    const { host, browser, pages } = setup();
+    browser.newPage.mockImplementationOnce(async () => {
+      const page = new SpaPage(() => browser);
+      page.goto = async () => { throw new Error("net::ERR_NAME_NOT_RESOLVED"); };
+      pages.push(page);
+      return page;
+    });
+    await expect(host.bind({
+      target: `${origin}/account-summary`, navigation: "reuse", loadTimeoutMs: 100,
+    })).rejects.toThrow("ERR_NAME_NOT_RESOLVED");
+    expect(pages[0].closed).toBe(true);
+  });
+
+  it("routes in-page on an open tab found at the target", async () => {
+    const { host, browser, pages } = setup();
+    const page = new SpaPage(() => browser);
+    page.currentUrl = `${origin}/account-summary`;
+    pages.push(page);
+    const session = await host.bind({
+      target: `${origin}/account-summary`, inPage: true, navigation: "fresh", loadTimeoutMs: 100,
+    });
+    expect(session.navigated).toBe(false);
+    expect(page.reloads).toBe(0);
+    await session.reload(100);
+    expect(page.reloads).toBe(0);
+    expect(page.routes).toEqual(["/account-summary"]);
+  });
+
   it("gives a tab without a transport key no id", async () => {
     const { host } = setup({ keyed: false });
     const session = await host.bind({
