@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
   DomResolver,
+  ExceptionMap,
   InterceptedResponse,
   LensBridgeRequest,
   LensResult,
@@ -22,6 +23,7 @@ import type {
   BrowserBackend,
   BrowserCapability,
   BrowserSession,
+  DomExtractResult,
   FinishDisposition,
   InterceptDelta,
   SnapshotOptions,
@@ -45,7 +47,7 @@ class FakeSession implements BrowserSession {
   reads: InterceptDelta[] = [];
   deadlines: number[] = [];
   reloads = 0;
-  domResult = { url: "https://example.com", title: "Example", value: { title: "ok" } };
+  domResult: DomExtractResult = { url: "https://example.com", title: "Example", value: { title: "ok" } };
   snapshotResult: PageSnapshot = {
     url: "https://example.com",
     title: "Example",
@@ -150,7 +152,7 @@ class FakeBackend implements BrowserBackend {
 
   hasOpenTarget?: BrowserBackend["hasOpenTarget"];
 
-  async findAuthGate(origin: string) {
+  async findAuthGate(origin: string, _needsUser?: (place: { url: string; title: string }) => Promise<boolean>) {
     if (!this.authGate) return undefined;
     return new URL(this.authGate.target).origin === origin
       ? this.authGate
@@ -353,7 +355,7 @@ describe("broker orchestration", () => {
     });
   });
 
-  it.each([
+  it.each<{ location: string; exceptions: ExceptionMap; resolverExceptions: ExceptionMap; expected: string }>([
     {
       location: "document",
       exceptions: { needs_captcha: null, needs_auth: null },
@@ -535,7 +537,7 @@ describe("broker orchestration", () => {
       spec: domSpec({
         effects: { reads: [], writes: ["example.com"], idempotent: true },
         exceptions: { needs_auth: { matches: "$page.title = 'Login'" } },
-        perform: [{ navigate: "https://example.com/next" }],
+        perform: [{ navigate: "fresh" }],
       }),
     }, (frame) => frames.push(frame));
     expect(session.performCalls).toHaveLength(performCalls);

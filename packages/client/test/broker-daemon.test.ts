@@ -132,7 +132,7 @@ describe("broker per-call loop", () => {
     });
     const orchestrator = await start(async (message, emit) => {
       if (message.id === "first") await firstGate;
-      emit({ type: "result", id: message.id, result: { kind: "value", value: null } });
+      emit({ type: "result", id: message.id, result: { kind: "value", value: null, resolver: "dom" } });
     });
     const owner = await client();
     const interrupted = await client();
@@ -171,7 +171,7 @@ describe("broker per-call loop", () => {
 
   it("clamps an observe wait to the call's deadline", async () => {
     const orchestrator = await start(async (message, emit) => {
-      emit({ type: "result", id: message.id, result: { kind: "value", value: null } });
+      emit({ type: "result", id: message.id, result: { kind: "value", value: null, resolver: "dom" } });
     });
     const caller = await client();
 

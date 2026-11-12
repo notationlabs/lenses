@@ -116,6 +116,9 @@ export interface CdpBackend extends BrowserBackend {
   /** Whether a browser is actually reachable: connected, or the transport's probe answers. */
   browserLive(): Promise<boolean>;
   release(options?: ReleaseOptions): Promise<void>;
+  hasOpenTarget: NonNullable<BrowserBackend["hasOpenTarget"]>;
+  openAuthGate: NonNullable<BrowserBackend["openAuthGate"]>;
+  watchAuthGate: NonNullable<BrowserBackend["watchAuthGate"]>;
   /** The transport's broker-owned anchor was explicitly closed by the user. */
   onLeaseReleaseRequest(listener: () => void): () => void;
   acquire(progress?: (message: string) => void): Promise<void>;

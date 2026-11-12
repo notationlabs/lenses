@@ -267,7 +267,7 @@ describe("tabs outside the group", () => {
     let nextId = 100;
     const connect = () => {
       const visible = new Set<SpaPage>();
-      const browser: Record<string, unknown> = Object.assign(new EventEmitter(), {
+      const browser = Object.assign(new EventEmitter(), {
         connected: true,
         version: async () => "Chrome/144.0.0.0",
         newPage: vi.fn(async () => {
@@ -608,7 +608,7 @@ describe("tabs the debugger loses", () => {
       links.set(key, link);
       for (const listener of listeners) listener(key, link);
     };
-    const browser: Record<string, unknown> = Object.assign(new EventEmitter(), {
+    const browser = Object.assign(new EventEmitter(), {
       connected: true,
       version: async () => "Chrome/144.0.0.0",
       newPage: vi.fn(async () => {

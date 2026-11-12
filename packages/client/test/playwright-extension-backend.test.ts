@@ -10,7 +10,7 @@ const connectUrl =
 
 describe("Playwright broker anchor", () => {
   it("renders a small status page", async () => {
-    const setContent = vi.fn(async () => {});
+    const setContent = vi.fn(async (_html: string) => {});
 
     await renderPlaywrightAnchor(
       { setContent } as never,

@@ -155,7 +155,7 @@ describe("CDP sign-in gate", () => {
       version: async () => "Chrome/144.0.0.0",
       newPage: vi.fn(async () => page),
       pages: async () => [page],
-      disconnect() { this.connected = false; this.emit("disconnected"); },
+      disconnect(this: EventEmitter & { connected: boolean }) { this.connected = false; this.emit("disconnected"); },
     });
     const host = createCdpBackend(() => {}, {
       name: "test", pollForConnection: false, retryConnect: false,
