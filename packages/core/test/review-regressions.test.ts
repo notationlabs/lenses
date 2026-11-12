@@ -68,6 +68,31 @@ describe("evaluateBool", () => {
   });
 });
 
+describe("cross-tier arrays", () => {
+  it("never replaces an array an earlier tier set", async () => {
+    const spec = validateSpec({
+      name: "@example/web/things",
+      url: "https://example.com/things",
+      effects: { reads: ["example.com"], writes: [] },
+      returns: { type: "array", items: { title: "string", url: "string" } },
+      resolve: [
+        {
+          kind: "intercept",
+          request: { method: "GET", url: "https://api.example.com/things*" },
+          items: "$res.body.things",
+          map: { title: "$item.name" },
+        },
+        { kind: "dom", item: ".thing", fields: { title: { selector: ".t" }, url: { selector: "a", attr: "href" } } },
+      ],
+    });
+    const r = await executeLens(spec, {}, io({
+      getIntercepted: async () => [response({ things: [{ name: "a" }] })],
+      domExtract: async () => ({ url: "u", title: "t", value: [{ title: "z", url: "/z" }] }),
+    }));
+    expect(r).toMatchObject({ kind: "value", resolver: "intercept", partial: true, value: [{ title: "a" }] });
+  });
+});
+
 describe("intercept single request", () => {
   it("misses when the map yields nothing", async () => {
     const spec = validateSpec({

@@ -210,10 +210,13 @@ async function resolveTiers(
       return result;
     }
 
-    gathered =
-      isPlainObject(gathered) && isPlainObject(result.value)
-        ? fillAbsent(gathered, result.value)
-        : result.value;
+    // A later tier only fills fields of an object an earlier tier set. It
+    // never replaces an earlier array or scalar, and then contributes nothing.
+    if (gathered !== undefined && !(isPlainObject(gathered) && isPlainObject(result.value))) {
+      io.log?.(`${resolver.kind} resolver value ignored; an earlier tier set it`);
+      continue;
+    }
+    gathered = gathered === undefined ? result.value : fillAbsent(gathered, result.value);
     contributors.push(resolver.kind);
     observed = result.observed ?? observed;
     io.log?.(`${resolver.kind} resolver contributed a value`);
