@@ -24,7 +24,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.browser.json && tsc -p tsconfig.json",
-    "test": "vitest run"
+    "test": "tsc -p tsconfig.test.json && vitest run"
   },
   "dependencies": {
     "jsonata": "^2.1.0",
