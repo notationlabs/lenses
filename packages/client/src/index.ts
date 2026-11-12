@@ -608,7 +608,9 @@ export class LensClient {
     }
     const result = await transport.control("shutdown", timeoutMs);
     if (result.kind === "error") throw new Error(result.message);
-    return { shuttingDown: true };
+    // The app's broker, and a busy one asked to retire only if idle, reply false.
+    const value = result.kind === "value" ? (result.value as { shuttingDown?: unknown }) : undefined;
+    return { shuttingDown: value?.shuttingDown === true };
   }
 
   /**

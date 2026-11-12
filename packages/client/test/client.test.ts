@@ -705,4 +705,16 @@ describe("LensClient", () => {
     expect(await client.status()).toMatchObject({ connected: true });
     expect(attempts).toBe(2);
   });
+  it("reports a declined broker shutdown", async () => {
+    const transport = new FakeTransport();
+    let reply = false;
+    Object.assign(transport, {
+      control: async () => ({ kind: "value", value: { shuttingDown: reply }, resolver: "dom" }),
+    });
+    const client = new LensClient(new LensStore(await fixtureDirectory()), transport);
+
+    expect(await client.shutdownBroker()).toEqual({ shuttingDown: false });
+    reply = true;
+    expect(await client.shutdownBroker()).toEqual({ shuttingDown: true });
+  });
 });
