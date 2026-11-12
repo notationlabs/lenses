@@ -9,6 +9,7 @@ import {
   LensResultError,
   LensStore,
   type LensTransport,
+  type LensTransportCallOptions,
   type LensTransportResult,
 } from "../src/index.js";
 import type { RecordingTarget } from "../src/recording.js";
@@ -27,17 +28,13 @@ class FakeTransport implements LensTransport {
   async call(
     _spec: LensSpec,
     params: Record<string, unknown>,
-    _timeoutMs?: number,
-    allowWrites?: boolean,
-    recording?: RecordingTarget,
-    _authLeaseMs?: number,
-    noCache?: boolean
+    options: LensTransportCallOptions = {}
   ): Promise<LensResult> {
     this.calls++;
     this.lastParams = params;
-    this.lastAllowWrites = allowWrites;
-    this.lastNoCache = noCache;
-    this.lastRecording = recording;
+    this.lastAllowWrites = options.allowWrites;
+    this.lastNoCache = options.noCache;
+    this.lastRecording = options.recording;
     return this.result;
   }
 

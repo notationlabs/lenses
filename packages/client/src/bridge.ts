@@ -9,7 +9,6 @@ import { cacheDir } from "./cache-dir.js";
 import { BROKER_PROTOCOL, brokerBuild, type BrokerBuild } from "./broker-stamp.js";
 import { authProof, loadBrokerAuth, proofMatches } from "./broker-auth.js";
 import { randomBytes } from "node:crypto";
-import type { RecordingTarget } from "./recording.js";
 
 const BROKER_START_WAIT_MS = 3_000;
 const BROKER_SHUTDOWN_WAIT_MS = 12_000;
@@ -53,6 +52,17 @@ export interface BrokerDiagnostics {
   reconnectAttempts: number;
 }
 
+/**
+ * The per-call fields of the broker's `call` request. `timeoutMs` defaults to
+ * 90 seconds and `authLeaseMs` to 0 in BrowserBridge.
+ */
+export type LensTransportCallOptions = Partial<
+  Pick<
+    Extract<LensBridgeRequest, { type: "call" }>,
+    "timeoutMs" | "authLeaseMs" | "allowWrites" | "noCache" | "outDir" | "recording" | "tab"
+  >
+>;
+
 export interface LensTransport {
   readonly connected: boolean;
   readonly info: string;
@@ -60,17 +70,7 @@ export interface LensTransport {
   call(
     spec: LensSpec,
     params: Record<string, unknown>,
-    timeoutMs?: number,
-    /** consent for a spec with `perform` steps; the broker denies without it */
-    allowWrites?: boolean,
-    recording?: RecordingTarget,
-    authLeaseMs?: number,
-    /** bypass the broker cache without storing the result */
-    noCache?: boolean,
-    /** run in this broker tab id, from an earlier result's `tab` */
-    tab?: string,
-    /** absolute directory a file lens writes into */
-    outDir?: string
+    options?: LensTransportCallOptions
   ): Promise<LensTransportResult>;
   observe(
     /** omitted with `tab`: read the tab where it is */
@@ -227,13 +227,15 @@ export class BrowserBridge implements LensTransport {
   call(
     spec: LensSpec,
     params: Record<string, unknown>,
-    timeoutMs = 90_000,
-    allowWrites?: boolean,
-    recording?: RecordingTarget,
-    authLeaseMs = 0,
-    noCache?: boolean,
-    tab?: string,
-    outDir?: string
+    {
+      timeoutMs = 90_000,
+      allowWrites,
+      recording,
+      authLeaseMs = 0,
+      noCache,
+      tab,
+      outDir,
+    }: LensTransportCallOptions = {}
   ): Promise<LensTransportResult> {
     return this.request(
       (id) => ({

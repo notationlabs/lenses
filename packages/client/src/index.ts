@@ -20,6 +20,7 @@ import {
   type BrokerLease,
   type LensLogger,
   type LensTransport,
+  type LensTransportCallOptions,
   type LensTransportResult,
 } from "./bridge.js";
 import { resolve as resolvePath } from "node:path";
@@ -386,23 +387,21 @@ export class LensClient {
     }
 
     this.log(`calling ${spec.name}; params: ${Object.keys(params).join(", ") || "none"}`);
-    const result = await (await this.transport()).call(
-      spec,
-      params,
-      input.timeoutMs,
-      input.allowWrites,
-      refs.recordingPath
+    const result = await (await this.transport()).call(spec, params, {
+      timeoutMs: input.timeoutMs,
+      allowWrites: input.allowWrites,
+      recording: refs.recordingPath
         ? {
             path: refs.recordingPath,
             callId: `recording-call-${String(++this.recordingCallSequence).padStart(6, "0")}`,
             lens: spec.name,
           }
         : undefined,
-      input.authLeaseMs,
-      input.noCache,
-      input.tab,
-      input.outDir === undefined ? undefined : resolvePath(input.outDir)
-    );
+      authLeaseMs: input.authLeaseMs,
+      noCache: input.noCache,
+      tab: input.tab,
+      outDir: input.outDir === undefined ? undefined : resolvePath(input.outDir),
+    });
     if (!input.noCache && result.kind === "value" && !result.partial && !result.cached && ttl > 0) {
       // A cached result names no tab: the tab may be gone when it is served.
       const { tab: _tab, ...untabbed } = result;
@@ -699,6 +698,7 @@ export type {
   LensLogger,
   LensParameterDefaults,
   LensTransport,
+  LensTransportCallOptions,
   LensTransportResult,
   RecordingHandle,
   RecordingOptions,

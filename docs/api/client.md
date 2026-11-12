@@ -50,6 +50,28 @@ interface LensClientOptions {
 
 `port` is the local broker's port, `4319` by default. Each port has its own broker. `transport` replaces the local broker with your own `LensTransport`, so you cannot pass both.
 
+The client runs each lens through the transport's `call` method. It passes the resolved spec, the resolved parameters, and an options object:
+
+```ts
+call(
+  spec: LensSpec,
+  params: Record<string, unknown>,
+  options?: LensTransportCallOptions
+): Promise<LensTransportResult>;
+
+type LensTransportCallOptions = {
+  timeoutMs?: number;
+  authLeaseMs?: number;
+  allowWrites?: boolean;
+  noCache?: boolean;
+  outDir?: string;
+  recording?: { path: string; callId: string; lens: string };
+  tab?: string;
+};
+```
+
+The options carry the matching [`LensCall`](#the-lenscall-object) fields, except that `outDir` is an absolute path. `recording` is set only while a [recording](#record) is active.
+
 `log` receives progress messages. By default the client logs nothing.
 
 `browserProfile` picks a Chrome profile, such as `"Profile 4"`. `playwrightExtensionToken` is the token the broker uses to connect to Chrome through the Playwright Extension. Both apply only when this client starts the broker; a running broker keeps its own settings.
