@@ -1,7 +1,3 @@
-/**
- * CDP browser backend: owns Chrome connection and page mechanics only.
- * Lens orchestration, caching, retries, and result policy live in the broker.
- */
 import type { Browser, Page } from "puppeteer-core";
 import { clearAuthBanners, showAuthBanner } from "./auth-banner.js";
 import { raiseChrome } from "./launch-browser.js";
@@ -150,6 +146,10 @@ interface CdpSession extends BrowserSession {
   stopRecordingState: () => void;
 }
 
+/**
+ * The browser connection and page mechanics only. Lens orchestration,
+ * caching, retries, and result policy live in the broker.
+ */
 export function createCdpBackend(
   log: (message: string) => void = () => {},
   transport: CdpTransport
