@@ -395,6 +395,9 @@ export async function startBroker(options: BrokerOptions): Promise<Broker> {
           queuedCalls--;
           started = true;
           if (expiredWhileQueued) return;
+          // The client disconnected while the call waited. Starting it now
+          // would perform the steps of a write call the user interrupted.
+          if (cancelled.signal.aborted) return;
           const deadline = attempt === 0 ? message.deadline : message.type === "call"
             ? Math.min(authExpiresAt, Date.now() + message.timeoutMs)
             : message.deadline;
