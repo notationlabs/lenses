@@ -181,7 +181,8 @@ describe("argument errors", () => {
   });
 
   it.each([
-    [["--listen", "x"], "listen must be a non-negative integer\n"],
+    [["--listen", "x"], "listen must be an integer between 1 and 65535\n"],
+    [["--listen", "70000"], "listen must be an integer between 1 and 65535\n"],
     [["--max-calls=-1"], "max-calls must be a non-negative integer\n"],
   ])("rejects graphql numeric option %j", async (option, message) => {
     const result = await cli(["graphql", "serve", "-c", "./lenses", ...option]);

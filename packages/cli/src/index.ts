@@ -280,7 +280,7 @@ function requireCatalogs(catalogs: string[] | undefined): string[] {
 
 function numberOption(value: string | undefined, name: string): number | undefined {
   if (value === undefined) return undefined;
-  if (name === "port") return parsePort(value, "port");
+  if (name === "port" || name === "listen") return parsePort(value, name);
   const parsed = Number(value);
   if (!Number.isSafeInteger(parsed) || parsed < 0) {
     throw new Error(`${name} must be a non-negative integer`);
