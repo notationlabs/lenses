@@ -693,4 +693,16 @@ describe("LensClient", () => {
       "calling @example/web/page; params: none",
     ]);
   });
+  it("retries the bind after a failed connect", async () => {
+    let attempts = 0;
+    const client = new LensClient(new LensStore(await fixtureDirectory()), async () => {
+      attempts++;
+      if (attempts === 1) throw new Error("broker unavailable");
+      return new FakeTransport();
+    });
+
+    await expect(client.status()).rejects.toThrow("broker unavailable");
+    expect(await client.status()).toMatchObject({ connected: true });
+    expect(attempts).toBe(2);
+  });
 });

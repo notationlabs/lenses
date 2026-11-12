@@ -252,9 +252,19 @@ export class LensClient {
     private readonly parameterDefaults: LensParameterDefaults = {}
   ) {}
 
-  /** Bind the broker on first use, so constructing a client has no side effects. */
+  /**
+   * Bind the broker on first use, so constructing a client has no side effects.
+   * A failed bind is dropped so the next call retries instead of replaying the
+   * rejection for the life of the client.
+   */
   private transport(): Promise<LensTransport> {
-    return (this.transportPromise ??= this.bind());
+    if (this.transportPromise) return this.transportPromise;
+    const pending = this.bind();
+    this.transportPromise = pending;
+    pending.catch(() => {
+      if (this.transportPromise === pending) this.transportPromise = undefined;
+    });
+    return pending;
   }
 
   /**

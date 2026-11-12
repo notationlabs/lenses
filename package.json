@@ -5,8 +5,7 @@
   "description": "Typed webpage functions for TypeScript, CLI, and MCP consumers.",
   "scripts": {
     "build": "pnpm -r build",
-    "test": "pnpm -r test",
-    "prepare": "git config core.hooksPath .githooks"
+    "test": "pnpm -r test"
   },
   "packageManager": "pnpm@11.17.0",
   "devDependencies": {
