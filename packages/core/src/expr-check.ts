@@ -24,7 +24,7 @@ const BUILTINS = new Set([
   "number", "floor", "ceil", "round", "abs", "sqrt", "power", "random", "boolean", "not",
   "map", "zip", "filter", "single", "reduce", "sift", "keys", "lookup", "append", "exists",
   "spread", "merge", "reverse", "each", "error", "assert", "type", "sort", "shuffle",
-  "distinct", "encodeUrlComponent", "encodeUrl", "decodeUrlComponent", "decodeUrl", "eval",
+  "distinct", "base64encode", "base64decode", "encodeUrlComponent", "encodeUrl", "decodeUrlComponent", "decodeUrl", "eval",
   "toMillis", "fromMillis", "clone", "now", "millis",
 ]);
 
