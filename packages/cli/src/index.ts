@@ -75,13 +75,13 @@ Options:
   --help, -h              Show this help
 
 Bundled lens parameters:
-  hn/item                 id: story id; p: comment page (default 1),
+  hn/item                 id: story id; page: comment page (default 1),
                           limit: comments per page (default 30)
 
 Example:
   lens call claude/usage
 
-  lens call hn/item --params '{"id":"42","p":2,"limit":10}'
+  lens call hn/item --params '{"id":"42","page":2,"limit":10}'
 
   lens call chatgpt/send --params '{"message":"hello"}' --allow-writes
 `,
