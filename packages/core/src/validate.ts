@@ -3,6 +3,7 @@ import { httpRequestMethod, httpResolverWrites } from "./http-request.js";
 import { checkExpression, checkTemplate, RESERVED_VARIABLES, type ExprSite, type ReservedVariable } from "./expr-check.js";
 import type { ExceptionMap, HttpBody, HttpSource, LensSpec, MapSpec } from "./types.js";
 import { dropFileParam, HOLE } from "./url-pattern.js";
+import { pointerOf } from "./util.js";
 
 const expression = z.string();
 const REQUEST_HINT =
@@ -299,13 +300,6 @@ export function specWarnings(spec: LensSpec): string[] {
     }
   }
   return warnings;
-}
-
-function pointerOf(path: PropertyKey[]): string {
-  if (path.length === 0) return "/";
-  return `/${path
-    .map((segment) => String(segment).replace(/~/g, "~0").replace(/\//g, "~1"))
-    .join("/")}`;
 }
 
 interface SpecIssue {

@@ -1,4 +1,5 @@
 import { fileContentProblem } from "./file-result.js";
+import { arrayItems, isDefRefNode, isLensRefNode, isLensRefValue } from "./returns.js";
 import { isPlainObject } from "./util.js";
 
 /** Fill fields missing from an earlier resolver without replacing its values. */
@@ -30,11 +31,11 @@ export function satisfiesReturns(
   if (!isPlainObject(schema)) return value !== undefined;
   if (value === null && schema.nullable === true) return true;
 
-  if (typeof schema.$lens === "string") {
-    return value === null || typeof value === "string" || isLensRef(value);
+  if (isLensRefNode(schema)) {
+    return value === null || typeof value === "string" || isLensRefValue(value);
   }
 
-  if (typeof schema.$ref === "string") {
+  if (isDefRefNode(schema)) {
     const def = defs?.[schema.$ref];
     return def === undefined || satisfiesReturns(value, def, defs);
   }
@@ -43,22 +44,19 @@ export function satisfiesReturns(
   if (schema.type === "file") return fileContentProblem(value) === undefined;
 
   if (schema.type === "object" && isPlainObject(schema.fields)) {
-    if (!isPlainObject(value)) return false;
-    return Object.entries(schema.fields).every(
-      ([field, fieldSchema]) => field in value && satisfiesReturns(value[field], fieldSchema, defs)
-    );
+    return satisfiesFieldMap(value, schema.fields, defs);
   }
 
   if (schema.type === "object") return isPlainObject(value);
 
   if (schema.type === "array") {
     if (!Array.isArray(value)) return false;
-    const items = schema.items;
-    if (!isPlainObject(items)) return true;
-    if (typeof items.$ref === "string") {
-      return value.every((item) => satisfiesReturns(item, items, defs));
+    const items = arrayItems(schema.items);
+    if (items === undefined) return true;
+    if (items.kind === "ref") {
+      return value.every((item) => satisfiesReturns(item, schema.items, defs));
     }
-    return value.every((item) => satisfiesFieldMap(item, items, defs));
+    return value.every((item) => satisfiesFieldMap(item, items.fields, defs));
   }
 
   if (typeof schema.type === "string") return primitiveMatches(value, schema.type);
@@ -90,13 +88,4 @@ function primitiveMatches(value: unknown, type: string): boolean {
   if (type === "array") return Array.isArray(value);
   if (type === "object") return isPlainObject(value);
   return typeof value === type;
-}
-
-function isLensRef(value: unknown): boolean {
-  return (
-    isPlainObject(value) &&
-    typeof value.$lens === "string" &&
-    !("target" in value) &&
-    (value.params === undefined || isPlainObject(value.params))
-  );
 }

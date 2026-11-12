@@ -31,6 +31,7 @@ import {
   GraphQLSchema,
   GraphQLString,
 } from "graphql";
+import { arrayItems, defsOf, isDefRefNode, isLensRefNode } from "./returns.js";
 import type { LensResult, LensSpec } from "./types.js";
 
 /** Structurally the client package's LensClient; declared here so core does not depend on it. */
@@ -207,21 +208,12 @@ export function buildLensSchema(specs: LensSpec[]): GraphQLSchema {
     owner: string,
     scope: DefScope
   ): GraphQLFieldConfig<any, GraphQLLensContext> => {
-    if (isRecord(schema) && typeof schema.$lens === "string") {
+    if (isLensRefNode(schema)) {
       return refField(schema.$lens, key);
     }
     if (isRecord(schema) && schema.type === "array") {
-      const items = schema.items;
-      // items may be a bare field map (no type/$lens/$ref), a schema, or a scalar name
-      const itemType =
-        isRecord(items) &&
-        items.type === undefined &&
-        items.$lens === undefined &&
-        items.$ref === undefined
-          ? objectType(`${owner}${capitalise(key)}`, items, scope)
-          : typeFor(items, key, owner, scope);
       return {
-        type: new GraphQLList(itemType),
+        type: new GraphQLList(itemsType(schema.items, key, owner, scope)),
         args: {
           first: {
             type: GraphQLInt,
@@ -246,8 +238,8 @@ export function buildLensSchema(specs: LensSpec[]): GraphQLSchema {
   ): GraphQLOutputType => {
     if (typeof schema === "string") return SCALARS[schema] ?? JSONScalar;
     if (!isRecord(schema)) return JSONScalar;
-    if (typeof schema.$lens === "string") return typeForLens(schema.$lens);
-    if (typeof schema.$ref === "string") return typeForDef(schema.$ref, scope);
+    if (isLensRefNode(schema)) return typeForLens(schema.$lens);
+    if (isDefRefNode(schema)) return typeForDef(schema.$ref, scope);
     if (schema.type === "object" && isRecord(schema.fields)) {
       return objectType(`${owner}${capitalise(key)}`, schema.fields, scope);
     }
@@ -255,6 +247,18 @@ export function buildLensSchema(specs: LensSpec[]): GraphQLSchema {
       return SCALARS[schema.type] ?? JSONScalar;
     }
     return JSONScalar;
+  };
+
+  const itemsType = (
+    schema: unknown,
+    key: string,
+    owner: string,
+    scope: DefScope
+  ): GraphQLOutputType => {
+    const items = arrayItems(schema);
+    if (items === undefined) return typeFor(schema, key, owner, scope);
+    if (items.kind === "ref") return typeForDef(items.name, scope);
+    return objectType(`${owner}${capitalise(key)}`, items.fields, scope);
   };
 
   const objectType = (
@@ -268,7 +272,7 @@ export function buildLensSchema(specs: LensSpec[]): GraphQLSchema {
       fields: () =>
         Object.fromEntries(
           Object.entries(fields).map(([key, sub]) =>
-            isRecord(sub) && typeof sub.$lens === "string"
+            isLensRefNode(sub)
               ? [refFieldName(key, fields), refField(sub.$lens, key)]
               : [key, fieldConfig(sub, key, name, scope)]
           )
@@ -300,9 +304,8 @@ export function buildLensSchema(specs: LensSpec[]): GraphQLSchema {
     if (existing !== undefined) return existing;
     const spec = specFor(lens);
     const baseName = segmentsOf(lens).map(capitalise).join("");
-    const defs = spec?.$defs;
     const scope: DefScope = {
-      defs: isRecord(defs) ? defs : {},
+      defs: defsOf(spec),
       types: new Map(),
       baseName,
     };
@@ -311,22 +314,14 @@ export function buildLensSchema(specs: LensSpec[]): GraphQLSchema {
         ? JSONScalar // ref into a lens we have no document for
         : (() => {
             const returns = spec.returns;
-            if (isRecord(returns) && typeof returns.$ref === "string") {
+            if (isDefRefNode(returns)) {
               return typeForDef(returns.$ref, scope);
             }
             if (isRecord(returns) && returns.type === "object") {
               return objectType(baseName, returns.fields ?? {}, scope);
             }
             if (isRecord(returns) && returns.type === "array") {
-              const items = returns.items;
-              return new GraphQLList(
-                isRecord(items) &&
-                items.type === undefined &&
-                items.$lens === undefined &&
-                items.$ref === undefined
-                  ? objectType(`${baseName}Item`, items, scope)
-                  : typeFor(items, "item", baseName, scope)
-              );
+              return new GraphQLList(itemsType(returns.items, "item", baseName, scope));
             }
             return JSONScalar;
           })();

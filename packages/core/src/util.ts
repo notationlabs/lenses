@@ -1,3 +1,10 @@
+/** RFC 6901 JSON Pointer for a path of keys. */
+export function pointerOf(path: PropertyKey[]): string {
+  return `/${path
+    .map((segment) => String(segment).replace(/~/g, "~0").replace(/\//g, "~1"))
+    .join("/")}`;
+}
+
 export function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }

@@ -94,6 +94,20 @@ describe("buildLensSchema", () => {
     expect(sdl).toMatch(/stories\([^)]*first: Int\s*\): \[HnTopStories\]/);
   });
 
+  it("compiles array items that declare a field named type as an object type", () => {
+    const filesSpec: LensSpec = {
+      ...base,
+      name: "@example/drive/files",
+      returns: {
+        type: "object",
+        fields: { files: { type: "array", items: { type: "string", name: "string" } } },
+      },
+    };
+    const sdl = printSchema(buildLensSchema([filesSpec]));
+    expect(sdl).toMatch(/files\([^)]*\): \[DriveFilesFiles\]/);
+    expect(sdl).toMatch(/type DriveFilesFiles \{\s*type: String\s*name: String\s*\}/);
+  });
+
   // An object is not a legal GraphQL defaultValue; the client resolves the
   // ref default per call, so the arg just stays optional.
   it("omits the GraphQL defaultValue for a {$lens} ref default", () => {

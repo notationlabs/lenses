@@ -1,3 +1,4 @@
+import { arrayItems, defsOf, isDefRefNode, isLensRefNode } from "./returns.js";
 import { isPlainObject } from "./util.js";
 import type { LensSpec } from "./types.js";
 
@@ -30,7 +31,7 @@ export function generateTsSdk(specs: LensSpec[]): string {
   const usedDefNames = new Set<string>();
   const defDeclarations: string[] = [];
   const scopeOf = (spec: LensSpec): DefScope => {
-    const defs = isPlainObject(spec.$defs) ? spec.$defs : {};
+    const defs = defsOf(spec);
     const names: Record<string, string> = {};
     for (const name of Object.keys(defs)) {
       const base = `${pascal(shortName(spec.name))}${pascal(name)}`;
@@ -45,7 +46,7 @@ export function generateTsSdk(specs: LensSpec[]): string {
 
   const entries = sorted.map((spec) => {
     const scope = scopeOf(spec);
-    for (const [name, def] of Object.entries(isPlainObject(spec.$defs) ? spec.$defs : {})) {
+    for (const [name, def] of Object.entries(defsOf(spec))) {
       const fields = isPlainObject(def) && isPlainObject(def.fields) ? def.fields : {};
       defDeclarations.push(`export interface ${scope.names[name]} ${fieldMap(fields, scope, "")}`);
     }
@@ -134,11 +135,11 @@ interface DefScope {
 function returnsType(node: unknown, scope: DefScope, indent: string): string {
   if (typeof node === "string" && node in primitiveTypes) return primitiveTypes[node];
   if (!isPlainObject(node)) return "unknown";
-  if (typeof node.$lens === "string") {
+  if (isLensRefNode(node)) {
     const target = scope.known.has(node.$lens) ? `<${JSON.stringify(node.$lens)}>` : "";
     return `LensRef${target} | null`;
   }
-  if (typeof node.$ref === "string") return scope.names[node.$ref] ?? "unknown";
+  if (isDefRefNode(node)) return scope.names[node.$ref] ?? "unknown";
   if (node.nullable === true && typeof node.type === "string" && node.type in primitiveTypes) {
     return `${primitiveTypes[node.type]} | null`;
   }
@@ -149,10 +150,10 @@ function returnsType(node: unknown, scope: DefScope, indent: string): string {
       : "Record<string, unknown>";
   }
   if (node.type === "array") {
-    const items = node.items;
-    if (!isPlainObject(items)) return "unknown[]";
-    if (typeof items.$ref === "string") return `Array<${scope.names[items.$ref] ?? "unknown"}>`;
-    return `Array<${fieldMap(items, scope, indent)}>`;
+    const items = arrayItems(node.items);
+    if (items === undefined) return "unknown[]";
+    if (items.kind === "ref") return `Array<${scope.names[items.name] ?? "unknown"}>`;
+    return `Array<${fieldMap(items.fields, scope, indent)}>`;
   }
   return "unknown";
 }

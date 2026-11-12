@@ -1,4 +1,5 @@
 import { evaluate } from "./expr.js";
+import { arrayItems, isDefRefNode, isLensRefNode, isLensRefValue, type LensRefNode } from "./returns.js";
 import { isPlainObject } from "./util.js";
 
 /**
@@ -52,7 +53,7 @@ async function applyFieldMap(
       // Skipping it made a purely declarative ref silently never materialise,
       // surfacing as "no resolver produced field /0/detail" — which reads as a
       // broken selector for a field no selector was ever meant to fill.
-      if (!isLensRefSchema(fieldSchema)) continue;
+      if (!isLensRefNode(fieldSchema)) continue;
       const ref = await materialiseRef(ABSENT, fieldSchema, out, ctx);
       if (ref !== ABSENT) out[field] = ref;
       continue;
@@ -68,22 +69,22 @@ async function materialiseField(
   contextObj: Record<string, unknown>,
   ctx: Ctx
 ): Promise<unknown> {
-  if (isLensRefSchema(schema)) return materialiseRef(value, schema, contextObj, ctx);
+  if (isLensRefNode(schema)) return materialiseRef(value, schema, contextObj, ctx);
   if (isPlainObject(schema)) {
-    if (typeof schema.$ref === "string") {
+    if (isDefRefNode(schema)) {
       const def = ctx.defs[schema.$ref];
       // deref follows the value, so a self-referencing def bottoms out with it
       return def === undefined ? value : materialiseField(value, def, contextObj, ctx);
     }
-    if (schema.type === "array" && isPlainObject(schema.items)) {
+    const items = schema.type === "array" ? arrayItems(schema.items) : undefined;
+    if (items !== undefined) {
       if (!Array.isArray(value)) return value;
-      const items = schema.items;
       const out: unknown[] = [];
       for (const row of value) {
         out.push(
-          typeof items.$ref === "string"
-            ? await materialiseField(row, items, isPlainObject(row) ? row : {}, ctx)
-            : await applyFieldMap(row, items, ctx)
+          items.kind === "ref"
+            ? await materialiseField(row, schema.items, isPlainObject(row) ? row : {}, ctx)
+            : await applyFieldMap(row, items.fields, ctx)
         );
       }
       return out;
@@ -98,13 +99,13 @@ async function materialiseField(
 /** Bind a lens field to its declared parameter expressions. */
 async function materialiseRef(
   value: unknown,
-  schema: { $lens: string; params?: Record<string, string> },
+  schema: LensRefNode,
   contextObj: Record<string, unknown>,
   ctx: Ctx
 ): Promise<unknown> {
   if (value === null) return null;
   // Preserve references emitted by the resolver.
-  if (isCallableRef(value)) return value;
+  if (isLensRefValue(value)) return value;
 
   // A ref whose params read a field a later tier still has to extract will
   // throw or yield nothing here; that is not an error, just "not yet".
@@ -127,17 +128,4 @@ async function materialiseRef(
   return Object.keys(params).length > 0
     ? { $lens: schema.$lens, params }
     : { $lens: schema.$lens };
-}
-
-function isLensRefSchema(s: unknown): s is { $lens: string; params?: Record<string, string> } {
-  return isPlainObject(s) && typeof s.$lens === "string";
-}
-
-function isCallableRef(value: unknown): boolean {
-  return (
-    isPlainObject(value) &&
-    typeof value.$lens === "string" &&
-    !("target" in value) &&
-    (value.params === undefined || isPlainObject(value.params))
-  );
 }

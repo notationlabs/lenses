@@ -1,5 +1,6 @@
 import * as z from "zod/v4";
-import { isPlainObject } from "./util.js";
+import { arrayItems, defsOf, isDefRefNode, isLensRefNode } from "./returns.js";
+import { isPlainObject, pointerOf } from "./util.js";
 import type { LensSpec, ValidationIssue } from "./types.js";
 
 /** Shape of a materialised `{$lens, params?}` reference, shared by every lens. */
@@ -27,9 +28,8 @@ interface DefScope {
 
 /** Zod schema for a lens's resolved value, built from its `returns` declaration. */
 export function returnsSchema(spec: LensSpec): z.ZodType {
-  const defs = spec.$defs;
   return toZod(spec.returns, {
-    defs: isPlainObject(defs) ? defs : {},
+    defs: defsOf(spec),
     memo: new Map(),
     lens: spec.name,
   });
@@ -38,8 +38,8 @@ export function returnsSchema(spec: LensSpec): z.ZodType {
 function toZod(node: unknown, scope: DefScope): z.ZodType {
   if (typeof node === "string" && node in primitives) return primitives[node];
   if (!isPlainObject(node)) return z.unknown();
-  if (typeof node.$lens === "string") return lensRef.nullable();
-  if (typeof node.$ref === "string") return defZod(node.$ref, scope);
+  if (isLensRefNode(node)) return lensRef.nullable();
+  if (isDefRefNode(node)) return defZod(node.$ref, scope);
   if (node.nullable === true && typeof node.type === "string" && node.type in primitives) {
     return primitives[node.type].nullable();
   }
@@ -57,10 +57,10 @@ function toZod(node: unknown, scope: DefScope): z.ZodType {
       : z.record(z.string(), z.unknown());
   }
   if (node.type === "array") {
-    const items = node.items;
-    if (!isPlainObject(items)) return z.array(z.unknown());
+    const items = arrayItems(node.items);
+    if (items === undefined) return z.array(z.unknown());
     return z.array(
-      typeof items.$ref === "string" ? defZod(items.$ref, scope) : fieldMap(items, scope)
+      items.kind === "ref" ? defZod(items.name, scope) : fieldMap(items.fields, scope)
     );
   }
   return z.unknown();
@@ -124,10 +124,4 @@ function valueAt(value: unknown, path: PropertyKey[]): unknown {
     current = (current as Record<PropertyKey, unknown>)[segment];
   }
   return current;
-}
-
-function pointerOf(path: PropertyKey[]): string {
-  return `/${path
-    .map((segment) => String(segment).replace(/~/g, "~0").replace(/\//g, "~1"))
-    .join("/")}`;
 }
