@@ -461,6 +461,27 @@ export function createCdpBackend(
   }
 
   /**
+   * Take a bound tab to its target. A password manager's frame makes Chrome
+   * detach the debugger from the tab (see TabDisconnected), and a load under
+   * way then fails with Puppeteer's "Navigating frame was detached". A load
+   * that fails on a tab the debugger still has not got back raises
+   * TabDisconnected, so the call ends as a sign-in that the auth wait watches.
+   * The extension asks for the tab back only after the failure, so a tab
+   * already re-attached is not expected; its load fails with the original error.
+   */
+  async function loadBound(current: Browser, page: Page, target: string, request: BindRequest): Promise<boolean> {
+    try {
+      return await navigateBound(page, target, request);
+    } catch (error) {
+      const key = transport.tabKey?.(page);
+      if (key !== undefined && transport.tabLink?.(key)?.state === "disconnected") {
+        await recoverTab(current, key, target, page);
+      }
+      throw error;
+    }
+  }
+
+  /**
    * A re-attached tab can come back with a debugger session that never
    * reports the page's JavaScript context (seen after a password manager's
    * frame blocked the attach mid sign-in), so every evaluate would hang.
@@ -1104,7 +1125,7 @@ export function createCdpBackend(
           : false;
         if (held) log(`holding tab at ${chosen.url()}: it is part-way through sign-in`);
         if (request.target !== undefined && !request.existingOnly && !held) {
-          navigated = await navigateBound(chosen, target, request);
+          navigated = await loadBound(current, chosen, target, request);
         }
         // Sign-in has just taken the tab somewhere new; the app may still be rendering it.
         if (request.existingOnly) await settleReady(chosen, request);
@@ -1120,7 +1141,7 @@ export function createCdpBackend(
         const atAuthGate = authGateState(existing, request);
         let navigated = false;
         if (!request.existingOnly || request.navigation === "fresh") {
-          navigated = await navigateBound(existing, request.target, request);
+          navigated = await loadBound(current, existing, request.target, request);
         }
         if (request.existingOnly && !navigated) await settleReady(existing, request);
         return makeSession(existing, false, navigated, request.target, request.loadTimeoutMs, atAuthGate, {
@@ -1135,11 +1156,13 @@ export function createCdpBackend(
       // Register before loading: a slow sign-in redirect must not orphan the tab.
       if (request.reuse) rememberReuse(urlOrigin(request.target), page);
       try {
-        await navigateBound(page, request.target, request);
+        await loadBound(current, page, request.target, request);
       } catch (error) {
-        // A reused tab is kept for the origin's next call; any other tab has no
-        // session to close it, so it is closed here.
-        if (!request.reuse) await closeCreated(page);
+        // A reused tab is kept for the origin's next call, and a detached one
+        // for the sign-in wait (a call with no auth lease leaves it open until
+        // the next wait on the origin); any other tab has no session to close
+        // it, so it is closed here.
+        if (!request.reuse && !(error instanceof TabDisconnected)) await closeCreated(page);
         throw error;
       }
       return makeSession(page, true, true, request.target, request.loadTimeoutMs, undefined, {

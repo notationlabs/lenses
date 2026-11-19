@@ -693,6 +693,75 @@ describe("tabs the debugger loses", () => {
     expect(chrome.browser.newPage).toHaveBeenCalledTimes(1);
   });
 
+  it("ends a load the debugger loses part-way as a detached sign-in tab", async () => {
+    const chrome = relayChrome();
+    const host = createCdpBackend(() => {}, chrome.transport as never);
+    chrome.browser.newPage.mockImplementationOnce(async () => {
+      chrome.browser.newPage.mockClear();
+      const page = await chrome.browser.newPage();
+      page.goto = async (url: string) => {
+        page.loads.push(url);
+        page.currentUrl = `${origin}/login`;
+        chrome.detach("100");
+        throw new Error("Navigating frame was detached");
+      };
+      return page;
+    });
+    const failure = await host.bind(reuse()).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(TabDisconnected);
+    // The extension asks for the tab back after the load has already failed.
+    expect(failure).toMatchObject({ tab: "t100", detail: undefined });
+    // The next call finds the same tab still detached, and opens no other.
+    await expect(host.bind(reuse())).rejects.toMatchObject({ tab: "t100" });
+    expect(chrome.browser.newPage).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a new unreused tab the debugger loses mid-load, and closes one whose load just fails", async () => {
+    const chrome = relayChrome();
+    const host = createCdpBackend(() => {}, chrome.transport as never);
+    // Tabs are keyed 100, 101, ... in the order they open.
+    let nextKey = 100;
+    const failingTab = (detach: boolean) => {
+      const close = vi.fn(async () => {});
+      const key = String(nextKey++);
+      chrome.browser.newPage.mockImplementationOnce(async () => {
+        const page = await chrome.browser.newPage();
+        page.goto = async () => {
+          if (detach) chrome.detach(key);
+          throw new Error("Navigating frame was detached");
+        };
+        page.close = close;
+        return page;
+      });
+      return close;
+    };
+    const unreused = { target: `${origin}/account-summary`, navigation: "reuse" as const, loadTimeoutMs: 100 };
+
+    const detachedClose = failingTab(true);
+    await expect(host.bind(unreused)).rejects.toBeInstanceOf(TabDisconnected);
+    expect(detachedClose).not.toHaveBeenCalled();
+
+    const failedClose = failingTab(false);
+    await expect(host.bind(unreused)).rejects.toThrow("Navigating frame was detached");
+    expect(failedClose).toHaveBeenCalled();
+  });
+
+  it("still fails a load whose tab was closed", async () => {
+    const chrome = relayChrome();
+    const host = createCdpBackend(() => {}, chrome.transport as never);
+    chrome.browser.newPage.mockImplementationOnce(async () => {
+      chrome.browser.newPage.mockClear();
+      const page = await chrome.browser.newPage();
+      page.goto = async () => {
+        page.closed = true;
+        chrome.transport.tabLink = () => ({ state: "closed" });
+        throw new Error("Navigating frame was detached");
+      };
+      return page;
+    });
+    await expect(host.bind(reuse())).rejects.toThrow("Navigating frame was detached");
+  });
+
   it("finds a tab the extension re-attached on its own", async () => {
     const chrome = relayChrome();
     const host = createCdpBackend(() => {}, chrome.transport as never);
