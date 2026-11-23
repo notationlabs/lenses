@@ -3,15 +3,15 @@ name: lenses
 description: Read live web pages as typed function calls through the lens CLI. Use when a task needs data from a website the user is signed into, or when authoring a new lens for an unmapped page.
 ---
 
-# Lenses
+# Notation Lenses
 
-A lens turns a webpage into a typed function. Calls run through the user's own browser using Microsoft's Playwright Extension (tab-group CDP relay), so signed-in sessions work.
+Notation Lenses turns a webpage into a typed function. Calls run through the user's own browser using Microsoft's Playwright Extension over a tab-group CDP relay, so signed-in sessions work.
 
 ## CLI Behaviour
 
-Every command prints JSON to stdout and exits non-zero on errors. 
+Catalog and execution commands (`list`, `call`, `schema`, `observe`, `update`, `broker`) print JSON to stdout and exit non-zero on errors. Utility commands (`skill`, `gen ts-sdk`, `eval`, `graphql`) output text, generated code, JSON results, or start a local HTTP server.
 
-Pass a catalog directory with `--catalog <path>` (or ask the user where their lens catalog is).
+Pass a catalog directory with `--catalog <path>` for `list`, `call`, `schema`, `update`, and `graphql` (or ask the user where their lens catalog lives). Settings and catalog parameter defaults live in `~/.config/lenses/config.json`.
 
 ## Calling a lens
 
@@ -20,38 +20,37 @@ lens list --catalog ./examples    # discover lenses, their params and exceptions
 lens call hn/item --params '{"id":"42"}' --catalog ./examples
 ```
 
-`call` and `observe` automatically start or reconnect the configured browser when needed. Treat the operation's result as authoritative; ask the user to take browser or sign-in action only when its error or structured outcome requires it.
+`call` and `observe` automatically start or reconnect the local broker and configured browser when needed. Treat the operation's result as authoritative; ask the user to act in the browser only when its error or structured outcome requires it.
 
-A call result is one of:
+A call result is one of three shapes:
 
-- `{"kind": "value", "value": ...}` — the typed result. Fields may contain
-  `$lens` references: a ready-made follow-up call (lens name + evaluated
-  params) for things like pagination. Call it next instead of guessing URLs.
-- `{"kind": "outcome", "name": ...}` — a declared non-happy path such as
-  `needs_auth`, optionally carrying the lens that resolves it. An
-  `agent_extract` outcome contains the page snapshot and an extraction
-  prompt: extract the declared `returns` shape from the snapshot yourself.
-- `{"kind": "error", "message": ..., "issues": [...]}` — `issues` names
-  failing JSON pointers when the value violated the lens's schema. Retry with
-  `--lax` to receive the value with warnings instead.
+- `{"kind": "value", "value": ...}` – the typed result. Fields may contain `$lens` references carrying ready-made follow-up calls. Call them next instead of guessing URLs.
+- `{"kind": "outcome", "name": ...}` – a declared non-happy path such as `needs_auth`, optionally carrying the lens that resolves it. An `agent_extract` outcome returns a page snapshot and prompt so you can extract the `returns` shape directly.
+- `{"kind": "error", "message": ..., "issues": [...]}` – failure details. `issues` lists failing JSON pointers on schema mismatch; retry with `--lax` to return the value with warnings instead.
 
-A lens whose `returns` is `{"type": "file"}` (e.g. a statement PDF) writes a
-file instead of returning content. Pass a directory: `lens call
-bank/statement-pdf --params '{...}' --out-dir ~/Statements`. The value is
-`{"path", "name", "mimeType", "bytes"}`; `path` is absolute. Without
-`--out-dir` the call is refused with `code: "out_dir_required"` before any
-browser work; a relative, missing, or unwritable directory is
-`code: "out_dir_invalid"`. An existing file of the same name is replaced.
+### File lenses when calling
 
-A result whose tab stays open carries `"tab": "t1"`, a broker id for that tab.
-Pass it back to target the same tab: `lens call <lens> --tab t1`, or
-`lens observe --tab t1` to read it where it is (add a URL to route it there
-in-page first). A closed tab fails with `code: "tab_closed"`; nothing opens a
-replacement.
+A lens whose `returns` is `{"type": "file"}` writes a saved file instead of inline content. Pass `--out-dir` with an absolute path:
+
+```sh
+lens call bank/statement-pdf --params '{"id":"2026-01"}' --out-dir ~/Statements
+```
+
+The returned value is `{"path", "name", "mimeType", "bytes"}` with an absolute `path`. Missing `--out-dir` fails immediately with `code: "out_dir_required"`, invalid or relative paths fail with `code: "out_dir_invalid"`, and existing files with the same name are replaced.
+
+### Tab targeting and broker control
+
+A result whose tab stays open carries `"tab": "t1"`, the broker ID for that tab. Pass it back with `lens call <lens> --tab t1` or `lens observe --tab t1` to read or route the open tab without opening a new one. Calling a closed tab fails with `code: "tab_closed"`.
+
+Use `lens broker release`, `lens broker acquire`, and `lens broker shutdown` to manage browser ownership, `lens update` to refresh cached `git:` catalogs, and `lens graphql playground` to explore catalogs over GraphQL. Over MCP, `lens-mcp` exposes `lens_list`, `lens_call`, and `lens_observe` over stdio.
 
 ## Write lenses
 
-A lens with a `perform` block acts on the page: its steps (fill, click, native form submit, press, drop, wait, navigate) run once, then the resolve tiers read the result in the same call. Whether a lens writes is the author's declaration: a lens with non-empty `effects.writes` is a write, whether it acts through perform steps or mutating HTTP methods (anything except GET, HEAD, or OPTIONS). Perform steps that only read — clicking a statement link, paging a list — declare `writes: []`. Calling a write requires `--allow-writes`; otherwise it is refused with `code: "writes_not_allowed"`. Check `effects.idempotent` first — a non-idempotent write (e.g. sending a message) sends twice on a manual retry. `performed: true` specifically means every `perform` step ran and the page write happened, even if the result itself is an error; `code: "perform_failed"` with a `step` index means it did not. The pattern, on logged-out chatgpt.com:
+A lens with a `perform` block acts on the page (`fill`, `click`, `submit`, `press`, `drop`, `wait`, `navigate`), then runs its `resolve` tiers in the same call. A lens is treated as a write when `effects.writes` is non-empty, whether it acts through `perform` steps or a mutating HTTP method.
+
+Read-only `perform` steps such as clicking a pagination link declare `"writes": []`. Calling any write lens requires `--allow-writes`; otherwise the broker refuses it with `code: "writes_not_allowed"`. Check `effects.idempotent` before retrying, because a non-idempotent write repeats on retry.
+
+`performed: true` on the result means every `perform` step completed even if extraction later errored. Failure during a step returns `code: "perform_failed"` with the failing zero-based `step` index.
 
 ```sh
 lens call chatgpt/send --params '{"message":"hello"}' --allow-writes   # fills, clicks, waits, returns the transcript
@@ -59,15 +58,25 @@ lens call chatgpt/clear --allow-writes                                  # naviga
 lens call chatgpt/chat                                                  # plain read; no flag needed
 ```
 
-Authoring one: a mutating HTTP method requires non-empty `effects.writes`; a write requires `cache` 0 or absent. Declare `idempotent: true` only when repeating the steps is harmless. `{ "click": "a.statement", "text": "{params.period}" }` clicks the first visible match whose whitespace-collapsed text contains the template; of nested matches, the innermost. A wait takes the same `text`. In click and wait selectors, `a >>> b` matches `b` inside `a`'s shadow root, for controls inside web components. A drop attaches a local file the way a drag from the desktop would: `{ "drop": "#editor", "file": "$params.path" }` names, exactly as `$params.<name>`, a declared string param with no default, the caller passes an absolute path, and the host drops that file onto the first visible match. HTTP request bodies are declared as `{ "json": expr }`, `{ "text": expr }`, `{ "form": { field: expr } }`, or `{ "search": { field: expr } }`. A native form action is `{ "submit": "#form", "form": { "field[name]": expr } }`; its field expressions become literal named controls before `requestSubmit()`. These expressions read `$params`, and a chained source's body also reads the sources before it as `$sources` (see [Expressions](#expressions-and-templates)). Keep a page read as its own lens (like `chatgpt/chat`) and give a perform lens the same tiers as its readback.
+### Authoring rules for writes
+
+A mutating HTTP method (anything other than `GET`, `HEAD`, or `OPTIONS`) requires non-empty `effects.writes`, and any write lens must omit `effects.cache` or set it to `0`. Set `idempotent: true` only when repeating the steps is safe.
+
+Keep readback in its own lens when useful and give each write lens the same resolve tiers so callers receive verified post-action state.
+
+| Step feature | Rule |
+| --- | --- |
+| Click and wait text matcher | Matches first visible element whose collapsed text contains the template, picking innermost match |
+| Shadow root selector | Traverses shadow roots with `a >>> b` inside web components for `click` and `wait` |
+| File drop step | Names `"$params.<name>"` pointing to a declared non-default string param holding an absolute file path |
+| Native form submit step | Writes literal named controls from `form` expressions over `$params` before calling `requestSubmit()` |
+| HTTP request body | Supports `json`, `text`, `form`, or `search`, reading `$params` and earlier `$sources` |
 
 ## File lenses
 
-`"returns": { "type": "file" }` is the whole result; it cannot be nested. The
-tier produces file content and the broker writes it into the caller's
-`--out-dir`:
+`"returns": { "type": "file" }` covers the entire result and cannot be nested. The winning resolver returns a file payload that the broker validates and writes into `--out-dir`:
 
-```json
+```jsonc
 "map": {
   "content": "$res.body.content",
   "encoding": "'base64'",
@@ -78,17 +87,12 @@ tier produces file content and the broker writes it into the caller's
 
 | Field | Value |
 | --- | --- |
-| `content` | the file as a string |
-| `encoding` | `"base64"` (decoded to bytes) or `"utf8"` (written as text) |
-| `mimeType` | a media type such as `application/pdf` |
-| `name` | optional bare file name; no `/`, `\`, or leading `.`. Default `<lens>-<sha256 12 hex>.<ext>` |
+| `content` | File payload encoded as a string |
+| `encoding` | `"base64"` decoded to bytes or `"utf8"` written as text |
+| `mimeType` | Valid media type string such as `application/pdf` |
+| `name` | Optional filename without `/`, `\`, or leading `.`, defaulting to `<lens>-<sha256_12>.<ext>` |
 
-A tier missing a field, or with invalid base64 or an unsafe name, fails with
-`code: "file_invalid"`. Intercept and http tiers of a file lens keep response
-bodies up to 32MB (512KB otherwise). `effects.cache` applies as usual: a hit
-writes the cached file again. While a file lens's steps run, and for 5s after, the page cannot
-save files through `<a download>`, so a page that also saves the file (as
-RBS does) leaves no second copy in Downloads.
+Missing fields, invalid base64, or unsafe names fail with `code: "file_invalid"`. File lenses allow `intercept` and `http` response bodies up to 32 MiB instead of the default 512 KiB. While a file lens runs and for 5 seconds after, `<a download>` saves are suppressed so the browser does not create a duplicate copy in Downloads. `effects.cache` still applies and writes cached bytes again on a hit.
 
 ## Authoring a lens for an unmapped page
 
@@ -98,40 +102,20 @@ RBS does) leaves no second copy in Downloads.
    lens observe https://example.com/page --wait-ms 4000 --html
    ```
 
-   This returns the JSON requests the page fired, a text snapshot, and (with
-   `--html`) stripped body markup for writing CSS selectors.
+   This returns the JSON requests the page fired, a text snapshot, and stripped body markup when `--html` is passed.
 
-2. Iterate JSONata offline against a captured response before it goes in a
-   document. The JSON is bound as the reply body, `$res.body`, exactly where a
-   lens `map` finds it (`--as value` binds `$value` to try a dom `post`,
-   `--as item` a per-row `map`):
+2. Test JSONata expressions offline against a saved capture. Stdin or `--input` binds as `$res.body` by default, `--as value` binds `$value` to test `dom.post`, and `--as item` tests a per-row `map`:
 
    ```sh
    lens eval '[$res.body.stories.{ "t": title }]' --input sample.json
    ```
 
-3. Write a JSON lens document into the catalog. Every field below is required
-   except `params` and `exceptions`; `effects` in particular is mandatory.
-   Resolver tiers run in order and accumulate fields until `returns` is
-   satisfied:
-   - `http` — direct requests to a JSON API, no page bound (preferred when a
-     public or cookie-authenticated endpoint exists). `request` is
-     `{ "method": "GET", "url": "https://…/{params.id}" }` (omitted, the tier
-     GETs the lens `url`); `items` selects rows from the reply, `$res.body`,
-     and `map` shapes each row `$item`; `credentials: true` sends the browser's cookies
-     with the request, while `credentials: "same-origin-page"`
-     requires execution in an already-open page matching the request origin.
-     Sources may override credentials and add headers. `sources`
-     chains requests: each binds `$sources.name` for `map` and for the sources
-     after it, whose URLs address earlier bodies with holes —
-     `{sources.orgs.body.0.uuid}` — which is how an id only another response
-     knows reaches a URL.
-   - `intercept` — map a JSON response the page already fetched. The
-     `request` is a `{method, url}` pattern whose `url` is a `*` glob taking
-     `{params.name}` holes, so a per-account lens matches only that account's
-     response.
-   - `dom` — CSS selectors, optionally a repeating `item` selector.
-   - `llm` — last resort; returns the snapshot and prompt to you.
+3. Write a JSON lens document into the catalog. `name`, `url`, `effects`, and `resolve` are always required. Resolver tiers run in order and merge missing fields until `returns` is satisfied:
+
+   - `http` – direct requests via node/browser transport with no page needed when public or cookie-authenticated APIs exist. `credentials: true` sends browser cookies; `credentials: "same-origin-page"` runs inside an open matching-origin tab. Chained `sources` bind `$sources.name` for later `url`, `headers`, `body`, and `map` expressions (`{sources.orgs.body.0.uuid}`).
+   - `intercept` – reads matching JSON responses captured by the open page using a `{method, url}` `*`-glob pattern with `{params.name}` holes.
+   - `dom` – extracts text or attributes via CSS selectors and an optional repeating `item` selector.
+   - `llm` – last resort returning the snapshot text and prompt to the caller as an `agent_extract` outcome.
 
    ```jsonc
    {
@@ -149,10 +133,7 @@ RBS does) leaves no second copy in Downloads.
    }
    ```
 
-   For a list, `returns` is `{"type": "array", "items": {...}}` where `items`
-   is a **bare field map** — field names straight to types, NOT a nested
-   `{ "type": "object", "fields": ... }` object (that nesting would silently
-   declare literal `type`/`fields` fields and every row fails validation):
+   For a list, `returns` uses `{"type": "array", "items": {...}}` where `items` is a bare field map straight from field names to types, not a `{ "type": "object", "fields": ... }` wrapper:
 
    ```jsonc
    "returns": {
@@ -161,7 +142,7 @@ RBS does) leaves no second copy in Downloads.
    }
    ```
 
-   For a recursive shape (a comment tree), declare the repeating object once under top-level `$defs` and point at it with `{"$ref": "<name>"}` — a def may reference itself:
+   For a recursive shape such as a comment tree, define it under `$defs` and link via `{"$ref": "<name>"}`:
 
    ```jsonc
    "$defs": {
@@ -173,10 +154,7 @@ RBS does) leaves no second copy in Downloads.
      "comments": { "type": "array", "items": { "$ref": "comments" } } } }
    ```
 
-   A `dom` tier reads the rendered page. It takes `fields` (selector specs)
-   and optionally `post` (JSONata over `$value`, the extracted value) — there
-   is no `map` key; `map` belongs to `http` and `intercept` tiers. With a repeating `item` selector it
-   yields one object per match, each `fields` selector scoped to that element:
+   A `dom` tier accepts `fields` and optional `post` (`map` belongs to `http` and `intercept` only). With a repeating `item` selector, `dom` extracts one object per matched element:
 
    ```jsonc
    { "kind": "dom",
@@ -188,38 +166,17 @@ RBS does) leaves no second copy in Downloads.
      "post": "$value[[0..$params.limit - 1]]" }
    ```
 
-   Field specs: `selector` (first match wins; `":self"` reads the item
-   element itself), `attr` (read an attribute instead of text; `href`/`src`
-   are absolutised), and `scope`, which moves the element the selector runs
-   from. A field matching nothing is `null`; declare it `nullable` in
-   `returns` or coerce to `null` in `map`, since `undefined` fails a
-   non-nullable field.
+   Each field sets `selector` (using `":self"` for the scoped element), optional `attr` (`href` and `src` resolve to absolute URLs), and optional `scope`. Missing selectors yield `null`; declare them `nullable` in `returns` or coerce to `null` in `map` / `post`.
 
-   `scope` covers the two things a row cannot see. `"+"` (or `"+ sel"`, which
-   also requires the sibling to match) crosses to the next element sibling, for
-   split-row layouts: HN's story/subtext rows, or a definition list where
-   `"item": "dt"` zips each `dt` with its `dd`. Any other value is an ancestor
-   selector resolved with `closest()`, which is how a row reaches context that
-   lives above it — a tax year on the tab panel wrapping the table, rather than
-   recovered from row text:
+   Use `"scope": "+"` or `"+ sel"` to step to the next element sibling in split-row tables or `<dt>`/`<dd>` lists (prefer `"scope": "+"` over deprecated `sibling: true`). Any other `scope` string runs `closest()` to reach enclosing context:
 
    ```jsonc
    "fields": { "year": { "selector": ".year-heading", "scope": ".tab-panel" } }
    ```
 
-   (`sibling: true` is the older spelling of `"scope": "+"` and still works.)
+   Without `attr`, rendered text separates `<br>` sides, collapses whitespace runs including `&nbsp;`, and trims the result. Present blank elements return `""`, while unmatched selectors return `null`.
 
-   A field without `attr` reads the element's **rendered text**, so a `<br>`
-   separates its two sides instead of joining them. Whitespace runs — including
-   the `&nbsp;` that content-managed markup is dense with — are collapsed to
-   single spaces and the result is trimmed. Do not write your own normalising
-   helper; it is already done. Note the two empty cases are different: `""`
-   means the element is there and blank, `null` means the selector matched
-   nothing.
-
-   Tiers accumulate, so a page with a summary *and* a list is one lens, not
-   two. A tier with `item` yields an array as its whole value — name it in
-   `post`, and the fields-only tier merges alongside it:
+   Tiers merge missing keys into the accumulated object without overwriting existing values. Name an `item` array in `post` to combine it alongside another tier:
 
    ```jsonc
    "returns": { "type": "object", "fields": {
@@ -233,9 +190,7 @@ RBS does) leaves no second copy in Downloads.
    ]
    ```
 
-   Declare exceptions in one place, with the predicate first and the recovery
-   advice beside it. A scope in `catalog.json` shares an exception across all
-   lens URL templates matching its `*`-only glob:
+   Declare shared exceptions in `catalog.json` `scopes` matched by `*`-only URL globs:
 
    ```jsonc
    { "scopes": [{ "url": "https://*.site.com/*", "exceptions": {
@@ -246,139 +201,50 @@ RBS does) leaves no second copy in Downloads.
    } }] }
    ```
 
-   The shared matcher checks each page as `$page` (`{url, title}`) and each
-   response as `$res` (`{status, url, body}`), even each named source
-   before the next request; whichever is not being checked is undefined, so
-   name both when a sign-in redirect can reach either. A lens can merge
-   additional fields into the inherited entry or set the entire key to `null`
-   to disable it. Resolver `exceptions` add tier-local matching — over
-   `$sources.name` replies in a sources tier — and run before inherited
-   matchers; they do not replace them. `matches: null` disables only an
-   inherited predicate. Legacy `detect` and `outcomes` fields are rejected.
+   Page checks populate `$page` and response checks populate `$res`; check both when sign-in redirects happen on either. A document can extend inherited entries, disable only an inherited predicate with `matches: null`, or set the key to `null` to suppress it completely. Tier `exceptions` run before inherited rules. Legacy `detect` and `outcomes` keys are rejected.
 
-   A `returns` field may itself declare a `$lens` reference, so a row carries a
-   ready-made follow-up call. Declaring it is enough — no resolver needs to emit
-   the key, because the reference is built from the row's other fields, which
-   its `params` read as `$item`:
+   A `returns` field with `{ "$lens": ..., "params": ... }` builds follow-up calls automatically from sibling fields bound as `$item`:
 
    ```jsonc
    "returns": { "type": "array", "items": {
      "period": "string",
-     "detail": { "$lens": "@scope/site/detail", "params": { "period": "$item.period" } } } },
-   // the tier extracts `period` only; `detail` materialises from it
+     "detail": { "$lens": "@scope/site/detail", "params": { "period": "$item.period" } } } }
    ```
 
-   A row whose `params` do not bind — `period` is null, so there is nothing to
-   follow — gets `detail: null`, which is valid against the field. Emit the key
-   yourself only to override that per row: an explicit `null` suppresses the
-   reference, and a `{$lens, params}` object you build in `post` is kept as
-   written.
+   Rows whose ref `params` do not bind settle to `null`. Returning explicit `null` suppresses the reference on that row, while a `{ "$lens", "params" }` object emitted by `post` or `map` is kept as written.
 
-   Return only what the caller needs — a lens that emits every row bloats every
-   call. Declare a `limit` param and slice in `post` (or `map`), reading it as
-   `$params.limit`:
+   Add a `limit` param to keep large lists bounded:
 
    ```jsonc
-   "params": { "limit": { "type": "integer", "default": 5 } },
-   // in a dom tier: "post": "$value[[0..$params.limit - 1]]"
+   "params": { "limit": { "type": "integer", "default": 5 } }
    ```
 
-   A default may also come from another lens: `{"$lens": ..., "field": ...,
-   "params"?: {...literals}}` calls the target when the caller omits the key;
-   `field` is an expression over the target's result, bound as `$value`
-   (`"$value.vrn"`, or `"$value.accounts[0].id"` to pick from a list). Use it for identity-like values
-   the caller should not have to know — an account number a summary page already
-   shows:
+   A parameter `default` can also pull a scalar from another lens (`{ "$lens", "field", "params"? }`) where `field` evaluates over `$value`. It must resolve to a non-nullable primitive matching the param type:
 
    ```jsonc
    "params": { "vrn": { "type": "string",
-     "default": { "$lens": "@scope/site/summary", "field": "$value.vrn" } } },
+     "default": { "$lens": "@scope/site/summary", "field": "$value.vrn" } } }
    ```
 
-   The value must be a non-nullable primitive matching the param type; a plain
-   `$value.name` is checked against the target's `returns` before any call,
-   and any other expression against the value it produces. A target that errors or returns an outcome fails the call rather than
-   guessing. Prefer a cached target (`effects.cache`) — the default costs a
-   lens call whenever the caller omits the key. This form is a parameter
-   default only; `field` is not valid on a `returns` reference.
+   Note `field` belongs strictly to parameter defaults, not `returns` links.
 
-   Selectors take the same `{params.name}` holes as `url`, so a page that keys
-   its markup by a parameter needs no post-hoc recovery of that value from row
-   text:
+   DOM selectors and `ready` accept `{params.name}` holes substituted verbatim without percent-encoding, so type numeric IDs as `integer` when possible:
 
    ```jsonc
-   "params": { "year": "integer" },
-   // in a dom tier: "item": "#past-payments-{params.year} .row"
+   "params": { "year": "integer" }
    ```
 
-   The value is substituted verbatim — a selector is not a URL and must not be
-   percent-encoded — so declare such a param as `integer` where the page allows
-   it. An undeclared hole is rejected at validation, not at runtime.
+   Shared pure transformations belong in `helpers` on a lens or `catalog.json`, bound as `$name` across expressions. A helper sees only its own arguments and cannot name parameters after reserved variables (`res`, `item`, `sources`, `params`, `value`, `page`).
 
-   A repeated expression belongs in `helpers`, as a named JSONata lambda bound
-   as `$name` in every expression the document evaluates:
+   For stateful apps that lose session state on reload, set `tab: "reuse"` and `navigate: "in-page"` on the lens or `catalog.json` scope, and add a `ready` selector so `dom` tiers wait for rendering rather than landing on transient shells.
 
-   ```jsonc
-   "helpers": { "money": "function($s) { $number($replace($s, /[^0-9.]/, \"\")) }" },
-   // in a dom tier: "post": "{ 'amount': $money($value.raw) }"
-   ```
+   When Playwright Extension disconnects or the broker restarts, open tabs leave the extension tab group; drag the signed-in tab back into the group to reuse it, or inspect `~/.cache/lenses/broker.log` when debugging tab or attach behavior.
 
-   Put the same block in a `catalog.json` beside your documents and every
-   document in that directory gets it. That is the point: a helper pasted into
-   thirteen documents has to be fixed thirteen times and re-checked against
-   thirteen live pages. A document's own `helpers` entry overrides the
-   catalogue's. A helper reads only its own arguments, and may not take a
-   reserved variable name (`res`, `item`, `sources`, `params`, `value`,
-   `page`).
-
-   Some sites hold their session in the open tab rather than in cookies: any
-   fresh load or reload lands on the login page. Give their scope two
-   settings (a document may also set them itself):
-
-   ```jsonc
-   { "scopes": [{ "url": "https://bank.example/*",
-     "tab": "reuse",          // run in the tab this origin used last; never close it
-     "navigate": "in-page",   // reach the lens URL with pushState + popstate, never a load or reload
-     "exceptions": { "needs_auth": { "matches": "$contains($page.url, '/login')" } } }] }
-   ```
-
-   The first call opens a tab, `needs_auth` holds it while the user signs in,
-   and every later call routes that same tab. With the Playwright extension,
-   only tabs in its tab group are reused: when the broker restarts or loses
-   its connection the extension ungroups them, and the next call opens a new
-   tab. Drag the signed-in tab back into the group first to keep using it.
-   A tab whose current page already matches a `needs_*` exception is never
-   navigated; the call reports the outcome and brings the tab to the front
-   instead. Tab ids (`t` + Chrome tab id) stay valid while the tab is open
-   and in the group.
-
-   Such apps often keep rendering after `load`: a transient error screen, a
-   timed redirect to sign-in. Give the document a `ready` selector unique to
-   its page (`"ready": "ibank-account-card"`); after navigating, tiers wait
-   until it matches or the page matches a `needs_*` exception, up to
-   `loadTimeoutMs`. Without one there is no extra wait. Intercept tiers
-   already wait for their response, so `ready` matters most to dom tiers.
-
-   An app can render an error or sign-in screen at the requested URL under an
-   unchanged title. A dom tier's own exceptions also see what it extracted, as
-   `$value`: `"exceptions": { "needs_auth": { "matches": "$contains($string($value.heading), 'unable to continue')" } }`. Author against it with
-   `lens observe --tab <id>`, never a bare `lens observe <url>`, which loads a
-   fresh document and signs the session out.
-
-4. Call it by file path to test: `lens call ./my-lens.json --catalog .`
-
-The broker logs to `~/.cache/lenses/broker.log` (connections, tab reuse,
-debugger detaches); read it when a call behaves unexpectedly.
+4. Call your document directly to verify: `lens call ./my-lens.json --catalog .`
 
 ## Expressions and templates
 
-`items`, `map`, `post`, `matches`, request bodies and the rest are sandboxed
-JSONata: no network or DOM access. **An expression has no implicit input.**
-Every piece of data it reads is a named variable, and each site binds a fixed
-set of them. A path at the top level of an expression must start at a
-variable; `title`, `$.title` and `$` are validation errors. Inside a step,
-paths are relative to that step's own items as usual, so after a
-variable-rooted step you write plain field names:
+`items`, `map`, `post`, `matches`, helpers, and request bodies run sandboxed JSONata with **no implicit root input**. Top-level paths must start from a bound variable (`$var`) or built-in; relative field names work only inside filter predicates or steps after a rooted expression.
 
 ```jsonc
 "$value[$has(date)].{ 'date': date, 'amount': $money(amount) }"  // ok: date, amount are relative to each row
@@ -390,44 +256,31 @@ variable-rooted step you write plain field names:
 
 ### Variables in scope at each site
 
-| Site | Variables | Example |
-| --- | --- | --- |
-| `items` (http/intercept, one request) | `$res` — the reply; `$params` | `"items": "$res.body.statementCycles"` |
-| `map` when the tier has `items` (once per row) | `$item` — the row; `$res`; `$params` | `"map": { "id": "$item.id" }` |
-| `map` without `items` (once) | `$res`; `$params` | `"map": { "total": "$res.body.total" }` |
-| http source `items` | `$res` — this source's reply; `$sources` — the sources declared before it; `$params` | `"items": "$match($res.body, /token=(\\w+)/).groups[0]"` |
-| intercept source `items` | `$res` — this source's reply; `$params` | `"items": "$res.body.limits"` |
-| `map` with `sources` | `$sources` — each source's reply, by name; `$params` | `"plan": "$sources.orgs.body[0].plan"` |
-| http source `body` | `$sources` (earlier sources); `$params` | `{ "search": { "token": "$sources.csrf.body" } }` |
-| http `body` (one request) | `$params` | `{ "json": "{ 'id': $params.id }" }` |
-| dom `post` | `$value` — what the fields extracted; `$params` | `"post": "$value[[0..$params.limit - 1]]"` |
-| perform `value`, submit `form` values | `$params` | `"value": "$params.message"` |
-| document and catalog-scope exception `matches`, `params` | `$page` — `{url, title}` when a page is checked; `$res` when a response is checked (the other is undefined); `$params` | `"$contains($page.url, '/login') or $res.status = 401"` |
-| a dom tier's own exceptions | `$page`; `$value`; `$params` | `"$contains($value.heading, 'unable to continue')"` |
-| an http/intercept tier's own exceptions (one request) | `$res`; `$params` | `"$res.status = 404"` |
-| a sources tier's own exceptions | `$sources` — the replies arrived so far; `$params` | `"$sources.csrf.status = 401"` |
-| `returns` `$lens` reference `params` | `$item` — the object holding the reference; `$params` | `"params": { "id": "$item.id" }` |
-| `helpers` | the lambda's own arguments only | `"money": "function($s) { $number($s) }"` |
+| Site | Variables |
+| --- | --- |
+| Single `items` | `$res`, `$params` |
+| Single `map` with `items` | `$item`, `$res`, `$params` |
+| Single `map` without `items` | `$res`, `$params` |
+| HTTP source `items` | `$res`, `$sources`, `$params` |
+| Intercept source `items` | `$res`, `$params` |
+| Multi-source `map` | `$sources`, `$params` |
+| HTTP source `body` | `$sources`, `$params` |
+| Single HTTP `body` | `$params` |
+| DOM `post` | `$value`, `$params` |
+| Perform `fill` / `submit` values | `$params` |
+| Document and scope exceptions | `$page`, `$res`, `$params` |
+| DOM tier exceptions | `$page`, `$value`, `$params` |
+| Single HTTP / intercept tier exceptions | `$res`, `$params` |
+| Multi-source tier exceptions | `$sources`, `$params` |
+| Return `$lens` reference `params` | `$item`, `$params` |
+| Parameter default `field` | `$value` |
+| Helpers | Lambda arguments only |
 
-A reply is always `{status, url, body}`: `$res`, and each `$sources.name`,
-everywhere they appear, so a body field is `$res.body.error` and a status is
-`$res.status`. In `map`, `body` and later sources, a source's `body`
-is what its `items` selected; in a sources tier's own exceptions it is the
-body as received, since they run before `items`. `$item` exists only in a
-`map` whose tier declares `items` (and in `$lens` params). Helpers and
-JSONata's built-ins (`$count`, `$match`, …) are callable everywhere; `$x := …`
-and lambda arguments work as usual. Validation rejects a variable a site does
-not bind, `$params.x` for an undeclared `x`, and `$sources.x` for a source that
-is not declared (or, in a chain, not declared earlier). `lens eval` runs the
-same evaluator.
+Every `$res` and `$sources.<name>` reply is `{status, url, body}`. Source bodies reflect post-`items` extraction in later sources, `body`, and `map`, whereas tier `exceptions` run against the raw reply before `items`.
 
 ### Maps
 
-A `map` is either one expression producing the whole value, or an object whose
-values are expressions — or, recursively, nested objects of them. Prefer the
-object form whenever the result is a plain object; keep one expression when
-building it needs logic (conditionals, filters, `$x := …`). Constants are
-JSONata literals, so strings keep their quotes:
+A `map` is either one JSONata expression or a nested object of expressions. String constants inside expressions need inner single quotes (`"'base64'"`), and fields evaluating to `undefined` are omitted.
 
 ```jsonc
 "items": "$res.body.statement",
@@ -439,40 +292,17 @@ JSONata literals, so strings keep their quotes:
 }
 ```
 
-A field whose expression yields nothing is left out, as in a JSONata object.
-
 ### Templates
 
-`url`, request URLs, selectors and http `headers` are templates, not
-expressions. A hole names its root:
+`url`, `ready`, selectors, HTTP headers, and intercept URLs use `{root.path}` templates rather than JSONata expressions.
 
-| Template | Holes |
+| Template | Allowed holes |
 | --- | --- |
-| lens `url` and `ready`; dom `item`, `selector`, `scope`; perform selectors; intercept `request.url`; http `request.url` and `headers` | `{params.name}` |
-| an http source's `request.url` and `headers` | `{params.name}`, and `{sources.name.body}` or `{sources.name.body.path.0.to}` for a source declared earlier: `"X-CSRF-Token": "{sources.csrf.body}"`, `"Authorization": "Bearer {sources.auth.body.token}"` |
+| Document `url`, `ready`, selectors, single HTTP URL/headers, intercept URL | `{params.name}` |
+| Chained HTTP source URL and headers | `{params.name}`, `{sources.name.body.path}` for earlier sources |
 
-URL holes are percent-encoded (a request pattern also encodes `*`, so a value
-never widens the glob); selector and header holes go in verbatim. A hole
-without a root (`{id}`), an undeclared parameter, or a source not yet fetched
-is a validation error.
+URL templates percent-encode values (`intercept` patterns also escape `*` as `%2A`), while selectors and headers substitute verbatim.
 
-## Result types
+## Result types and SDKs
 
-```sh
-lens schema <lens>
-```
-
-Prints a JSON Schema (draft 2020-12) of a lens's result.
-Use it to validate stored results, wire a lens into schema-driven tooling, or check the exact result shape without making a call.
-
-## Generated SDK
-
-```sh
-lens gen ts-sdk -o src/lenses.gen.ts
-```
-
-Generates a typed TypeScript client for the catalog.
-Use it to call lenses from application code with typed params and results.
-Re-run after editing a lens.
-
-Run `lens <command> --help` for full options.
+Run `lens schema <lens> -c <catalog>` to emit a Draft 2020-12 JSON Schema, and `lens gen ts-sdk <catalog> -o src/lenses.gen.ts` to generate a typed TypeScript client with `LensRef`, `Lenses`, and `createLensClient`. Run `lens <command> --help` for full flags.

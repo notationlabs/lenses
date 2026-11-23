@@ -1,6 +1,5 @@
 import type { DocCategory } from "@notation/docs/config";
-import { manual } from "./manual/nav";
-import { api } from "./api/nav";
+import site from "./site";
 
 // Category order must match `categories` in vite.config.ts
-export const categories: DocCategory[] = [manual, api];
+export const categories: DocCategory[] = site.categories;

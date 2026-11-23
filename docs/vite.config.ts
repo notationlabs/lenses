@@ -8,8 +8,9 @@ export default defineConfig({
     docs({
       title: "lenses – Typed webpage functions",
       github: "https://github.com/notationlabs/lenses",
-      favicon: { href: "/favicon-32x32.png", type: "image/svg+xml" },
-      categories: ["manual", "api"], // slugs, in top-nav order; must match index.ts
+      favicon: { href: "/favicon-32x32.png", type: "image/png" },
+      categories: ["core", "authoring", "reference", "internals"], // slugs, in top-nav order; must match site.ts
+      defaultSlug: "core/introduction",
       contentDirectory: ".", // the site lives inside the content it publishes
       pagesDirectory: "pages",
       logo: "./views/logo.tsx",

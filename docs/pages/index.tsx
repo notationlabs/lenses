@@ -67,7 +67,7 @@ function Hero() {
               <AgentMenu />
               <Link
                 to="/docs/$"
-                params={{ _splat: "manual/introduction" }}
+                params={{ _splat: "core/introduction" }}
                 className={`${hero} bg-card text-ink hover:bg-rule`}
               >
                 <BookOpen className="w-[18px] h-[18px]" /> Documentation
@@ -131,7 +131,7 @@ function AgentMenu() {
             Copy the agent prompt
           </CopyButton>
           <div className="my-1.5 mx-2 border-t border-rule" />
-          <Link to="/docs/$" params={{ _splat: "manual/agents" }} className={item}>
+          <Link to="/docs/$" params={{ _splat: "core/agents-and-mcp" }} className={item}>
             Agents and MCP <ArrowRight className="w-4 h-4 opacity-60" />
           </Link>
         </div>
@@ -439,8 +439,8 @@ const features: Feature[] = [
         writes a typed client for a catalog.
       </>
     ),
-    doc: "manual/calling",
-    link: "Read the manual: Calling lenses",
+    doc: "core/calling",
+    link: "Read the guide: Calling lenses",
     panel: (
       <TabbedPanel
         tabs={[
@@ -463,8 +463,8 @@ top.stories[0].title; // string`,
     id: "resolvers",
     title: "Cheapest path first",
     text: "A lens lists several ways to get its data, cheapest first: the site's own API, the JSON the page fetches, the rendered HTML, and last the page text read by your model. The call uses the first one that works, and returns the same shape whichever one it used. While the site's API works, no tab opens.",
-    doc: "api/resolvers",
-    link: "Read the reference: Resolvers",
+    doc: "reference/resolvers",
+    link: "Read the reference: Resolvers & Perform",
     panel: <Resolvers />,
   },
   {
@@ -477,8 +477,8 @@ top.stories[0].title; // string`,
         code reads <Code>kind</Code> instead of error text. The agent asks you to sign in, then tries again.
       </>
     ),
-    doc: "manual/broker",
-    link: "Read the manual: The broker",
+    doc: "authoring/navigation-and-auth",
+    link: "Read the guide: Navigation & auth states",
     panel: (
       <TypedTerminal
         lines={[
@@ -504,8 +504,8 @@ top.stories[0].title; // string`,
         happened, so the agent knows whether to try again.
       </>
     ),
-    doc: "manual/write-lenses",
-    link: "Read the manual: Write and file lenses",
+    doc: "authoring/write-and-file-lenses",
+    link: "Read the guide: Write and file lenses",
     panel: (
       <Terminal
         wrap
@@ -534,8 +534,8 @@ top.stories[0].title; // string`,
         Catalogs live in git, so you review the pull request like any other code, and every agent gets the new lens.
       </>
     ),
-    doc: "manual/authoring",
-    link: "Read the manual: Writing a lens",
+    doc: "authoring/writing-a-lens",
+    link: "Read the guide: Writing a lens",
     panel: (
       <TypedTerminal
         lines={[
@@ -614,7 +614,7 @@ function Features() {
 const interfaces: Tab[] = [
   {
     label: "CLI",
-    doc: { path: "api/cli", label: "Read the reference: CLI" },
+    doc: { path: "reference/cli", label: "Read the reference: lens CLI" },
     title: "Terminal",
     command: "lens call hn/top --params '{\"page\": 2}' -c ./examples",
     source: `{
@@ -625,7 +625,7 @@ const interfaces: Tab[] = [
   },
   {
     label: "TypeScript",
-    doc: { path: "manual/typescript", label: "Read the manual: TypeScript" },
+    doc: { path: "core/typescript", label: "Read the guide: TypeScript SDK" },
     title: "src/top.ts",
     source: `import { createLensClient } from "@notation/lenses";
 
@@ -646,7 +646,7 @@ if (result.kind === "value") {
   },
   {
     label: "MCP",
-    doc: { path: "manual/agents", label: "Read the manual: Agents and MCP" },
+    doc: { path: "core/agents-and-mcp", label: "Read the guide: Agents & MCP" },
     title: "MCP config",
     source: `{
   "mcpServers": {
@@ -661,7 +661,7 @@ if (result.kind === "value") {
   },
   {
     label: "GraphQL",
-    doc: { path: "manual/graphql", label: "Read the manual: GraphQL" },
+    doc: { path: "core/graphql", label: "Read the guide: GraphQL" },
     title: "lens graphql playground -c ./examples",
     source: `{
   hn {
@@ -696,14 +696,14 @@ function Install() {
         <CopyCommand text={install} />
         <Link
           to="/docs/$"
-          params={{ _splat: "manual/installation" }}
+          params={{ _splat: "core/installation" }}
           className={`${button} bg-card text-ink hover:bg-rule`}
         >
           Installation guide
         </Link>
         <Link
           to="/docs/$"
-          params={{ _splat: "manual/quickstart" }}
+          params={{ _splat: "core/quickstart" }}
           className={`${button} bg-card text-ink hover:bg-rule`}
         >
           Quick start
@@ -747,7 +747,7 @@ function Footer() {
       <div className={`${frame} py-8 flex flex-wrap items-center justify-between gap-4 text-[14px] text-ink-3`}>
         <p>© 2026 Notation Labs Ltd · Scotland SC765604</p>
         <div className="flex items-center gap-6">
-          <Link to="/docs/$" params={{ _splat: "manual/introduction" }} className="hover:text-ink">
+          <Link to="/docs/$" params={{ _splat: "core/introduction" }} className="hover:text-ink">
             Docs
           </Link>
           <a href={github} className="inline-flex items-center gap-2 hover:text-ink">
@@ -759,9 +759,9 @@ function Footer() {
   );
 }
 
-const setupPrompt = `I want my agent to use Lenses. Lenses turns web pages into typed functions that return JSON. It runs them in my own Chrome through a local broker, so a lens can read pages I am signed in to.
+const setupPrompt = `I want my agent to use Notation Lenses. Lenses turns web pages into typed functions that return JSON. It runs them in my own Chrome through a local broker, so a lens can read pages I am signed in to.
 
-First read the manual at ${github}/tree/main/docs/manual, starting with introduction.md, installation.md and agents.md.
+First read the docs at ${github}/tree/main/docs/core, starting with introduction.md, installation.md and agents-and-mcp.md.
 
 1. Check that Node.js 22.12 or later and Google Chrome are installed.
 2. Run \`${install}\`.
