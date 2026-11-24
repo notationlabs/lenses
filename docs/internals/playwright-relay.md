@@ -45,4 +45,10 @@ When a client restarts a stale broker, the extension ungroups existing tabs on d
 
 In `cdp-host.ts`, `watchAuthGate` debounces main-frame `framenavigated` origin or pathname changes for 750ms before emitting a move exit.
 
+A sign-in tab the debugger has lost is handled in three ways:
+
+- While a wait watches the tab, each retry asks the relay to attach it again, at most once every `SIGN_IN_RETRY_MS` (3000ms). When the attach succeeds, the retry reads the tab's current URL instead of the URL it was last seen at.
+- When no wait watches the tab and it has been detached for `DETACHED_REUSE_LIMIT_MS` (5 minutes), a `tab: "reuse"` call leaves it behind and opens a tab of its own.
+- When a resumed wait finds that its tab has closed or left the group, the broker calls `openAuthGate`. This opens a replacement tab only if the origin has no kept, detached or reused tab left, and the new wait brings it to the front.
+
 `showAuthBanner` injects a closed Shadow DOM banner marked `[data-lenses-auth]` via `evaluateOnNewDocument`, keyed per tab so detached-debugger leftovers update in place.

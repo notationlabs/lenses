@@ -436,11 +436,13 @@ export function createBrokerOrchestrator(
         const prompt = await backend.watchAuthGate?.(origin, onExit, resume);
         if (prompt) return prompt;
       }
-      if (resume) return undefined; // Never open a replacement tab mid-login.
       await readyBackend();
       // The first outcome may come from an HTTP tier without binding any page.
+      // On a resumed wait, the sign-in tab has closed or left the group:
+      // openAuthGate opens a replacement only when the site has no kept,
+      // detached, or reused tab left, and the fresh watch shows it.
       if (!await backend.openAuthGate?.(origin, target)) return undefined;
-      return backend.watchAuthGate?.(origin, onExit, resume);
+      return backend.watchAuthGate?.(origin, onExit, false);
     },
     async handle(message, emit, options = {}) {
       if (backgroundCall) {

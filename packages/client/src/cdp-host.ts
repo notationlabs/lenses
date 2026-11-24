@@ -35,6 +35,11 @@ import type { TabLink } from "./playwright-relay/browser-model.js";
 const DOWNLOAD_GUARD_GRACE_MS = 5_000;
 /** How often a sign-in wait tries to re-attach a tab a password manager's frame blocks. */
 const SIGN_IN_RETRY_MS = 3_000;
+/**
+ * How long a reused tab may stay detached before a call that no sign-in wait
+ * covers stops answering from it and opens a tab of its own.
+ */
+const DETACHED_REUSE_LIMIT_MS = 5 * 60_000;
 /** How long a re-found tab gets to answer a trivial evaluate before it is attached afresh. */
 const ANSWER_TIMEOUT_MS = 3_000;
 const CONNECT_WINDOW_MS = 45_000;
@@ -435,16 +440,8 @@ export function createCdpBackend(
     const live = await pageForKey(current, key);
     if (live) return await answeringPage(current, key, live, target, lastPage);
     let link = transport.tabLink?.(key);
-    // The extension retries only on a URL change, which a signed-in
-    // single-page app may never make, so a sign-in wait retries too.
     const origin = urlOrigin(keptGates.get(key)?.target ?? target ?? "");
-    if (link?.state === "disconnected" && watchedGateOrigins.has(origin) && transport.retryAttach) {
-      const last = signInRetries.get(key) ?? 0;
-      if (Date.now() - last >= SIGN_IN_RETRY_MS) {
-        signInRetries.set(key, Date.now());
-        link = (await transport.retryAttach(key)) ?? link;
-      }
-    }
+    if (link?.state === "disconnected" && watchedGateOrigins.has(origin)) link = await retrySignInAttach(key);
     if (link?.state === "connected") {
       // Attached a moment ago; Puppeteer has not heard yet.
       const page = await awaitPageForKey(current, key);
@@ -505,6 +502,20 @@ export function createCdpBackend(
       return fresh ?? page;
     }
     return await recoverTab(current, key, target, lastPage);
+  }
+
+  /**
+   * One attach attempt for a detached tab a sign-in wait watches, at most
+   * every SIGN_IN_RETRY_MS. The extension retries only on a URL change, which
+   * a signed-in single-page app may never make. The attempt can pull a tab the
+   * user dragged out back into the group, so it runs only during a wait.
+   */
+  async function retrySignInAttach(key: string): Promise<TabLink | undefined> {
+    const link = transport.tabLink?.(key);
+    if (link?.state !== "disconnected" || !transport.retryAttach) return link;
+    if (Date.now() - (signInRetries.get(key) ?? 0) < SIGN_IN_RETRY_MS) return link;
+    signInRetries.set(key, Date.now());
+    return (await transport.retryAttach(key)) ?? link;
   }
 
   async function answers(page: Page): Promise<boolean> {
@@ -587,7 +598,17 @@ export function createCdpBackend(
     const origin = urlOrigin(request.target);
     const last = reuseTabs.get(origin);
     if (usable(last, current) && sameSite(last.url(), origin)) return last;
-    const recorded = reuseKeys.get(origin);
+    let recorded = reuseKeys.get(origin);
+    const link = recorded === undefined ? undefined : transport.tabLink?.(recorded);
+    // A wait watches its tab for as long as the wait lasts. Outside a wait, a
+    // tab the debugger lost long ago is left behind, so the call can see the
+    // site in a tab of its own.
+    if (recorded !== undefined && link?.state === "disconnected" && !watchedGateOrigins.has(origin) &&
+        link.detachedAt !== undefined && Date.now() - link.detachedAt >= DETACHED_REUSE_LIMIT_MS) {
+      log(`reuse ${origin}: tab ${recorded} has been detached from the debugger since ${new Date(link.detachedAt).toISOString()}; leaving it behind`);
+      forgetTab(origin, recorded);
+      recorded = undefined;
+    }
     if (recorded !== undefined) {
       const found = await recoverTab(current, recorded, request.target, last);
       // A sign-out moves the tab to the site's own logout page on a sibling
@@ -992,12 +1013,18 @@ export function createCdpBackend(
       const current = browser;
       const watched = watchedGateOrigins.has(origin);
       for (const [key, kept] of keptGates) {
-        const page = await gatePage(browser, key, kept);
+        let page = await gatePage(browser, key, kept);
         if (!page) {
           keptGates.delete(key);
           continue;
         }
         if (urlOrigin(kept.target) !== origin) continue;
+        // The URL a detached tab was last seen at may be long out of date, so
+        // the wait asks for the tab back before reporting where it is.
+        if (page === "detached" && watched && (await retrySignInAttach(key))?.state === "connected") {
+          const live = await awaitPageForKey(current, key);
+          if (live) page = kept.page = live;
+        }
         // A detached tab blocks the site only while a call waits on it; a
         // fresh call reports it detached itself, with the latest error.
         if (page === "detached" || kept.detached) {

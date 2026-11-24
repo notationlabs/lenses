@@ -11,6 +11,7 @@ vi.mock("../src/launch-browser.js", () => ({ raiseChrome: async () => { raised.o
 import { createCdpBackend, sameSite } from "../src/cdp-host.js";
 import { TabClosed, TabDisconnected } from "../src/browser-backend.js";
 import { createAuthLeases } from "../src/auth-leases.js";
+import { createBrokerOrchestrator } from "../src/broker-orchestrator.js";
 import type { TabLink } from "../src/playwright-relay/browser-model.js";
 
 const origin = "https://bank.example";
@@ -650,16 +651,24 @@ describe("tabs the debugger loses", () => {
       tabs,
       reconnect,
       /** Chrome lets go of the tab; it stays open in the group. */
-      detach(key: string) {
+      detach(key: string, detachedAt?: number) {
         const page = tabs.get(key)!;
-        setLink(key, { state: "disconnected" });
+        setLink(key, { state: "disconnected", ...(detachedAt !== undefined ? { detachedAt } : {}) });
         visible.delete(page);
         page.closed = true;
         page.emit("close");
       },
       /** The extension asks for the tab back, and Chrome refuses while the frame is there. */
       retryFails(key: string) {
-        setLink(key, { state: "disconnected", lastError: passwordManager });
+        setLink(key, { ...links.get(key), state: "disconnected", lastError: passwordManager });
+      },
+      /** The user closes the tab. */
+      close(key: string) {
+        const page = tabs.get(key)!;
+        visible.delete(page);
+        page.closed = true;
+        setLink(key, { state: "closed" });
+        page.emit("close");
       },
       /** A detach the extension never asked to undo: the user dragged the tab out. */
       dragOut(key: string) {
@@ -927,5 +936,75 @@ describe("tabs the debugger loses", () => {
     const next = await host.bind(reuse());
     expect(next.tab).toBe("t101");
     expect(next.created).toBe(true);
+  });
+
+  it("leaves a reused tab behind once it has been detached too long and no wait watches it", async () => {
+    const chrome = relayChrome();
+    const host = createCdpBackend(() => {}, chrome.transport as never);
+    const first = await host.bind(reuse(`${origin}/login`));
+    await host.finish(first, "keep");
+
+    chrome.detach("100", Date.now() - 60_000);
+    chrome.retryFails("100");
+    await expect(host.bind(reuse())).rejects.toBeInstanceOf(TabDisconnected);
+
+    chrome.detach("100", Date.now() - 6 * 60_000);
+    chrome.retryFails("100");
+    const next = await host.bind(reuse());
+    expect(next.tab).toBe("t101");
+    expect(next.created).toBe(true);
+  });
+
+  it("asks for a detached sign-in tab back while a wait watches it, and reports where it is", async () => {
+    const chrome = relayChrome();
+    const retries: string[] = [];
+    const transport = {
+      ...chrome.transport,
+      async retryAttach(key: string) {
+        retries.push(key);
+        // The user signed in while the tab was detached.
+        chrome.tabs.get(key)!.currentUrl = `${origin}/account-summary`;
+        chrome.reconnect(key);
+        return { state: "connected" as const };
+      },
+    };
+    const host = createCdpBackend(() => {}, transport as never);
+    const target = `${origin}/account-summary`;
+    const first = await host.bind(reuse(`${origin}/login`));
+    await host.finish(first, "keep");
+    chrome.detach("100");
+    chrome.retryFails("100");
+
+    const prompt = await host.watchAuthGate!(origin, () => {});
+    expect(prompt).toBeDefined();
+    expect(await host.findAuthGate(origin)).toMatchObject({ url: target });
+    expect(retries).toEqual(["100"]);
+    expect(await host.hasOpenTarget!(target, { reuse: true })).toBe(true);
+    expect(chrome.browser.newPage).toHaveBeenCalledTimes(1);
+    prompt!.dispose();
+  });
+
+  it("opens and shows a replacement sign-in tab when a resumed wait finds the old one closed", async () => {
+    const chrome = relayChrome();
+    const host = createCdpBackend(() => {}, chrome.transport as never);
+    const orchestrator = createBrokerOrchestrator(host);
+    const target = `${origin}/account-summary`;
+    const first = await host.bind(reuse(`${origin}/login`));
+    await host.finish(first, "keep");
+
+    // A resumed wait keeps watching a tab that is only detached.
+    chrome.detach("100");
+    const watching = await orchestrator.watchAuthGate(origin, target, () => {}, true);
+    expect(watching).toBeDefined();
+    watching!.dispose();
+    expect(chrome.browser.newPage).toHaveBeenCalledTimes(1);
+
+    chrome.close("100");
+    const replaced = await orchestrator.watchAuthGate(origin, target, () => {}, true);
+    expect(replaced).toBeDefined();
+    expect(chrome.browser.newPage).toHaveBeenCalledTimes(2);
+    expect(chrome.tabs.get("101")!.loads).toEqual([target]);
+    expect(chrome.tabs.get("101")!.foregrounded).toBe(1);
+    replaced!.dispose();
   });
 });

@@ -79,6 +79,8 @@ export type TabLink = {
   state: "connected" | "disconnected" | "removed" | "closed";
   /** The last re-attach failure, verbatim. */
   lastError?: string;
+  /** When the debugger last let go of the tab (epoch ms). */
+  detachedAt?: number;
 };
 
 /** How long the extension has to ask for a detached tab back before it counts as dragged out. */
@@ -114,7 +116,9 @@ export class BrowserModel {
     if (!state) return undefined;
     if (state.session) return { state: "connected" };
     const lastError = state.lastError !== undefined ? { lastError: state.lastError } : {};
-    return { state: state.removed ? "removed" : "disconnected", ...lastError };
+    if (state.removed) return { state: "removed", ...lastError };
+    const detachedAt = state.lastDetachAt !== undefined ? { detachedAt: state.lastDetachAt } : {};
+    return { state: "disconnected", ...lastError, ...detachedAt };
   }
 
   /**

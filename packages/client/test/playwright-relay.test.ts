@@ -154,7 +154,7 @@ describe("Playwright CDP relay", () => {
     await model.createTarget("https://bank.example/login");
 
     model.onDebuggerDetach({ tabId: 1 });
-    expect(model.tabLink(1)).toEqual({ state: "disconnected" });
+    expect(model.tabLink(1)).toEqual({ state: "disconnected", detachedAt: expect.any(Number) });
     expect(emitted.map((row) => row.method)).toContain("Target.detachedFromTarget");
     // The page object is gone, but the tab is still nameable.
     expect(model.tabIdForTarget("target-1")).toBe(1);
@@ -165,6 +165,7 @@ describe("Playwright CDP relay", () => {
     expect(model.tabLink(1)).toEqual({
       state: "disconnected",
       lastError: "Cannot access a chrome-extension:// URL of different extension",
+      detachedAt: expect.any(Number),
     });
     expect(attachCount(commands)).toBe(2);
 
@@ -314,7 +315,7 @@ describe("Playwright CDP relay", () => {
       vi.advanceTimersByTime(1_000);
       model.onDebuggerDetach({ tabId: 1 });
       vi.advanceTimersByTime(60_000);
-      expect(model.tabLink(1)).toEqual({ state: "disconnected" });
+      expect(model.tabLink(1)).toEqual({ state: "disconnected", detachedAt: expect.any(Number) });
 
       // Its next URL change brings it back.
       model.onTabCreated(tab);
